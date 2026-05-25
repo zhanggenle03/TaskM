@@ -91,7 +91,7 @@ def update_task(project_id: int, task_id: int, data: TaskUpdate, db: Session = D
         comm = Communication(
             task_id=task_id,
             content=f"状态变更：{old_label or '未设置'} → {new_label}",
-            comm_at=datetime.utcnow(),
+            comm_at=datetime.now(),
             old_status_id=old_status_id,
             new_status_id=task.status_id
         )
@@ -177,7 +177,7 @@ def add_communication(project_id: int, task_id: int, data: CommunicationCreate, 
     from datetime import datetime
     comm_data = data.model_dump()
     if comm_data.get("comm_at") is None:
-        comm_data["comm_at"] = datetime.utcnow()
+        comm_data["comm_at"] = datetime.now()
     # 移除 contact_ids（Communication 模型无此字段）
     contact_ids = comm_data.pop("contact_ids", [])
     comm = Communication(task_id=task_id, **comm_data)

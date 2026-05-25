@@ -381,6 +381,8 @@ const onOpenCommDialog = () => {
     }
     // 固定当前状态为变更前状态（不会随后续任务状态变化）
     commForm.value.old_status_id = task.value?.status_id || null
+    // 默认当前时间
+    commForm.value.comm_at = dayjs().format('YYYY-MM-DDTHH:mm:ss')
     // 新增时默认使用上次沟通的所有对接人
     if (task.value?.communications?.length) {
       const last = task.value.communications[task.value.communications.length - 1]
