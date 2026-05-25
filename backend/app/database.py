@@ -37,6 +37,34 @@ def touch_project(db, project_id):
     db.commit()
 
 
+def derive_task_status(db, task_id):
+    """
+    从沟通记录推导任务的最终状态。
+    逻辑：遍历所有沟通记录，找到最后一条有 new_status_id 的记录，
+    该记录的 new_status_id 即为任务当前状态。
+    如果没有任何状态变更记录，返回 None。
+    """
+    last_comm = db.query(Communication.new_status_id).filter(
+        Communication.task_id == task_id,
+        Communication.new_status_id.isnot(None)
+    ).order_by(Communication.id.desc()).first()
+    return last_comm[0] if last_comm else None
+
+
+def sync_task_status(db, task_id):
+    """
+    根据沟通记录推导出正确的 status_id，写回 Task 表并 commit。
+    返回推导出的 status_id。
+    """
+    status_id = derive_task_status(db, task_id)
+    db.query(Task).filter(Task.id == task_id).update(
+        {"status_id": status_id},
+        synchronize_session=False
+    )
+    db.commit()
+    return status_id
+
+
 class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True, index=True)

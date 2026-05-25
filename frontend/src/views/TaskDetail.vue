@@ -326,15 +326,8 @@ watch(() => contactForm.value.name, (newName) => {
 
 const load = async () => {
   const [t, s, ct, allProjects] = await Promise.all([getTask(projectId, taskId), getStatuses(projectId), getCommTypes(projectId), getProjects()])
+  // 后端已从沟通记录推导出最终 status_id，直接使用
   task.value = t
-  // 从沟通记录推导任务最终状态（与列表页一致）
-  if (t?.communications?.length) {
-    let lastChanged = null
-    for (const c of t.communications) {
-      if (c.new_status_id != null) lastChanged = c
-    }
-    if (lastChanged) task.value.status_id = lastChanged.new_status_id
-  }
   statuses.value = s
   commTypes.value = ct
   project.value = allProjects.find((p) => p.id === projectId) || null
@@ -362,11 +355,21 @@ const commTypeColor = (name) => commTypes.value.find((ct) => ct.name === name)?.
 const statusLabel = (id) => statuses.value.find(s => s.id === id)?.name || ''
 const statusColor = (id) => statuses.value.find(s => s.id === id)?.color || '#888'
 
-const quickUpdateStatus = async (val) => {
+const quickUpdateStatus = async (newStatusId) => {
   if (!task.value) return
-  await updateTask(projectId, taskId, { status_id: val })
-  await load()
-  ElMessage.success('状态已更新')
+  try {
+    const res = await updateTask(projectId, taskId, { status_id: newStatusId })
+    // 后端返回的 status_id 已是推导后的值，直接覆盖
+    if (res) {
+      task.value = { ...task.value, ...res }
+    }
+    // 再完整加载一次（包含新生成的沟通记录）
+    await load()
+    ElMessage.success('状态已更新')
+  } catch {
+    // 失败时回退到旧值
+    await load()
+  }
 }
 const quickUpdateDue = async (val) => {
   await updateTask(projectId, taskId, { due_date: val || null })

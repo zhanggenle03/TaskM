@@ -155,11 +155,13 @@ const submit = async () => {
   if (!form.value.title.trim()) { ElMessage.warning('标题不能为空'); return }
   loading.value = true
   try {
+    const payload = { ...form.value }
+    if (payload.status_id != null) payload.status_id = Number(payload.status_id)
     if (editTarget.value) {
-      await updateTask(projectId, editTarget.value.id, form.value)
+      await updateTask(projectId, editTarget.value.id, payload)
       ElMessage.success('已更新')
     } else {
-      await createTask(projectId, form.value)
+      await createTask(projectId, payload)
       ElMessage.success('创建成功')
     }
     showCreate.value = false
