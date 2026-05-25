@@ -27,6 +27,16 @@ def get_db():
         db.close()
 
 
+def touch_project(db, project_id):
+    """项目内部有任何变动时，同步更新项目的 updated_at 时间戳"""
+    from datetime import datetime
+    db.query(Project).filter(Project.id == project_id).update(
+        {"updated_at": datetime.now()},
+        synchronize_session=False
+    )
+    db.commit()
+
+
 class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True, index=True)
@@ -34,7 +44,7 @@ class Project(Base):
     description = Column(Text, default="")
     start_date = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     status_pools = relationship("StatusPool", back_populates="project", cascade="all, delete-orphan")
@@ -64,8 +74,8 @@ class Task(Base):
     description = Column(Text, default="")
     priority = Column(String(20), default="normal")  # low/normal/high/urgent
     due_date = Column(Date, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     project = relationship("Project", back_populates="tasks")
     status = relationship("StatusPool", back_populates="tasks")

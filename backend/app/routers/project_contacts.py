@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from ..database import get_db, ProjectContact
+from ..database import get_db, ProjectContact, touch_project
 from .. import schemas
 
 router = APIRouter(prefix="/projects/{project_id}/contacts", tags=["project_contacts"])
@@ -64,6 +64,7 @@ def add_project_contact(
     db.add(db_contact)
     db.commit()
     db.refresh(db_contact)
+    touch_project(db, project_id)
     return db_contact
 
 
@@ -89,6 +90,7 @@ def update_project_contact(
     
     db.commit()
     db.refresh(db_contact)
+    touch_project(db, project_id)
     return db_contact
 
 
@@ -109,4 +111,5 @@ def delete_project_contact(
     
     db.delete(db_contact)
     db.commit()
+    touch_project(db, project_id)
     return {"ok": True}

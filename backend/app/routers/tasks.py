@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from ..database import get_db, Task, Contact, Communication, CommunicationContact, Attachment, ProjectContact, StatusPool
+from ..database import get_db, Project, Task, Contact, Communication, CommunicationContact, Attachment, ProjectContact, StatusPool, touch_project
 from ..schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskDetail,
     ContactCreate, ContactUpdate, ContactOut,
@@ -52,6 +52,7 @@ def create_task(project_id: int, data: TaskCreate, db: Session = Depends(get_db)
     db.add(task)
     db.commit()
     db.refresh(task)
+    touch_project(db, project_id)
     return task
 
 
@@ -98,6 +99,7 @@ def update_task(project_id: int, task_id: int, data: TaskUpdate, db: Session = D
         db.add(comm)
     db.commit()
     db.refresh(task)
+    touch_project(db, project_id)
     return task
 
 
@@ -108,6 +110,7 @@ def delete_task(project_id: int, task_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "任务不存在")
     db.delete(task)
     db.commit()
+    touch_project(db, project_id)
     return {"ok": True}
 
 
@@ -146,6 +149,7 @@ def add_contact(project_id: int, task_id: int, data: ContactCreate, db: Session 
     db.add(contact)
     db.commit()
     db.refresh(contact)
+    touch_project(db, project_id)
     return contact
 
 
@@ -158,6 +162,7 @@ def update_contact(project_id: int, task_id: int, contact_id: int, data: Contact
         setattr(c, k, v)
     db.commit()
     db.refresh(c)
+    touch_project(db, project_id)
     return c
 
 
@@ -168,6 +173,7 @@ def remove_contact(project_id: int, task_id: int, contact_id: int, db: Session =
         raise HTTPException(404, "对接人不存在")
     db.delete(c)
     db.commit()
+    touch_project(db, project_id)
     return {"ok": True}
 
 
@@ -195,6 +201,7 @@ def add_communication(project_id: int, task_id: int, data: CommunicationCreate, 
         db.add(cc)
     db.commit()
     db.refresh(comm)
+    touch_project(db, project_id)
     return comm
 
 
@@ -222,6 +229,7 @@ def update_communication(project_id: int, task_id: int, comm_id: int, data: Comm
             db.add(cc)
     db.commit()
     db.refresh(comm)
+    touch_project(db, project_id)
     return comm
 
 
@@ -232,4 +240,5 @@ def delete_communication(project_id: int, task_id: int, comm_id: int, db: Sessio
         raise HTTPException(404, "沟通记录不存在")
     db.delete(comm)
     db.commit()
+    touch_project(db, project_id)
     return {"ok": True}

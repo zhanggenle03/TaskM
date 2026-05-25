@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from ..database import get_db, Project, StatusPool, CommTypePool, Checkin, CheckinProject, CheckinTask, Task
+from ..database import get_db, Project, StatusPool, CommTypePool, Checkin, CheckinProject, CheckinTask, Task, touch_project
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -171,6 +171,7 @@ def create_status(project_id: int, data: StatusPoolCreate, db: Session = Depends
     db.add(status)
     db.commit()
     db.refresh(status)
+    touch_project(db, project_id)
     return status
 
 
@@ -183,6 +184,7 @@ def update_status(project_id: int, status_id: int, data: StatusPoolUpdate, db: S
         setattr(status, k, v)
     db.commit()
     db.refresh(status)
+    touch_project(db, project_id)
     return status
 
 
@@ -193,6 +195,7 @@ def delete_status(project_id: int, status_id: int, db: Session = Depends(get_db)
         raise HTTPException(404, "状态不存在")
     db.delete(status)
     db.commit()
+    touch_project(db, project_id)
     return {"ok": True}
 
 
@@ -208,6 +211,7 @@ def create_comm_type(project_id: int, data: CommTypePoolCreate, db: Session = De
     db.add(ct)
     db.commit()
     db.refresh(ct)
+    touch_project(db, project_id)
     return ct
 
 
@@ -220,6 +224,7 @@ def update_comm_type(project_id: int, type_id: int, data: CommTypePoolUpdate, db
         setattr(ct, k, v)
     db.commit()
     db.refresh(ct)
+    touch_project(db, project_id)
     return ct
 
 
@@ -230,6 +235,7 @@ def delete_comm_type(project_id: int, type_id: int, db: Session = Depends(get_db
         raise HTTPException(404, "沟通类型不存在")
     db.delete(ct)
     db.commit()
+    touch_project(db, project_id)
     return {"ok": True}
 
 

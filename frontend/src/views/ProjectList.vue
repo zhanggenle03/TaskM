@@ -63,7 +63,7 @@
             <span v-if="p.start_date">{{ dayjs(p.start_date).format('YYYY年MM月DD日') }} 开始</span>
             <span v-else style="color:#ccc">未知时间开始</span>
             <span class="date-sep">|</span>
-            <span>{{ dayjs(p.updated_at).format('YYYY年MM月DD日') }} 更新</span>
+            <span>{{ dayjs(p.updated_at).format('YYYY年MM月DD日 HH:mm:ss') }} 更新</span>
           </p>
         </div>
       </el-col>

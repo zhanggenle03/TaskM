@@ -6,7 +6,7 @@ import uuid
 import os
 from urllib.parse import quote
 import aiofiles
-from ..database import get_db, Attachment, Communication, UPLOAD_DIR
+from ..database import get_db, Attachment, Communication, Task, UPLOAD_DIR, touch_project
 from ..schemas import AttachmentOut, AttachmentUpdate
 from ..office_convert import is_office_file, convert_to_pdf
 
@@ -55,6 +55,10 @@ async def upload_comm_attachment(
     db.add(att)
     db.commit()
     db.refresh(att)
+    # 通过 Communication → Task → Project 链路更新时间
+    task = db.query(Task).filter(Task.id == comm.task_id).first()
+    if task:
+        touch_project(db, task.project_id)
     return att
 
 
@@ -117,6 +121,12 @@ def rename_attachment(attachment_id: int, data: AttachmentUpdate, db: Session = 
     att.original_filename = data.original_filename
     db.commit()
     db.refresh(att)
+    # 通过 Communication → Task → Project 链路更新时间
+    comm = db.query(Communication).filter(Communication.id == att.comm_id).first()
+    if comm:
+        task = db.query(Task).filter(Task.id == comm.task_id).first()
+        if task:
+            touch_project(db, task.project_id)
     return att
 
 
@@ -130,4 +140,10 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db)):
         os.remove(att.file_path)
     db.delete(att)
     db.commit()
+    # 通过 Communication → Task → Project 链路更新时间
+    comm = db.query(Communication).filter(Communication.id == att.comm_id).first()
+    if comm:
+        task = db.query(Task).filter(Task.id == comm.task_id).first()
+        if task:
+            touch_project(db, task.project_id)
     return {"ok": True}
