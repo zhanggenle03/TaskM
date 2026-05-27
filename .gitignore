@@ -14,6 +14,7 @@ backend/taskm.db
 *.db
 *.sqlite
 *.sqlite3
+backend/uploads/
 
 # --- Node / Vue 前端 ---
 frontend/node_modules/
