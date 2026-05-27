@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, HTMLResponse
 from sqlalchemy.orm import Session
 from typing import List
 import uuid
 import os
+import html as html_mod
 from urllib.parse import quote
 import aiofiles
 from ..database import get_db, Attachment, Communication, Task, UPLOAD_DIR, touch_project
@@ -103,12 +104,42 @@ def preview_attachment(attachment_id: int, db: Session = Depends(get_db)):
             )
     else:
         display_name = att.original_filename
+        # 纯文本类扩展名 → 读取内容以 text/plain 返回，.txt 后缀绕过浏览器强制下载
+        ext = os.path.splitext(file_path)[1].lower()
+        text_exts = {'.txt', '.log', '.md', '.sql', '.py', '.js', '.ts', '.html', '.css',
+                     '.json', '.xml', '.yaml', '.yml', '.ini', '.cfg', '.conf',
+                     '.sh', '.bat', '.ps1', '.csv', '.env', '.gitignore', '.dockerfile',
+                     '.vue', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.rb', '.php'}
+        if ext in text_exts:
+            with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+            safe_name = os.path.splitext(display_name)[0] + '.txt'
+            # 用 HTML 包裹，浏览器一定渲染不会下载
+            html_content = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{html_mod.escape(display_name)}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#f8f8f8;padding:16px;font-family:'Cascadia Code','JetBrains Mono','Consolas',monospace;font-size:14px;line-height:1.7}}
+pre{{background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:16px;white-space:pre-wrap;word-break:break-all;color:#333}}
+</style></head>
+<body><pre>{html_mod.escape(content)}</pre></body></html>'''
+            return HTMLResponse(
+                content=html_content,
+                headers={
+                    "Content-Disposition": f"inline; filename*=UTF-8''{quote(safe_name, safe='')}",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                }
+            )
 
     encoded_name = quote(display_name, safe='')
     return FileResponse(
         file_path,
         media_type=mime_type or "application/octet-stream",
-        headers={"Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}"}
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+        }
     )
 
 

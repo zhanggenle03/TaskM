@@ -10,17 +10,20 @@
     <!-- 隐藏的文件选择器 -->
     <input type="file" ref="hiddenFileInput" style="display:none" @change="onFileInputChange" />
 
-    <div v-if="task" class="detail-layout">
-      <!-- 左侧主体 -->
-      <div class="detail-main">
-        <!-- 任务操作 -->
-        <div class="task-header">
-          <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
-            <el-tag :type="priorityType(task.priority)" size="small">{{ priorityLabel(task.priority) }}</el-tag>
+    <div v-if="task" class="page-body">
+      <!-- 左侧列 -->
+      <div class="body-main">
+        <!-- 标题 + 删除按钮 -->
+        <div class="title-row">
+          <div class="title-left">
+            <h1 class="page-title">{{ task.title }}</h1>
+            <el-button size="small" text @click="openEditTask" class="title-edit-btn">
+              <el-icon><Edit /></el-icon>
+            </el-button>
           </div>
           <div style="display:flex;gap:6px">
-            <el-button size="small" @click="openEditTask">
-              <el-icon><Edit /></el-icon> 编辑
+            <el-button size="small" @click="timelineAsc = !timelineAsc">
+              <el-icon><Sort /></el-icon> {{ timelineAsc ? '最早优先' : '最新优先' }}
             </el-button>
             <el-button size="small" type="danger" @click="removeTask">
               <el-icon><Delete /></el-icon> 删除
@@ -28,6 +31,7 @@
           </div>
         </div>
         <p v-if="task.description" class="task-desc">{{ task.description }}</p>
+        <p v-else class="task-desc task-desc-empty">暂无描述</p>
 
         <!-- 沟通时间线 -->
         <div class="section-title">
@@ -35,70 +39,82 @@
           <el-button size="small" type="primary" text @click="showAddComm = true">+ 添加记录</el-button>
         </div>
 
-        <el-timeline v-if="task.communications?.length">
-          <el-timeline-item
-            v-for="c in [...task.communications].reverse()"
-            :key="c.id"
-            :timestamp="formatTime(c.comm_at)"
-            placement="top"
-          >
-            <div class="comm-card">
-              <div class="comm-header">
-                <span class="comm-type-badge" :style="{ background: commTypeColor(c.comm_type) + '22', color: commTypeColor(c.comm_type) }">{{ commTypeLabel(c.comm_type) }}</span>
-                <span class="comm-user">{{ (c.contacts?.length ? c.contacts.map(cn => cn.name).join('、') : c.contact?.name) || '我' }}</span>
-                <span v-if="c.old_status_id || c.new_status_id" class="comm-status">
-                  <template v-if="c.old_status_id">
-                    <span class="status-dot-mini" :style="{ background: statusColor(c.old_status_id) }"></span>
-                    {{ statusLabel(c.old_status_id) }}
-                  </template>
-                  <span v-if="c.old_status_id && c.new_status_id" class="comm-arrow">→</span>
-                  <template v-if="c.new_status_id">
-                    <span class="status-dot-mini" :style="{ background: statusColor(c.new_status_id) }"></span>
-                    {{ statusLabel(c.new_status_id) }}
-                  </template>
-                </span>
-                <div style="flex:1"></div>
-                <el-button size="small" text @click="openEditComm(c)"><el-icon><Edit /></el-icon></el-button>
-                <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
-              </div>
-              <div class="comm-content">{{ c.content }}</div>
-              <!-- 沟通附件 -->
-              <div v-if="c.attachments?.length" class="att-list">
-                <div v-for="a in c.attachments" :key="a.id" class="att-item">
-                  <el-icon><Paperclip /></el-icon>
-                  <a :href="previewUrl(a.id)" target="_blank" class="att-name">{{ a.original_filename }}</a>
-                  <span class="att-size">{{ formatSize(a.file_size) }}</span>
-                  <a :href="downloadUrl(a.id)" class="att-download-btn" title="下载">
-                    <el-icon><Download /></el-icon>
-                  </a>
-                  <el-button size="small" text @click="renameAtt(a)"><el-icon><Edit /></el-icon></el-button>
-                  <el-button size="small" text type="danger" @click="removeAtt(a)"><el-icon><Close /></el-icon></el-button>
+        <div class="timeline-scroll">
+          <el-timeline v-if="task.communications?.length">
+            <el-timeline-item
+              v-for="c in (timelineAsc ? task.communications : [...task.communications].reverse())"
+              :key="c.id"
+              :timestamp="formatTime(c.comm_at)"
+              placement="top"
+            >
+              <div class="comm-card">
+                <div class="comm-header">
+                  <span class="comm-type-badge" :style="{ background: commTypeColor(c.comm_type) + '22', color: commTypeColor(c.comm_type) }">{{ commTypeLabel(c.comm_type) }}</span>
+                  <span class="comm-user">{{ (c.contacts?.length ? c.contacts.map(cn => cn.name).join('、') : c.contact?.name) || '我' }}</span>
+                  <span v-if="c.old_status_id || c.new_status_id" class="comm-status">
+                    <template v-if="c.old_status_id">
+                      <span class="status-dot-mini" :style="{ background: statusColor(c.old_status_id) }"></span>
+                      {{ statusLabel(c.old_status_id) }}
+                    </template>
+                    <span v-if="c.old_status_id && c.new_status_id" class="comm-arrow">→</span>
+                    <template v-if="c.new_status_id">
+                      <span class="status-dot-mini" :style="{ background: statusColor(c.new_status_id) }"></span>
+                      {{ statusLabel(c.new_status_id) }}
+                    </template>
+                  </span>
+                  <div style="flex:1"></div>
+                  <el-button size="small" text @click="openEditComm(c)"><el-icon><Edit /></el-icon></el-button>
+                  <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
+                </div>
+                <div class="comm-content">{{ c.content }}</div>
+                <!-- 沟通附件 -->
+                <div v-if="c.attachments?.length" class="att-list">
+                  <div v-for="a in c.attachments" :key="a.id" class="att-item">
+                    <el-icon><Paperclip /></el-icon>
+                    <a href="javascript:void(0)" class="att-name" @click="openPreview(a, c.attachments)">{{ a.original_filename }}</a>
+                    <span class="att-size">{{ formatSize(a.file_size) }}</span>
+                    <a :href="downloadUrl(a.id)" class="att-download-btn" title="下载">
+                      <el-icon><Download /></el-icon>
+                    </a>
+                    <el-button size="small" text @click="renameAtt(a)"><el-icon><Edit /></el-icon></el-button>
+                    <el-button size="small" text type="danger" @click="removeAtt(a)"><el-icon><Close /></el-icon></el-button>
+                  </div>
                 </div>
               </div>
-            </div>
-          </el-timeline-item>
-        </el-timeline>
-        <el-empty v-else description="暂无沟通记录" :image-size="60" />
+            </el-timeline-item>
+          </el-timeline>
+          <el-empty v-else description="暂无沟通记录" :image-size="60" />
+        </div>
       </div>
 
       <!-- 右侧信息栏 -->
       <div class="detail-side">
-        <div class="side-card">
-          <div class="side-title">任务状态</div>
-          <el-select v-model="task.status_id" placeholder="设置状态" style="width:100%" @change="quickUpdateStatus">
-            <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id">
-              <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
-            </el-option>
-          </el-select>
-        </div>
-
-        <div class="side-card">
-          <div class="side-title">截止日期</div>
-          <el-date-picker
-            v-model="task.due_date" type="date" value-format="YYYY-MM-DD"
-            placeholder="无截止日期" style="width:100%"
-            @change="quickUpdateDue"
-          />
+        <div class="side-card side-card-fields">
+          <div class="side-field">
+            <span class="side-field-label">任务状态</span>
+            <el-select v-model="task.status_id" placeholder="设置状态" size="small" style="flex:1" @change="quickUpdateStatus">
+              <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id">
+                <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
+              </el-option>
+            </el-select>
+          </div>
+          <div class="side-field">
+            <span class="side-field-label">优先级</span>
+            <el-select v-model="task.priority" placeholder="选择优先级" size="small" style="flex:1" @change="quickUpdatePriority">
+              <el-option label="低" value="low" />
+              <el-option label="普通" value="normal" />
+              <el-option label="高" value="high" />
+              <el-option label="紧急" value="urgent" />
+            </el-select>
+          </div>
+          <div class="side-field">
+            <span class="side-field-label">截止日期</span>
+            <el-date-picker
+              v-model="task.due_date" type="date" value-format="YYYY-MM-DD"
+              placeholder="无截止日期" size="small" style="flex:1"
+              @change="quickUpdateDue"
+            />
+          </div>
         </div>
 
         <div class="side-card">
@@ -227,7 +243,7 @@
             style="width:100%"
           >
             <el-option
-              v-for="pc in projectContacts"
+              v-for="pc in projectContacts.filter(pc => !task?.contacts?.find(c => c.name === pc.name))"
               :key="pc.id"
               :label="pc.name"
               :value="pc.name"
@@ -257,18 +273,68 @@
       <el-form :model="taskForm" label-width="80px">
         <el-form-item label="标题"><el-input v-model="taskForm.title" /></el-form-item>
         <el-form-item label="描述"><el-input v-model="taskForm.description" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="优先级">
-          <el-select v-model="taskForm.priority">
-            <el-option label="低" value="low" />
-            <el-option label="普通" value="normal" />
-            <el-option label="高" value="high" />
-            <el-option label="紧急" value="urgent" />
-          </el-select>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showEditTask = false">取消</el-button>
         <el-button type="primary" @click="submitEditTask">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 附件预览弹窗 -->
+    <el-dialog v-model="previewDialog" width="80%" top="5vh" destroy-on-close>
+      <template #header>
+        <div class="preview-header">
+          <span class="preview-title">{{ previewTitle }}</span>
+          <span v-if="previewList.length > 1" class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
+        </div>
+      </template>
+
+      <!-- 图片预览 -->
+      <div v-if="previewIsImage" class="preview-img-wrap" @wheel.prevent="onImgWheel">
+        <div class="preview-img-container">
+          <img :src="previewSrc" class="preview-img" draggable="false"
+            :style="{
+              transform: `translate(${imgState.x}px, ${imgState.y}px) scale(${imgState.scale})`,
+              transformOrigin: '0 0',
+              cursor: isDragging ? 'grabbing' : imgState.scale !== 1 ? 'grab' : 'default'
+            }"
+            @mousedown="onImgMouseDown"
+            @mousemove="onImgMouseMove"
+            @mouseup="onImgMouseUp"
+            @mouseleave="onImgMouseUp"
+          />
+        </div>
+      </div>
+
+      <!-- 非图片预览（iframe） -->
+      <div v-else class="preview-other-wrap" @wheel.prevent="onOtherWheel">
+        <iframe :src="previewSrc"
+          :style="{
+            width: `${100 * imgState.scale}%`,
+            height: `${70 * imgState.scale}vh`,
+            border: 'none',
+            borderRadius: '4px',
+            background: '#fff',
+            transformOrigin: 'top left',
+            display: 'block'
+          }"
+        />
+      </div>
+
+      <!-- 工具栏：左右切换 + 重置 -->
+      <div v-if="previewList.length > 1 || imgState.scale !== 1" class="preview-toolbar">
+        <template v-if="previewList.length > 1">
+          <el-button size="small" :disabled="previewIndex <= 0" @click="previewPrev"><el-icon><ArrowLeft /></el-icon></el-button>
+          <span class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
+          <el-button size="small" :disabled="previewIndex >= previewList.length - 1" @click="previewNext"><el-icon><ArrowRight /></el-icon></el-button>
+        </template>
+        <span v-if="previewList.length > 1 && imgState.scale !== 1" class="tb-sep"></span>
+        <el-button v-if="imgState.scale !== 1" size="small" text @click="resetImageZoom">重置</el-button>
+      </div>
+
+      <template #footer>
+        <el-button @click="previewDialog = false">关闭</el-button>
+        <el-button type="primary" @click="downloadPreview">下载</el-button>
       </template>
     </el-dialog>
   </div>
@@ -313,6 +379,112 @@ const contactForm = ref({ name: '', role: '', contact_info: '' })
 
 const showEditTask = ref(false)
 const taskForm = ref({ title: '', description: '', priority: 'normal' })
+
+// 附件预览
+const previewDialog = ref(false)
+const previewSrc = ref('')
+const previewTitle = ref('')
+const previewAttId = ref(null)
+const previewIsImage = ref(false)
+const previewList = ref([])
+const previewIndex = ref(0)
+const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico']
+
+const timelineAsc = ref(false)  // 时间线排序：false=最新的在前面，true=最早的在前
+
+const imgState = ref({ x: 0, y: 0, scale: 1 })
+const isDragging = ref(false)
+const dragStart = { x: 0, y: 0 }
+const dragImgState = { x: 0, y: 0 }
+
+const openPreview = (a, list) => {
+  previewList.value = list || []
+  previewIndex.value = previewList.value.findIndex(item => item.id === a.id)
+  applyPreview(a)
+  previewDialog.value = true
+}
+
+const applyPreview = (a) => {
+  previewAttId.value = a.id
+  previewTitle.value = a.original_filename
+  previewSrc.value = previewUrl(a.id)
+  const ext = (a.original_filename?.split('.').pop() || '').toLowerCase()
+  previewIsImage.value = imageExts.includes('.' + ext)
+  imgState.value = { x: 0, y: 0, scale: 1 }
+}
+
+const previewPrev = () => {
+  if (previewIndex.value <= 0) return
+  previewIndex.value--
+  applyPreview(previewList.value[previewIndex.value])
+}
+
+const previewNext = () => {
+  if (previewIndex.value >= previewList.value.length - 1) return
+  previewIndex.value++
+  applyPreview(previewList.value[previewIndex.value])
+}
+
+const onImgWheel = (e) => {
+  const step = e.deltaY > 0 ? -0.05 : 0.05
+  const newScale = Math.round((imgState.value.scale + step) * 100) / 100
+  if (newScale < 0.01) { imgState.value = { x: 0, y: 0, scale: 0.01 }; return }
+  // 居中状态（未拖拽过）只调大小不移动位置，保证第一次缩放无跳动
+  if (imgState.value.x === 0 && imgState.value.y === 0) {
+    imgState.value = { x: 0, y: 0, scale: newScale }
+    return
+  }
+  const wrap = e.currentTarget
+  const rect = wrap.getBoundingClientRect()
+  const mx = rect.width / 2
+  const my = rect.height / 2
+  const ratio = newScale / imgState.value.scale
+  imgState.value = {
+    x: Math.round((imgState.value.x + mx * (1 - ratio)) * 10) / 10,
+    y: Math.round((imgState.value.y + my * (1 - ratio)) * 10) / 10,
+    scale: newScale,
+  }
+}
+
+const onImgMouseDown = (e) => {
+  if (e.button !== 0 || imgState.value.scale === 1) return
+  isDragging.value = true
+  dragStart.x = e.clientX
+  dragStart.y = e.clientY
+  dragImgState.x = imgState.value.x
+  dragImgState.y = imgState.value.y
+  e.preventDefault()
+}
+
+const onImgMouseMove = (e) => {
+  if (!isDragging.value) return
+  imgState.value = {
+    ...imgState.value,
+    x: +(dragImgState.x + e.clientX - dragStart.x).toFixed(1),
+    y: +(dragImgState.y + e.clientY - dragStart.y).toFixed(1),
+  }
+}
+
+const onImgMouseUp = () => {
+  isDragging.value = false
+}
+
+const onOtherWheel = (e) => {
+  const step = e.deltaY > 0 ? -0.05 : 0.05
+  const newScale = Math.round((imgState.value.scale + step) * 100) / 100
+  if (newScale < 0.01) { imgState.value = { x: 0, y: 0, scale: 0.01 }; return }
+  imgState.value = { x: 0, y: 0, scale: newScale }
+}
+
+const resetImageZoom = () => {
+  imgState.value = { x: 0, y: 0, scale: 1 }
+}
+
+const downloadPreview = () => {
+  if (previewAttId.value) {
+    window.open(downloadUrl(previewAttId.value), '_blank')
+  }
+}
 
 // 选择对接人时自动填充角色和联系方式
 watch(() => contactForm.value.name, (newName) => {
@@ -373,6 +545,10 @@ const quickUpdateStatus = async (newStatusId) => {
 }
 const quickUpdateDue = async (val) => {
   await updateTask(projectId, taskId, { due_date: val || null })
+}
+const quickUpdatePriority = async (val) => {
+  await updateTask(projectId, taskId, { priority: val })
+  ElMessage.success('优先级已更新')
 }
 
 const onOpenCommDialog = () => {
@@ -657,13 +833,24 @@ const removeAtt = async (a) => {
 </script>
 
 <style scoped>
-.detail-layout { display: flex; gap: 24px; align-items: flex-start; }
-.detail-main { flex: 1; min-width: 0; }
+.page-body { display: flex; gap: 24px; align-items: flex-start; max-height: calc(100vh - 60px); }
+.body-main { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 .detail-side { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
-.task-header { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
-.task-title { font-size: 20px; font-weight: 600; flex: 1; min-width: 0; }
-.task-desc { color: #555; font-size: 14px; line-height: 1.6; margin-bottom: 20px; }
+.title-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+.title-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.title-left .title-edit-btn { flex-shrink: 0; color: #999; }
+.title-left .title-edit-btn:hover { color: #409eff; }
+.page-title { font-size: 22px; font-weight: 600; color: #222; margin: 0; }
+.task-desc { color: #555; font-size: 14px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 20px; }
+.task-desc-empty { color: #bbb; }
 .section-title { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; margin-top: 20px; color: #444; }
+.preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
+.preview-toolbar .tb-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
+.timeline-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.timeline-scroll::-webkit-scrollbar { width: 6px; }
+.timeline-scroll::-webkit-scrollbar-track { background: transparent; }
+.timeline-scroll::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; transition: background 0.2s; }
+.timeline-scroll::-webkit-scrollbar-thumb:hover { background: #b0b0b0; }
 .comm-card { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 14px 16px; }
 .comm-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .comm-type-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
@@ -676,6 +863,13 @@ const removeAtt = async (a) => {
 .att-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #555; background: #f7f7f5; border-radius: 4px; padding: 4px 8px; }
 .att-name { color: #185fa5; text-decoration: none; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .att-name:hover { text-decoration: underline; }
+.preview-img-wrap { overflow: auto; height: 70vh; background: #f5f5f5; border-radius: 4px; position: relative; user-select: none; }
+.preview-img-container { min-height: 100%; text-align: center; padding: 16px; }
+.preview-img { max-width: 100%; max-height: calc(70vh - 80px); display: inline-block; vertical-align: top; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.preview-other-wrap { overflow: auto; height: 70vh; background: #f5f5f5; border-radius: 4px; }
+.preview-header { display: flex; align-items: center; gap: 10px; }
+.preview-title { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-counter { font-size: 12px; color: #999; flex-shrink: 0; }
 .att-download-btn { display: inline-flex; align-items: center; color: #888; text-decoration: none; padding: 2px; border-radius: 3px; }
 .att-download-btn:hover { color: #185fa5; background: #e8e8e4; }
 .att-size { color: #aaa; flex-shrink: 0; }
@@ -683,6 +877,10 @@ const removeAtt = async (a) => {
 .dialog-att-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 8px; background: #f7f7f5; border-radius: 6px; }
 .dialog-att-name { color: #185fa5; text-decoration: none; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .side-card { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 14px 16px; }
+.side-card-fields { padding: 8px 14px; }
+.side-field { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
+.side-field + .side-field { border-top: 1px solid #f0f0ee; }
+.side-field-label { font-size: 13px; color: #555; width: 60px; flex-shrink: 0; }
 .side-title { font-size: 13px; font-weight: 500; color: #555; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
 .contact-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-top: 1px solid #f0f0ee; }
 .contact-avatar { width: 32px; height: 32px; border-radius: 50%; background: #eeedfe; color: #534ab7; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }

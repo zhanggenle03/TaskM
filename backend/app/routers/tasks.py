@@ -5,7 +5,7 @@ from datetime import datetime
 from ..database import (
     get_db, Project, Task, Contact, Communication, CommunicationContact,
     Attachment, ProjectContact, StatusPool, CommTypePool,
-    touch_project, derive_task_status, sync_task_status
+    touch_project, derive_task_status, sync_task_status, cleanup_comm_files
 )
 from ..schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskDetail,
@@ -59,6 +59,16 @@ def list_tasks(project_id: int, status_id: Optional[int] = None, db: Session = D
 def create_task(project_id: int, data: TaskCreate, db: Session = Depends(get_db)):
     task = Task(project_id=project_id, **data.model_dump())
     db.add(task)
+    db.flush()  # 获取 task.id 但不提交
+
+    # 设置默认状态：取项目状态池中标记为默认的
+    default_status = db.query(StatusPool).filter(
+        StatusPool.project_id == project_id,
+        StatusPool.is_default == True
+    ).first()
+    if default_status and task.status_id is None:
+        task.status_id = default_status.id
+
     db.commit()
     db.refresh(task)
     touch_project(db, project_id)
@@ -93,9 +103,9 @@ def update_task(project_id: int, task_id: int, data: TaskUpdate, db: Session = D
     # 从沟通记录推导真实当前状态（而非 task.status_id）
     current_status = derive_task_status(db, task_id)
 
-    # 应用非状态字段的更新
+    # 应用非状态字段的更新（exclude_unset 保留前端传的 null 值，如清空 due_date）
     status_id = data.model_dump().get("status_id")
-    for k, v in data.model_dump(exclude_none=True).items():
+    for k, v in data.model_dump(exclude_unset=True).items():
         if k != "status_id":
             setattr(task, k, v)
 
@@ -142,8 +152,13 @@ def delete_task(project_id: int, task_id: int, db: Session = Depends(get_db)):
     task = db.query(Task).filter(Task.id == task_id, Task.project_id == project_id).first()
     if not task:
         raise HTTPException(404, "任务不存在")
+    # 先清理所有关联沟通记录的附件文件
+    comm_ids = db.query(Communication.id).filter(Communication.task_id == task_id).all()
     db.delete(task)
     db.commit()
+    # DB 删除后，删磁盘文件
+    for (cid,) in comm_ids:
+        cleanup_comm_files(cid)
     touch_project(db, project_id)
     return {"ok": True}
 
@@ -281,6 +296,9 @@ def delete_communication(project_id: int, task_id: int, comm_id: int, db: Sessio
         raise HTTPException(404, "沟通记录不存在")
     db.delete(comm)
     db.commit()
+
+    # 删除磁盘上的附件文件
+    cleanup_comm_files(comm_id)
 
     # 删除沟通记录后，重新推导 task.status_id
     sync_task_status(db, task_id)

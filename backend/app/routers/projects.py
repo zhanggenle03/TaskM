@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from ..database import get_db, Project, StatusPool, CommTypePool, Checkin, CheckinProject, CheckinTask, Task, touch_project
+from ..database import get_db, Project, StatusPool, CommTypePool, Checkin, CheckinProject, CheckinTask, Task, Communication, touch_project, cleanup_comm_files
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -154,8 +154,13 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     proj = db.query(Project).filter(Project.id == project_id).first()
     if not proj:
         raise HTTPException(404, "项目不存在")
+    # 先查出所有关联沟通记录 ID（用于后续清理磁盘文件）
+    comm_ids = db.query(Communication.id).join(Task).filter(Task.project_id == project_id).all()
     db.delete(proj)
     db.commit()
+    # DB 删除后，删磁盘上的附件文件
+    for (cid,) in comm_ids:
+        cleanup_comm_files(cid)
     return {"ok": True}
 
 

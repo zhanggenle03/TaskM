@@ -54,15 +54,28 @@ def derive_task_status(db, task_id):
 def sync_task_status(db, task_id):
     """
     根据沟通记录推导出正确的 status_id，写回 Task 表并 commit。
-    返回推导出的 status_id。
+    如果没有沟通记录涉及状态变更，保留现有 status_id 不变。
+    返回最终的 status_id。
     """
-    status_id = derive_task_status(db, task_id)
-    db.query(Task).filter(Task.id == task_id).update(
-        {"status_id": status_id},
-        synchronize_session=False
-    )
-    db.commit()
-    return status_id
+    derived = derive_task_status(db, task_id)
+    if derived is not None:
+        db.query(Task).filter(Task.id == task_id).update(
+            {"status_id": derived},
+            synchronize_session=False
+        )
+        db.commit()
+        return derived
+    # 无状态变更记录 → 保留现有 status_id 不变
+    task = db.query(Task.status_id).filter(Task.id == task_id).first()
+    return task[0] if task else None
+
+
+def cleanup_comm_files(comm_id):
+    """删除指定沟通记录的附件目录及所有文件"""
+    import shutil
+    dir_path = os.path.join(UPLOAD_DIR, f"comm_{comm_id}")
+    if os.path.isdir(dir_path):
+        shutil.rmtree(dir_path)
 
 
 class Project(Base):

@@ -18,7 +18,7 @@
         <el-button @click="$router.push(`/projects/${projectId}/settings`)">
           <el-icon><Setting /></el-icon> 设置
         </el-button>
-        <el-button type="primary" @click="showCreate = true">
+        <el-button type="primary" @click="resetForm(); showCreate = true">
           <el-icon><Plus /></el-icon> 新建任务
         </el-button>
       </div>
@@ -124,10 +124,14 @@ const loading = ref(false)
 const editTarget = ref(null)
 const form = ref({ title: '', description: '', status_id: null, priority: 'normal', due_date: null })
 
+// 状态池有加载完成时更新 form 的默认状态
+const defaultStatusId = ref(null)
+
 const load = async () => {
   const [all, s] = await Promise.all([getProjects(), getStatuses(projectId)])
   project.value = all.find(p => p.id === projectId)
   statuses.value = s
+  defaultStatusId.value = s.find(st => st.is_default)?.id ?? null
   await loadTasks()
 }
 const loadTasks = async () => {
@@ -143,7 +147,16 @@ const statusName = (id) => statuses.value.find(s => s.id === id)?.name || '无�
 const priorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', urgent: '紧急' }[p] || p)
 const priorityType = (p) => ({ low: 'info', normal: '', high: 'warning', urgent: 'danger' }[p] || '')
 
-const resetForm = () => { form.value = { title: '', description: '', status_id: null, priority: 'normal', due_date: null }; editTarget.value = null }
+const resetForm = () => {
+  form.value = {
+    title: '',
+    description: '',
+    status_id: defaultStatusId.value,
+    priority: 'normal',
+    due_date: null
+  }
+  editTarget.value = null
+}
 
 const openEdit = (t) => {
   editTarget.value = t
