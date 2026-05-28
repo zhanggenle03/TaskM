@@ -33,7 +33,7 @@
         size="small"
         :type="activeStatus === s.id ? 'primary' : ''"
         :style="activeStatus !== s.id ? { borderColor: s.color, color: s.color } : {}"
-        @click="activeStatus = s.id; loadTasks()"
+        @click="setFilter(s.id)"
         round
       >{{ s.name }}</el-button>
     </div>
@@ -43,7 +43,7 @@
       <div
         v-for="t in tasks" :key="t.id"
         class="task-row"
-        @click="$router.push(`/projects/${projectId}/tasks/${t.id}`)"
+        @click="goTask(t.id)"
       >
         <div class="task-status-dot" :style="{ background: statusColor(t.status_id) }"></div>
         <div class="task-info">
@@ -104,7 +104,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -118,7 +118,7 @@ const projectId = Number(route.params.projectId)
 const project = ref(null)
 const tasks = ref([])
 const statuses = ref([])
-const activeStatus = ref(null)
+const activeStatus = ref(route.query.status_id ? Number(route.query.status_id) : null)
 const showCreate = ref(false)
 const loading = ref(false)
 const editTarget = ref(null)
@@ -138,6 +138,28 @@ const loadTasks = async () => {
   const params = activeStatus.value !== null ? { status_id: activeStatus.value } : {}
   tasks.value = await getTasks(projectId, params)
 }
+
+const setFilter = (statusId) => {
+  activeStatus.value = statusId
+  router.replace({ query: { ...route.query, status_id: statusId || undefined } })
+  loadTasks()
+}
+
+const goTask = (taskId) => {
+  router.push({
+    path: `/projects/${projectId}/tasks/${taskId}`,
+    query: route.query
+  })
+}
+
+// 监听路由 query 变化（如浏览器前进/后退时恢复筛选状态）
+watch(() => route.query.status_id, (newVal) => {
+  const sid = newVal ? Number(newVal) : null
+  if (sid !== activeStatus.value) {
+    activeStatus.value = sid
+    loadTasks()
+  }
+})
 
 onMounted(load)
 onBeforeRouteUpdate(() => { load() })

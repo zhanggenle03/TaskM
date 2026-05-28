@@ -10,6 +10,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from ..settings_manager import load_settings, save_settings
 
 router = APIRouter(prefix="/process", tags=["process"])
 
@@ -67,6 +68,7 @@ def _ensure_vbs_scripts():
     import shutil
 
     run_py = str(ROOT / "backend" / "run.py")
+    frontend_dir = str(ROOT / "frontend")
 
     # 自动检测 pythonw 路径
     pythonw_path = shutil.which("pythonw")
@@ -86,29 +88,43 @@ def _ensure_vbs_scripts():
     if not pythonw_path:
         pythonw_path = "pythonw"  # 找不到就用系统 PATH
 
+    # 检测 npx 路径
+    npx_path = shutil.which("npx.cmd") or shutil.which("npx") or "npx.cmd"
+
     # VBS 中用 "" 转义内部的双引号
-    vbs_cmd = pythonw_path + ' "' + run_py + '"'
-    vbs_cmd_escaped = vbs_cmd.replace('"', '""')
+    vbs_pythonw_cmd = pythonw_path + ' "' + run_py + '"'
+    vbs_pythonw_escaped = vbs_pythonw_cmd.replace('"', '""')
+    vbs_frontend_cmd = f'cmd /c cd /d "{frontend_dir}" && "{npx_path}" vite'
+    vbs_frontend_escaped = vbs_frontend_cmd.replace('"', '""')
 
-    if not AUTOSTART_VBS_BACKEND.exists():
-        lines = [
-            "' TaskM Backend Auto-Start (backend only)",
-            "Set WshShell = CreateObject(\"WScript.Shell\")",
-            'WshShell.Run "' + vbs_cmd_escaped + '", 0, False',
-            "",
-        ]
-        AUTOSTART_VBS_BACKEND.write_text("\r\n".join(lines), encoding="utf-8")
+    # 始终重新生成 VBS 脚本（确保内容最新）
+    # backend 版本：启动后端+前端，不打开浏览器
+    lines = [
+        "' TaskM Auto-Start (both services, no browser)",
+        "Set WshShell = CreateObject(\"WScript.Shell\")",
+        "' Start backend",
+        'WshShell.Run "' + vbs_pythonw_escaped + '", 0, False',
+        "' Start frontend",
+        'WshShell.Run "' + vbs_frontend_escaped + '", 0, False',
+        "",
+    ]
+    AUTOSTART_VBS_BACKEND.write_text("\r\n".join(lines), encoding="utf-8")
 
-    if not AUTOSTART_VBS_FULL.exists():
-        lines = [
-            "' TaskM Backend Auto-Start (full)",
-            "Set WshShell = CreateObject(\"WScript.Shell\")",
-            'WshShell.Run "' + vbs_cmd_escaped + '", 0, False',
-            "WScript.Sleep 8000",
-            'WshShell.Run "http://localhost:5173/", 1, False',
-            "",
-        ]
-        AUTOSTART_VBS_FULL.write_text("\r\n".join(lines), encoding="utf-8")
+    # full 版本：启动后端+前端，然后打开浏览器
+    lines = [
+        "' TaskM Auto-Start (both services with browser)",
+        "Set WshShell = CreateObject(\"WScript.Shell\")",
+        "' Start backend",
+        'WshShell.Run "' + vbs_pythonw_escaped + '", 0, False',
+        "' Start frontend",
+        'WshShell.Run "' + vbs_frontend_escaped + '", 0, False',
+        "' Wait for services to be ready",
+        "WScript.Sleep 10000",
+        "' Open browser",
+        'WshShell.Run "http://localhost:5173/", 1, False',
+        "",
+    ]
+    AUTOSTART_VBS_FULL.write_text("\r\n".join(lines), encoding="utf-8")
 
 
 def _write_registry(mode: str | None):
@@ -180,6 +196,7 @@ def get_status():
 @router.get("/autostart")
 def get_autostart():
     """获取当前开机自启动配置"""
+    _ensure_vbs_scripts()
     mode = _read_registry()
     return {"enabled": mode is not None, "mode": mode or "off"}
 
@@ -203,19 +220,63 @@ def set_autostart(body: AutostartMode):
     return get_autostart()
 
 
-# ── 停止服务（自毁模式） ──
+class SettingsUpdate(BaseModel):
+    max_file_size_mb: int | None = None
+
+
+@router.post("/open-workspace")
+def open_workspace():
+    """在资源管理器中打开工作文件夹并激活窗口"""
+    import ctypes
+    workspace = os.path.normpath(str(ROOT))
+    # ShellExecuteW with nShowCmd=1 (SW_SHOWNORMAL) 确保窗口弹出到前台
+    ctypes.windll.shell32.ShellExecuteW(None, "explore", workspace, None, None, 1)
+    return {"status": "ok", "path": workspace}
+
+
+@router.get("/settings")
+def get_settings():
+    """获取所有通用设置"""
+    return load_settings()
+
+
+@router.put("/settings")
+def update_settings(body: SettingsUpdate):
+    """更新通用设置（仅传入需要修改的字段）"""
+    data = {}
+    if body.max_file_size_mb is not None:
+        if body.max_file_size_mb < 1 or body.max_file_size_mb > 500:
+            raise HTTPException(400, "max_file_size_mb 必须在 1~500 之间")
+        data["max_file_size_mb"] = body.max_file_size_mb
+    return save_settings(data)
+
+
+# ── 停止 & 重启服务 ──
 
 
 @router.post("/stop-backend")
 def stop_backend():
     """
     关闭后端服务（自毁模式）
-    后端进程自己 os._exit(0) 退出，比外部 taskkill 更可靠
     """
     from app.process_manager import shutdown_service
-    # 延迟 500ms 再自毁，让 HTTP 响应先发出去
     threading.Timer(0.5, shutdown_service).start()
     return {"status": "stopped", "service": "backend"}
+
+
+@router.post("/restart-backend")
+def restart_backend():
+    """重启后端服务：启动新进程后再关闭当前进程"""
+    run_py = str(ROOT / "backend" / "run.py")
+    subprocess.Popen(
+        ["python", run_py],
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    from app.process_manager import shutdown_service
+    threading.Timer(0.5, shutdown_service).start()
+    return {"status": "restarting", "service": "backend"}
 
 
 @router.post("/stop-frontend")
@@ -225,11 +286,51 @@ def stop_frontend():
     return {"status": "stopped", "service": "frontend"}
 
 
+@router.post("/restart-frontend")
+def restart_frontend():
+    """重启前端页面服务：杀死旧进程后启动新 Vite"""
+    _kill_process_on_port(5173)
+    frontend_dir = str(ROOT / "frontend")
+    subprocess.Popen(
+        ["npx", "vite"],
+        cwd=frontend_dir,
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {"status": "restarting", "service": "frontend"}
+
+
 @router.post("/stop-all")
 def stop_all():
     """一键关闭前后端服务"""
     _kill_process_on_port(5173)
     from app.process_manager import shutdown_service
-    # 延迟 500ms 再自毁，让 HTTP 响应先发出去
     threading.Timer(0.5, shutdown_service).start()
     return {"status": "stopped", "services": ["backend", "frontend"]}
+
+
+@router.post("/restart-all")
+def restart_all():
+    """重启所有服务"""
+    # 重启前端
+    _kill_process_on_port(5173)
+    frontend_dir = str(ROOT / "frontend")
+    subprocess.Popen(
+        ["npx", "vite"],
+        cwd=frontend_dir,
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    # 重启后端
+    run_py = str(ROOT / "backend" / "run.py")
+    subprocess.Popen(
+        ["python", run_py],
+        shell=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    from app.process_manager import shutdown_service
+    threading.Timer(0.5, shutdown_service).start()
+    return {"status": "restarting", "services": ["backend", "frontend"]}

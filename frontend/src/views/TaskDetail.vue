@@ -16,6 +16,9 @@
         <!-- 标题 + 删除按钮 -->
         <div class="title-row">
           <div class="title-left">
+            <el-button @click="router.back()" class="back-btn">
+              <el-icon><ArrowLeft /></el-icon> 返回
+            </el-button>
             <h1 class="page-title">{{ task.title }}</h1>
             <el-button size="small" text @click="openEditTask" class="title-edit-btn">
               <el-icon><Edit /></el-icon>
@@ -840,6 +843,8 @@ const removeAtt = async (a) => {
 .title-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
 .title-left .title-edit-btn { flex-shrink: 0; color: #999; }
 .title-left .title-edit-btn:hover { color: #409eff; }
+.title-left .back-btn { flex-shrink: 0; }
+.title-left .back-btn:hover { color: #534ab7; border-color: #d0cff0; background: #f5f4ff; }
 .page-title { font-size: 22px; font-weight: 600; color: #222; margin: 0; }
 .task-desc { color: #555; font-size: 14px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 20px; }
 .task-desc-empty { color: #bbb; }

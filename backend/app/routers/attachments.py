@@ -14,7 +14,8 @@ from ..office_convert import is_office_file, convert_to_pdf
 router = APIRouter(tags=["attachments"])
 
 ALLOWED_MIME_TYPES = None  # None = 允许所有类型
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+from ..settings_manager import get_max_file_size
 
 
 async def save_upload(file: UploadFile, sub_dir: str) -> dict:
@@ -24,13 +25,14 @@ async def save_upload(file: UploadFile, sub_dir: str) -> dict:
     unique_name = f"{uuid.uuid4().hex}{ext}"
     file_path = os.path.join(save_dir, unique_name)
     size = 0
+    max_size = get_max_file_size()
     async with aiofiles.open(file_path, "wb") as f:
         while chunk := await file.read(1024 * 64):
             size += len(chunk)
-            if size > MAX_FILE_SIZE:
+            if size > max_size:
                 await f.close()
                 os.remove(file_path)
-                raise HTTPException(413, "文件超过 50MB 限制")
+                raise HTTPException(413, f"文件超过 {max_size // (1024*1024)}MB 限制")
             await f.write(chunk)
     return {
         "filename": unique_name,

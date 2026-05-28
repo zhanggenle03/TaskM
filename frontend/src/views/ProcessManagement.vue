@@ -1,114 +1,80 @@
 <template>
-  <div class="process-page">
-    <h2 class="page-title">进程管理</h2>
+  <div class="settings-page">
+    <h2 class="page-title">通用设置</h2>
 
-    <!-- ── 服务状态 ── -->
-    <el-card shadow="never" class="section-card">
+    <!-- ── 服务运行状态 ── -->
+    <el-card shadow="never" class="sec-card">
       <template #header>
-        <div class="section-header">
+        <div class="card-head">
           <span>服务运行状态</span>
-          <el-button size="small" @click="refreshStatus" :loading="refreshing">
-            刷新
-          </el-button>
+          <el-button size="small" text @click="refreshStatus" :loading="refreshing">刷新</el-button>
         </div>
       </template>
-      <div class="status-grid">
-        <div class="status-item" :class="{ running: status.backend }">
-          <span class="status-dot" :class="{ running: status.backend }"></span>
-          <div>
-            <div class="svc-name">后端服务</div>
-            <div class="svc-detail">
-              <template v-if="status.backend">运行中 (端口 8000)</template>
-              <template v-else>已停止</template>
-            </div>
-          </div>
-          <el-button
-            v-if="status.backend"
-            size="small"
-            type="danger"
-            plain
-            @click="stopBackend"
-            :loading="stopping.backend"
-            class="stop-btn"
-          >
-            停止
+      <div class="svc-grid">
+        <div class="svc-row" :class="{ on: status.backend }">
+          <span class="dot" :class="{ on: status.backend }"></span>
+          <span class="svc-name">后端服务</span>
+          <span class="svc-stat">{{ status.backend ? '运行中 (8000)' : '已停止' }}</span>
+          <span style="flex:1"></span>
+          <el-button v-if="status.backend" size="small" text type="warning" @click="restartBackend" :loading="restarting.backend">
+            <el-icon><Refresh /></el-icon> 重启
           </el-button>
         </div>
-        <div class="status-item" :class="{ running: status.frontend }">
-          <span class="status-dot" :class="{ running: status.frontend }"></span>
-          <div>
-            <div class="svc-name">前端页面</div>
-            <div class="svc-detail">
-              <template v-if="status.frontend">运行中 (端口 5173)</template>
-              <template v-else>已停止</template>
-            </div>
-          </div>
-          <el-button
-            v-if="status.frontend"
-            size="small"
-            type="danger"
-            plain
-            @click="stopFrontend"
-            :loading="stopping.frontend"
-            class="stop-btn"
-          >
-            停止
+        <div class="svc-row" :class="{ on: status.frontend }">
+          <span class="dot" :class="{ on: status.frontend }"></span>
+          <span class="svc-name">前端页面</span>
+          <span class="svc-stat">{{ status.frontend ? '运行中 (5173)' : '已停止' }}</span>
+          <span style="flex:1"></span>
+          <el-button v-if="status.frontend" size="small" text type="warning" @click="restartFrontend" :loading="restarting.frontend">
+            <el-icon><Refresh /></el-icon> 重启
           </el-button>
         </div>
       </div>
-
-      <div class="action-bar">
-        <el-button
-          type="danger"
-          @click="stopAll"
-          :loading="stopping.all"
-          :disabled="!status.backend && !status.frontend"
-        >
-          一键关闭所有服务
+      <div class="card-foot">
+        <el-button size="small" type="warning" plain @click="restartAll" :loading="restarting.all" :disabled="!status.backend && !status.frontend">
+          <el-icon><Refresh /></el-icon> 重启所有服务
         </el-button>
       </div>
     </el-card>
 
     <!-- ── 开机自启动 ── -->
-    <el-card shadow="never" class="section-card">
+    <el-card shadow="never" class="sec-card">
       <template #header>
-        <div class="section-header">
+        <div class="card-head">
           <span>开机自启动</span>
-          <el-switch
-            v-model="autostartEnabled"
-            @change="onAutostartToggle"
-            :loading="saving"
-          />
+          <el-switch v-model="autostartEnabled" @change="onAutostartToggle" :loading="saving" size="small" />
         </div>
       </template>
-
       <template v-if="autostartEnabled">
-        <p class="desc-text">
-          开机时自动启动 TaskM 后端服务。选择「完整模式」还会在启动后自动打开浏览器。
-        </p>
-        <el-radio-group
-          v-model="autostartMode"
-          @change="onAutostartModeChange"
-          :disabled="saving"
-          class="mode-group"
-        >
-          <el-radio value="backend">
-            <div class="radio-option">
-              <div class="radio-title">仅后端服务</div>
-              <div class="radio-desc">开机后在后台静默启动后端，不打开浏览器</div>
-            </div>
-          </el-radio>
-          <el-radio value="full">
-            <div class="radio-option">
-              <div class="radio-title">完整模式</div>
-              <div class="radio-desc">开机后启动后端，并自动打开浏览器进入主界面</div>
-            </div>
-          </el-radio>
+        <p class="hint">开机时自动启动 TaskM 后端和前端服务。</p>
+        <el-radio-group v-model="autostartMode" @change="onAutostartModeChange" :disabled="saving">
+          <el-radio value="backend" class="radio-compact">启动服务 — 开机后在后台静默启动后端和前端，不打开浏览器</el-radio>
+          <el-radio value="full" class="radio-compact">启动服务并打开浏览器 — 开机后启动服务，并自动打开浏览器进入主界面</el-radio>
         </el-radio-group>
       </template>
-      <p v-else class="desc-text muted">
-        开机自启动已关闭。开启后可选择启动方式。
-      </p>
+      <p v-else class="hint muted">开机自启动已关闭，开启后可选择启动方式。</p>
+    </el-card>
+
+    <!-- ── 文件 & 工作区 ── -->
+    <el-card shadow="never" class="sec-card">
+      <template #header>
+        <div class="card-head">
+          <span>文件 & 工作区</span>
+        </div>
+      </template>
+      <div class="file-row">
+        <span class="file-lbl">工作文件夹</span>
+        <el-button size="small" @click="openWorkspace" :loading="openingWorkspace">
+          <el-icon><FolderOpened /></el-icon> 打开
+        </el-button>
+      </div>
+      <div class="file-row">
+        <span class="file-lbl">附件大小限制</span>
+        <el-input-number v-model="maxFileSizeMB" :min="1" :max="500" :disabled="settingsSaving" controls-position="right" size="small" style="width:110px" />
+        <span class="unit">MB</span>
+        <el-button size="small" type="primary" @click="saveFileSize" :loading="settingsSaving">保存</el-button>
+        <span class="hint" style="margin-left:8px">1~500MB 可调</span>
+      </div>
     </el-card>
   </div>
 </template>
@@ -121,9 +87,47 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const refreshing = ref(false)
 const saving = ref(false)
 const status = ref({ backend: false, frontend: false })
-const stopping = ref({ backend: false, frontend: false, all: false })
+const restarting = ref({ backend: false, frontend: false, all: false })
 const autostartEnabled = ref(false)
 const autostartMode = ref('backend')
+
+// ── 附件大小限制 ──
+const maxFileSizeMB = ref(50)
+const settingsSaving = ref(false)
+
+// ── 工作文件夹 ──
+const openingWorkspace = ref(false)
+
+async function openWorkspace() {
+  openingWorkspace.value = true
+  try {
+    await http.post('/process/open-workspace')
+    ElMessage.success('已打开工作文件夹')
+  } catch {
+    ElMessage.error('打开失败')
+  }
+  openingWorkspace.value = false
+}
+
+async function refreshSettings() {
+  try {
+    const res = await http.get('/process/settings')
+    maxFileSizeMB.value = res.max_file_size_mb ?? 50
+  } catch {
+    // 默认 50MB
+  }
+}
+
+async function saveFileSize() {
+  settingsSaving.value = true
+  try {
+    await http.put('/process/settings', { max_file_size_mb: maxFileSizeMB.value })
+    ElMessage.success('附件大小限制已更新')
+  } catch {
+    ElMessage.error('保存失败')
+  }
+  settingsSaving.value = false
+}
 
 async function refreshStatus() {
   refreshing.value = true
@@ -167,10 +171,10 @@ async function onAutostartModeChange(val) {
   saving.value = false
 }
 
-async function confirmStop(title) {
+async function confirmRestart(title) {
   try {
     await ElMessageBox.confirm(title, '确认操作', {
-      confirmButtonText: '确认关闭',
+      confirmButtonText: '确认重启',
       cancelButtonText: '取消',
       type: 'warning',
     })
@@ -180,107 +184,97 @@ async function confirmStop(title) {
   }
 }
 
-async function stopBackend() {
-  if (!(await confirmStop('确认关闭后端服务？\n关闭后 API 将不可用。'))) return
-  stopping.value.backend = true
+async function restartBackend() {
+  if (!(await confirmRestart('确认重启后端服务？\n重启期间 API 将短暂不可用。'))) return
+  restarting.value.backend = true
   try {
-    await http.post('/process/stop-backend')
-    status.value.backend = false
-    ElMessage.success('后端服务已关闭')
+    await http.post('/process/restart-backend')
+    ElMessage.success('后端服务正在重启...')
   } catch {
-    status.value.backend = false
-    ElMessage.success('后端服务已关闭')
+    ElMessage.success('后端服务正在重启...')
   }
-  stopping.value.backend = false
+  status.value.backend = false
+  restarting.value.backend = false
 }
 
-async function stopFrontend() {
-  if (!(await confirmStop('确认关闭前端服务？\n关闭后页面将无法刷新。'))) return
-  stopping.value.frontend = true
+async function restartFrontend() {
+  if (!(await confirmRestart('确认重启前端服务？\n重启期间页面将刷新。'))) return
+  restarting.value.frontend = true
   try {
-    await http.post('/process/stop-frontend')
-    status.value.frontend = false
-    ElMessage.success('前端服务已关闭')
+    await http.post('/process/restart-frontend')
+    ElMessage.success('前端服务正在重启...')
   } catch {
-    status.value.frontend = false
-    ElMessage.success('前端服务已关闭')
+    ElMessage.success('前端服务正在重启...')
   }
-  stopping.value.frontend = false
+  status.value.frontend = false
+  restarting.value.frontend = false
 }
 
-async function stopAll() {
-  if (!(await confirmStop('确认关闭所有服务？\n关闭后本页面将不可用。'))) return
-  stopping.value.all = true
+async function restartAll() {
+  if (!(await confirmRestart('确认重启所有服务？\n重启后页面将自动刷新。'))) return
+  restarting.value.all = true
   try {
-    await http.post('/process/stop-all')
-    ElMessage.success('所有服务已关闭')
+    await http.post('/process/restart-all')
+    ElMessage.success('所有服务正在重启...')
   } catch {
-    ElMessage.success('所有服务已关闭')
+    ElMessage.success('所有服务正在重启...')
   }
-  status.value = { backend: false, frontend: false }
-  stopping.value.all = false
-  // 跳转到关闭提示页
-  window.location.href = '/closed.html'
+  // 后端重启后刷新页面
+  setTimeout(() => { window.location.reload() }, 2000)
 }
 
 onMounted(() => {
   refreshStatus()
   refreshAutostart()
+  refreshSettings()
 })
 </script>
 
 <style scoped>
-.process-page {
-  max-width: 700px;
+.settings-page {
+  max-width: 640px;
   margin: 0 auto;
 }
 .page-title {
-  font-size: 22px; font-weight: 600; margin-bottom: 24px; color: #2c2c2a;
+  font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #2c2c2a;
 }
-.section-card {
-  margin-bottom: 20px; border-radius: 10px;
-}
-.section-header {
+
+/* 卡片 */
+.sec-card { margin-bottom: 14px; border-radius: 8px; }
+.sec-card :deep(.el-card__body) { padding: 10px 16px 14px; }
+
+.card-head {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 15px; font-weight: 600;
+  font-size: 14px; font-weight: 600; color: #444;
 }
 
-/* 状态卡片 */
-.status-grid {
-  display: flex; gap: 24px;
+/* 服务状态 */
+.svc-grid { display: flex; flex-direction: column; gap: 6px; }
+.svc-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 6px; background: #f8f8f6;
 }
-.status-item {
-  display: flex; align-items: center; gap: 12px;
-  flex: 1; padding: 16px; background: #f8f8f6; border-radius: 8px;
-}
-.status-dot {
-  width: 12px; height: 12px; border-radius: 50%;
+.svc-row.on { background: #f0faf0; }
+.dot {
+  width: 10px; height: 10px; border-radius: 50%;
   background: #ccc; flex-shrink: 0;
-  transition: background 0.3s, box-shadow 0.3s;
 }
-.status-dot.running {
-  background: #52c41a;
-  box-shadow: 0 0 8px rgba(82,196,26,0.4);
-}
-.svc-name { font-size: 14px; font-weight: 600; color: #2c2c2a; }
-.svc-detail { font-size: 12px; color: #999; margin-top: 2px; }
-.stop-btn { margin-left: auto; flex-shrink: 0; }
-.status-item.running { background: #f0faf0; }
-
-.action-bar {
-  margin-top: 16px;
-  display: flex; justify-content: flex-end;
-}
+.dot.on { background: #52c41a; }
+.svc-name { font-size: 13px; font-weight: 500; color: #2c2c2a; }
+.svc-stat { font-size: 12px; color: #888; }
+.card-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
 
 /* 自启动 */
-.desc-text {
-  font-size: 13px; color: #666; line-height: 1.6; margin-bottom: 20px;
+.hint { font-size: 12px; color: #666; line-height: 1.5; margin-bottom: 6px; }
+.hint.muted { color: #aaa; }
+.radio-compact { margin: 0 0 4px !important; font-size: 13px; }
+
+/* 文件 */
+.file-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 0;
 }
-.desc-text.muted { color: #aaa; }
-.mode-group {
-  display: flex; flex-direction: column; gap: 12px;
-}
-.radio-option { padding: 4px 0; }
-.radio-title { font-size: 14px; font-weight: 500; color: #2c2c2a; }
-.radio-desc { font-size: 12px; color: #999; margin-top: 2px; }
+.file-row + .file-row { border-top: 1px solid #f0f0ee; }
+.file-lbl { font-size: 13px; color: #444; width: 90px; flex-shrink: 0; }
+.unit { font-size: 12px; color: #888; }
 </style>

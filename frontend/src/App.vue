@@ -16,7 +16,7 @@
         </el-menu-item>
         <el-menu-item index="/process">
           <el-icon><Setting /></el-icon>
-          <span>进程管理</span>
+          <span>通用设置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>

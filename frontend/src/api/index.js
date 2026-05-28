@@ -77,3 +77,7 @@ export const uploadCommAttachment = (projectId, taskId, commId, file) => {
 export const downloadAttachment = (id) => `/api/attachments/${id}/download`
 export const deleteAttachment = (id) => http.delete(`/attachments/${id}`)
 export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { original_filename: name })
+
+// --- Settings ---
+export const getSettings = () => http.get('/process/settings')
+export const updateSettings = (data) => http.put('/process/settings', data)
