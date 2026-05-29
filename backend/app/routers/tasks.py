@@ -36,23 +36,75 @@ def _get_comm_type_name(db, project_id):
 # ---------- 任务 CRUD ----------
 
 @router.get("", response_model=List[TaskOut])
-def list_tasks(project_id: int, status_id: Optional[int] = None, db: Session = Depends(get_db)):
+def list_tasks(
+    project_id: int,
+    status_id: Optional[int] = None,
+    sort_by: str = "updated_at",
+    sort_order: str = "desc",
+    db: Session = Depends(get_db),
+):
     tasks = db.query(Task).options(
         joinedload(Task.contacts)
-    ).filter(Task.project_id == project_id).order_by(Task.updated_at.desc()).all()
+    ).filter(Task.project_id == project_id).all()
 
-    # 从沟通记录推导每个任务的最终状态（与 get_task 一致）
-    if tasks:
-        task_ids = [t.id for t in tasks]
-        for t in tasks:
-            derived = derive_task_status(db, t.id)
-            if derived is not None:
-                t.status_id = derived
+    if not tasks:
+        return tasks
+
+    task_ids = [t.id for t in tasks]
+
+    # 从沟通记录推导每个任务的最终状态
+    for t in tasks:
+        derived = derive_task_status(db, t.id)
+        if derived is not None:
+            t.status_id = derived
+
+    # 批量查询每个任务的最后一条沟通时间
+    from sqlalchemy import func as sa_func
+    last_comm_rows = db.query(
+        Communication.task_id,
+        sa_func.max(Communication.comm_at).label("max_comm_at")
+    ).filter(
+        Communication.task_id.in_(task_ids)
+    ).group_by(Communication.task_id).all()
+    comm_at_map = {row.task_id: row.max_comm_at for row in last_comm_rows}
+
+    # 排序（Python 层面，因为状态是在内存中推导的）
+    sort_key = None
+    if sort_by == "title":
+        sort_key = lambda t: t.title or ""
+        reverse = (sort_order == "desc")
+    elif sort_by == "status":
+        # 加载项目状态池 sort_order 映射
+        pools = db.query(StatusPool).filter(StatusPool.project_id == project_id).all()
+        status_order_map = {p.id: p.sort_order for p in pools}
+        sort_key = lambda t: status_order_map.get(t.status_id, 9999)
+        reverse = (sort_order == "desc")
+    else:  # 默认按最后沟通时间
+        sort_key = lambda t: comm_at_map.get(t.id) or datetime.min
+        reverse = (sort_order == "desc")
+
+    tasks.sort(key=sort_key, reverse=reverse)
 
     if status_id is not None:
         tasks = [t for t in tasks if t.status_id == status_id]
 
-    return tasks
+    # 构建最终返回数据（含 last_comm_at）
+    result = []
+    for t in tasks:
+        result.append({
+            "id": t.id,
+            "project_id": t.project_id,
+            "title": t.title,
+            "description": t.description,
+            "priority": t.priority,
+            "due_date": t.due_date,
+            "status_id": t.status_id,
+            "created_at": t.created_at,
+            "updated_at": t.updated_at,
+            "contacts": t.contacts,
+            "last_comm_at": comm_at_map.get(t.id),
+        })
+    return result
 
 
 @router.post("", response_model=TaskOut)

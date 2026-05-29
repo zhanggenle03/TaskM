@@ -9,6 +9,19 @@ from ..schemas import (
     CheckinCreate, CheckinOut, BatchDeleteIds,
 )
 
+
+def _ensure_single_default(db: Session, model_class, project_id: int, exclude_id: int = None):
+    """确保项目内该池类型只有一个默认项。将其他 is_default=True 的项取消。"""
+    others = db.query(model_class).filter(
+        model_class.project_id == project_id,
+        model_class.is_default == True,
+    )
+    if exclude_id is not None:
+        others = others.filter(model_class.id != exclude_id)
+    for item in others.all():
+        item.is_default = False
+
+
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
@@ -174,6 +187,9 @@ def list_statuses(project_id: int, db: Session = Depends(get_db)):
 def create_status(project_id: int, data: StatusPoolCreate, db: Session = Depends(get_db)):
     status = StatusPool(project_id=project_id, **data.model_dump())
     db.add(status)
+    db.flush()
+    if data.is_default:
+        _ensure_single_default(db, StatusPool, project_id, exclude_id=status.id)
     db.commit()
     db.refresh(status)
     touch_project(db, project_id)
@@ -187,6 +203,9 @@ def update_status(project_id: int, status_id: int, data: StatusPoolUpdate, db: S
         raise HTTPException(404, "状态不存在")
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(status, k, v)
+    db.flush()
+    if data.is_default is True:
+        _ensure_single_default(db, StatusPool, project_id, exclude_id=status.id)
     db.commit()
     db.refresh(status)
     touch_project(db, project_id)
@@ -214,6 +233,9 @@ def list_comm_types(project_id: int, db: Session = Depends(get_db)):
 def create_comm_type(project_id: int, data: CommTypePoolCreate, db: Session = Depends(get_db)):
     ct = CommTypePool(project_id=project_id, **data.model_dump())
     db.add(ct)
+    db.flush()
+    if data.is_default:
+        _ensure_single_default(db, CommTypePool, project_id, exclude_id=ct.id)
     db.commit()
     db.refresh(ct)
     touch_project(db, project_id)
@@ -227,6 +249,9 @@ def update_comm_type(project_id: int, type_id: int, data: CommTypePoolUpdate, db
         raise HTTPException(404, "沟通类型不存在")
     for k, v in data.model_dump(exclude_none=True).items():
         setattr(ct, k, v)
+    db.flush()
+    if data.is_default is True:
+        _ensure_single_default(db, CommTypePool, project_id, exclude_id=ct.id)
     db.commit()
     db.refresh(ct)
     touch_project(db, project_id)

@@ -11,7 +11,10 @@
         <h1 class="page-title">{{ project?.name }}</h1>
         <p class="page-sub">{{ project?.description }}</p>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        <el-select v-model="sortBy" size="small" style="width:120px" @change="loadTasks" placeholder="排序方式">
+          <el-option v-for="opt in sortOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
+        </el-select>
         <el-button @click="removeProject">
           <el-icon><Delete /></el-icon> 删除项目
         </el-button>
@@ -47,13 +50,13 @@
       >
         <div class="task-status-dot" :style="{ background: statusColor(t.status_id) }"></div>
         <div class="task-info">
-          <div class="task-title">{{ t.title }}</div>
+          <div class="task-title">{{ t.title }}<span v-if="t.due_date" class="task-date"> 截止 {{ t.due_date }}</span></div>
           <div class="task-meta">
             <el-tag v-if="t.priority" :type="priorityType(t.priority)" size="small">{{ priorityLabel(t.priority) }}</el-tag>
-            <span v-if="t.due_date" class="task-date">截止 {{ t.due_date }}</span>
             <span class="task-contacts" v-if="t.contacts?.length">
               <el-icon><User /></el-icon> {{ t.contacts.map(c => c.name).join('、') }}
             </span>
+            <span v-if="t.last_comm_at" class="task-comm-time">{{ formatTime(t.last_comm_at) }}</span>
           </div>
         </div>
         <div class="task-status-tag">
@@ -119,6 +122,12 @@ const project = ref(null)
 const tasks = ref([])
 const statuses = ref([])
 const activeStatus = ref(route.query.status_id ? Number(route.query.status_id) : null)
+const sortBy = ref('updated_at')
+const sortOptions = [
+  { key: 'updated_at', label: '更新时间' },
+  { key: 'status', label: '状态' },
+  { key: 'title', label: '名称' },
+]
 const showCreate = ref(false)
 const loading = ref(false)
 const editTarget = ref(null)
@@ -135,7 +144,8 @@ const load = async () => {
   await loadTasks()
 }
 const loadTasks = async () => {
-  const params = activeStatus.value !== null ? { status_id: activeStatus.value } : {}
+  const params = { sort_by: sortBy.value, sort_order: 'asc' }
+  if (activeStatus.value !== null) params.status_id = activeStatus.value
   tasks.value = await getTasks(projectId, params)
 }
 
@@ -144,6 +154,8 @@ const setFilter = (statusId) => {
   router.replace({ query: { ...route.query, status_id: statusId || undefined } })
   loadTasks()
 }
+
+const formatTime = (dt) => dayjs(dt).format('YYYY-MM-DD HH:mm')
 
 const goTask = (taskId) => {
   router.push({
@@ -231,9 +243,11 @@ const removeProject = async () => {
 .task-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .task-info { flex: 1; min-width: 0; }
 .task-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-title .task-date { font-size: 12px; font-weight: 400; }
 .task-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #888; }
 .task-date { color: #e24b4a; }
 .task-contacts { display: flex; align-items: center; gap: 3px; }
+.task-comm-time { color: #aaa; font-size: 12px; }
 .task-status-tag { flex-shrink: 0; }
 .task-actions { display: flex; gap: 4px; flex-shrink: 0; }
 

@@ -197,6 +197,7 @@ class TaskOut(BaseModel):
     priority: str
     due_date: Optional[date]
     status_id: Optional[int]
+    last_comm_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
     contacts: List[ContactOut] = []
