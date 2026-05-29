@@ -74,10 +74,13 @@ def list_tasks(
         sort_key = lambda t: t.title or ""
         reverse = (sort_order == "desc")
     elif sort_by == "status":
-        # 加载项目状态池 sort_order 映射
-        pools = db.query(StatusPool).filter(StatusPool.project_id == project_id).all()
-        status_order_map = {p.id: p.sort_order for p in pools}
-        sort_key = lambda t: status_order_map.get(t.status_id, 9999)
+        # 加载项目状态池 sort_order 映射（按 sort_order, id 排序以保证相同 sort_order 内的顺序）
+        pools = db.query(StatusPool).filter(StatusPool.project_id == project_id).order_by(StatusPool.sort_order, StatusPool.id).all()
+        # 为每个状态池分配一个唯一的排序序号
+        pool_rank = {}
+        for idx, p in enumerate(pools):
+            pool_rank[p.id] = idx
+        sort_key = lambda t: pool_rank.get(t.status_id, 9999)
         reverse = (sort_order == "desc")
     else:  # 默认按最后沟通时间
         sort_key = lambda t: comm_at_map.get(t.id) or datetime.min

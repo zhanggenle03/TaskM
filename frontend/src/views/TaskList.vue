@@ -12,7 +12,7 @@
         <p class="page-sub">{{ project?.description }}</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <el-select v-model="sortBy" size="small" style="width:120px" @change="loadTasks" placeholder="排序方式">
+        <el-select v-model="sortBy" style="width:120px" @change="onSortChange" placeholder="排序方式">
           <el-option v-for="opt in sortOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
         </el-select>
         <el-button @click="removeProject">
@@ -122,7 +122,7 @@ const project = ref(null)
 const tasks = ref([])
 const statuses = ref([])
 const activeStatus = ref(route.query.status_id ? Number(route.query.status_id) : null)
-const sortBy = ref('updated_at')
+const sortBy = ref(route.query.sort_by || 'updated_at')
 const sortOptions = [
   { key: 'updated_at', label: '更新时间' },
   { key: 'status', label: '状态' },
@@ -155,6 +155,11 @@ const setFilter = (statusId) => {
   loadTasks()
 }
 
+const onSortChange = (val) => {
+  router.replace({ query: { ...route.query, sort_by: val || undefined } })
+  loadTasks()
+}
+
 const formatTime = (dt) => dayjs(dt).format('YYYY-MM-DD HH:mm')
 
 const goTask = (taskId) => {
@@ -164,11 +169,17 @@ const goTask = (taskId) => {
   })
 }
 
-// 监听路由 query 变化（如浏览器前进/后退时恢复筛选状态）
+// 监听路由 query 变化（如浏览器前进/后退时恢复筛选和排序状态）
 watch(() => route.query.status_id, (newVal) => {
   const sid = newVal ? Number(newVal) : null
   if (sid !== activeStatus.value) {
     activeStatus.value = sid
+    loadTasks()
+  }
+})
+watch(() => route.query.sort_by, (newVal) => {
+  if (newVal && newVal !== sortBy.value) {
+    sortBy.value = newVal
     loadTasks()
   }
 })
