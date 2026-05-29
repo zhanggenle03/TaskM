@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, D
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
-import os
+import os, random, string
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "taskm.db")
@@ -70,10 +70,10 @@ def sync_task_status(db, task_id):
     return task[0] if task else None
 
 
-def cleanup_comm_files(comm_id):
+def cleanup_comm_files(project_display_id, task_display_id, comm_id):
     """删除指定沟通记录的附件目录及所有文件"""
     import shutil
-    dir_path = os.path.join(UPLOAD_DIR, f"comm_{comm_id}")
+    dir_path = os.path.join(UPLOAD_DIR, project_display_id, task_display_id, f"comm_{comm_id}")
     if os.path.isdir(dir_path):
         shutil.rmtree(dir_path)
 
@@ -81,6 +81,8 @@ def cleanup_comm_files(comm_id):
 class Project(Base):
     __tablename__ = "projects"
     id = Column(Integer, primary_key=True, index=True)
+    display_id = Column(String(50), unique=True, nullable=True)
+    custom_prefix = Column(String(3), nullable=True)
     name = Column(String(200), nullable=False)
     description = Column(Text, default="")
     start_date = Column(Date, nullable=True)
@@ -110,6 +112,7 @@ class StatusPool(Base):
 class Task(Base):
     __tablename__ = "tasks"
     id = Column(Integer, primary_key=True, index=True)
+    display_id = Column(String(50), unique=True, nullable=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     status_id = Column(Integer, ForeignKey("status_pools.id"), nullable=True)
     title = Column(String(300), nullable=False)
@@ -253,3 +256,55 @@ class TaskTag(Base):
     __tablename__ = "task_tags"
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
     tag_id = Column(Integer, ForeignKey("tag_pools.id", ondelete="CASCADE"), primary_key=True)
+
+
+# ---- 显示ID生成工具函数 ----
+
+def _random_prefix() -> str:
+    """生成随机的3个大写字母前缀"""
+    return ''.join(random.choices(string.ascii_uppercase, k=3))
+
+
+def generate_project_display_id(db, prefix: str) -> tuple:
+    """生成项目显示ID，返回 (display_id, sequence_number)"""
+    today = datetime.now().strftime("%Y%m%d")
+    # 查询当天同前缀的最大序号
+    last = db.query(Project.display_id).filter(
+        Project.display_id.like(f"P{prefix}{today}%")
+    ).order_by(Project.display_id.desc()).first()
+    seq = (int(last[0][-2:]) + 1) if last and last[0][-2:].isdigit() else 1
+    seq_str = f"{seq:02d}"
+    return f"P{prefix}{today}{seq_str}", seq
+
+
+def generate_task_display_id(db, project) -> str:
+    """生成任务显示ID"""
+    prefix = project.custom_prefix or _random_prefix()
+    proj_suffix = project.display_id[-6:] if project.display_id else f"{project.id:06d}"[-6:]
+    # 查询同一项目下的最大序号
+    last = db.query(Task.display_id).filter(
+        Task.display_id.like(f"T{prefix}{proj_suffix}%")
+    ).order_by(Task.display_id.desc()).first()
+    seq = (int(last[0][-3:]) + 1) if last and last[0][-3:].isdigit() else 1
+    seq_str = f"{seq:03d}"
+    return f"T{prefix}{proj_suffix}{seq_str}"
+
+
+# ---- 显示ID查找工具函数 ----
+
+def resolve_project(db, project_display_id: str):
+    """根据显示ID查找项目，未找到抛出404"""
+    from fastapi import HTTPException
+    proj = db.query(Project).filter(Project.display_id == project_display_id).first()
+    if not proj:
+        raise HTTPException(404, "项目不存在")
+    return proj
+
+
+def resolve_task(db, project_pk: int, task_display_id: str):
+    """根据显示ID查找任务，未找到抛出404"""
+    from fastapi import HTTPException
+    task = db.query(Task).filter(Task.display_id == task_display_id, Task.project_id == project_pk).first()
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    return task

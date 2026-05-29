@@ -290,13 +290,6 @@
       <el-form :model="taskForm" label-width="80px">
         <el-form-item label="标题"><el-input v-model="taskForm.title" /></el-form-item>
         <el-form-item label="描述"><el-input v-model="taskForm.description" type="textarea" :rows="3" /></el-form-item>
-        <el-form-item label="标签">
-          <el-select v-model="taskForm.tag_ids" multiple placeholder="选择标签" style="width:100%">
-            <el-option v-for="t in tags" :key="t.id" :value="t.id" :label="t.name">
-              <span :style="{ color: t.color, marginRight: '6px' }">●</span>{{ t.name }}
-            </el-option>
-          </el-select>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showEditTask = false">取消</el-button>
@@ -411,8 +404,8 @@ import {
 
 const route = useRoute()
 const router = useRouter()
-const projectId = Number(route.params.projectId)
-const taskId = Number(route.params.taskId)
+const projectId = route.params.projectId
+const taskId = route.params.taskId
 const task = ref(null)
 const project = ref(null)
 const statuses = ref([])
@@ -563,7 +556,7 @@ const load = async () => {
   task.value = t
   statuses.value = s
   commTypes.value = ct
-  project.value = allProjects.find((p) => p.id === projectId) || null
+  project.value = allProjects.find((p) => p.display_id === projectId) || null
   tags.value = tg
   selectedTagIds.value = (t.tags || []).map(tag => tag.id)
   // 加载项目对接人库

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
-from ..database import get_db, ProjectContact, touch_project
+from ..database import get_db, ProjectContact, touch_project, resolve_project
 from .. import schemas
 
 router = APIRouter(prefix="/projects/{project_id}/contacts", tags=["project_contacts"])
@@ -10,12 +10,13 @@ router = APIRouter(prefix="/projects/{project_id}/contacts", tags=["project_cont
 
 @router.get("", response_model=List[schemas.ProjectContactOut])
 def get_project_contacts(
-    project_id: int,
+    project_id: str,
     search: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """获取项目对接人库列表，支持搜索，按首字母排序"""
-    query = db.query(ProjectContact).filter(ProjectContact.project_id == project_id)
+    proj = resolve_project(db, project_id)
+    query = db.query(ProjectContact).filter(ProjectContact.project_id == proj.id)
     
     if search:
         search_pattern = f"%{search}%"
@@ -41,14 +42,15 @@ def get_project_contacts(
 
 @router.post("", response_model=schemas.ProjectContactOut)
 def add_project_contact(
-    project_id: int,
+    project_id: str,
     contact: schemas.ProjectContactCreate,
     db: Session = Depends(get_db)
 ):
     """添加项目对接人"""
+    proj = resolve_project(db, project_id)
     # 检查是否已存在（同一项目下同名对接人）
     existing = db.query(ProjectContact).filter(
-        ProjectContact.project_id == project_id,
+        ProjectContact.project_id == proj.id,
         ProjectContact.name == contact.name
     ).first()
     
@@ -56,7 +58,7 @@ def add_project_contact(
         raise HTTPException(status_code=400, detail="该对接人已存在于项目库中")
     
     db_contact = ProjectContact(
-        project_id=project_id,
+        project_id=proj.id,
         name=contact.name,
         role=contact.role,
         contact_info=contact.contact_info
@@ -64,21 +66,22 @@ def add_project_contact(
     db.add(db_contact)
     db.commit()
     db.refresh(db_contact)
-    touch_project(db, project_id)
+    touch_project(db, proj.id)
     return db_contact
 
 
 @router.put("/{contact_id}", response_model=schemas.ProjectContactOut)
 def update_project_contact(
-    project_id: int,
+    project_id: str,
     contact_id: int,
     contact_update: schemas.ProjectContactUpdate,
     db: Session = Depends(get_db)
 ):
     """更新项目对接人"""
+    proj = resolve_project(db, project_id)
     db_contact = db.query(ProjectContact).filter(
         ProjectContact.id == contact_id,
-        ProjectContact.project_id == project_id
+        ProjectContact.project_id == proj.id
     ).first()
     
     if not db_contact:
@@ -90,20 +93,21 @@ def update_project_contact(
     
     db.commit()
     db.refresh(db_contact)
-    touch_project(db, project_id)
+    touch_project(db, proj.id)
     return db_contact
 
 
 @router.delete("/{contact_id}")
 def delete_project_contact(
-    project_id: int,
+    project_id: str,
     contact_id: int,
     db: Session = Depends(get_db)
 ):
     """删除项目对接人"""
+    proj = resolve_project(db, project_id)
     db_contact = db.query(ProjectContact).filter(
         ProjectContact.id == contact_id,
-        ProjectContact.project_id == project_id
+        ProjectContact.project_id == proj.id
     ).first()
     
     if not db_contact:
@@ -111,5 +115,5 @@ def delete_project_contact(
     
     db.delete(db_contact)
     db.commit()
-    touch_project(db, project_id)
+    touch_project(db, proj.id)
     return {"ok": True}

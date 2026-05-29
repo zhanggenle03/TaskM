@@ -60,10 +60,10 @@
       <div
         v-for="t in tasks" :key="t.id"
         class="task-row"
-        @click="goTask(t.id)"
+        @click="goTask(t.display_id)"
       >
         <div class="task-status-dot" :style="{ background: statusColor(t.status_id) }"></div>
-        <div class="task-info">
+          <div class="task-info">
           <div class="task-title">
             {{ t.title }}
             <span class="task-tags-inline" v-if="t.tags?.length">
@@ -142,7 +142,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
-const projectId = Number(route.params.projectId)
+const projectId = route.params.projectId
 const project = ref(null)
 const tasks = ref([])
 const statuses = ref([])
@@ -166,7 +166,7 @@ const defaultStatusId = ref(null)
 
 const load = async () => {
   const [all, s, tg] = await Promise.all([getProjects(), getStatuses(projectId), getTags(projectId)])
-  project.value = all.find(p => p.id === projectId)
+  project.value = all.find(p => p.display_id === projectId)
   statuses.value = s
   tags.value = tg
   defaultStatusId.value = s.find(st => st.is_default)?.id ?? null
@@ -266,7 +266,7 @@ const submit = async () => {
     const payload = { ...form.value }
     if (payload.status_id != null) payload.status_id = Number(payload.status_id)
     if (editTarget.value) {
-      await updateTask(projectId, editTarget.value.id, payload)
+      await updateTask(projectId, editTarget.value.display_id, payload)
       ElMessage.success('已更新')
     } else {
       await createTask(projectId, payload)
@@ -279,7 +279,7 @@ const submit = async () => {
 
 const removeTask = async (t) => {
   await ElMessageBox.confirm(`确定删除任务「${t.title}」吗？`, '警告', { type: 'warning' })
-  await deleteTask(projectId, t.id)
+  await deleteTask(projectId, t.display_id)
   ElMessage.success('已删除')
   await loadTasks()
 }

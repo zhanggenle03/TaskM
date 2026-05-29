@@ -7,7 +7,7 @@ import os
 import html as html_mod
 from urllib.parse import quote
 import aiofiles
-from ..database import get_db, Attachment, Communication, Task, UPLOAD_DIR, touch_project
+from ..database import get_db, Attachment, Communication, Task, Project, UPLOAD_DIR, touch_project, resolve_project
 from ..schemas import AttachmentOut, AttachmentUpdate
 from ..office_convert import is_office_file, convert_to_pdf
 
@@ -18,7 +18,8 @@ ALLOWED_MIME_TYPES = None  # None = 允许所有类型
 from ..settings_manager import get_max_file_size
 
 
-async def save_upload(file: UploadFile, sub_dir: str) -> dict:
+async def save_upload(file: UploadFile, project_display_id: str, task_display_id: str, comm_id: int) -> dict:
+    sub_dir = f"{project_display_id}/{task_display_id}/comm_{comm_id}"
     save_dir = os.path.join(UPLOAD_DIR, sub_dir)
     os.makedirs(save_dir, exist_ok=True)
     ext = os.path.splitext(file.filename)[1]
@@ -46,22 +47,23 @@ async def save_upload(file: UploadFile, sub_dir: str) -> dict:
 # 上传到沟通记录
 @router.post("/projects/{project_id}/tasks/{task_id}/communications/{comm_id}/attachments", response_model=AttachmentOut)
 async def upload_comm_attachment(
-    project_id: int, task_id: int, comm_id: int,
+    project_id: str, task_id: str, comm_id: int,
     file: UploadFile = File(...),
     db: Session = Depends(get_db)
 ):
-    comm = db.query(Communication).filter(Communication.id == comm_id, Communication.task_id == task_id).first()
+    proj = resolve_project(db, project_id)
+    task = db.query(Task).filter(Task.display_id == task_id, Task.project_id == proj.id).first()
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    comm = db.query(Communication).filter(Communication.id == comm_id, Communication.task_id == task.id).first()
     if not comm:
         raise HTTPException(404, "沟通记录不存在")
-    meta = await save_upload(file, f"comm_{comm_id}")
+    meta = await save_upload(file, proj.display_id, task.display_id, comm_id)
     att = Attachment(comm_id=comm_id, **meta)
     db.add(att)
     db.commit()
     db.refresh(att)
-    # 通过 Communication → Task → Project 链路更新时间
-    task = db.query(Task).filter(Task.id == comm.task_id).first()
-    if task:
-        touch_project(db, task.project_id)
+    touch_project(db, task.project_id)
     return att
 
 

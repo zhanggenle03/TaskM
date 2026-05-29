@@ -8,6 +8,7 @@ class ProjectCreate(BaseModel):
     name: str
     description: str = ""
     start_date: Optional[date] = None
+    custom_prefix: Optional[str] = None  # 3字母前缀，创建后不可更改
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
@@ -16,6 +17,8 @@ class ProjectUpdate(BaseModel):
 
 class ProjectOut(BaseModel):
     id: int
+    display_id: Optional[str]
+    custom_prefix: Optional[str]
     name: str
     description: str
     start_date: Optional[date]
@@ -221,6 +224,7 @@ class TaskUpdate(BaseModel):
 
 class TaskOut(BaseModel):
     id: int
+    display_id: Optional[str]
     project_id: int
     title: str
     description: str
@@ -254,12 +258,14 @@ class CheckinCreate(BaseModel):
 
 class ProjectBrief(BaseModel):
     id: int
+    display_id: Optional[str]
     name: str
     class Config:
         from_attributes = True
 
 class TaskBrief(BaseModel):
     id: int
+    display_id: Optional[str]
     title: str
     class Config:
         from_attributes = True

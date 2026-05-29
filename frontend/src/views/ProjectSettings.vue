@@ -6,6 +6,13 @@
       <el-breadcrumb-item>设置</el-breadcrumb-item>
     </el-breadcrumb>
 
+    <!-- 项目信息 -->
+    <div class="proj-info-bar" v-if="project">
+      <span><strong>{{ project.name }}</strong></span>
+      <el-tag v-if="project.display_id" size="small" type="info" effect="plain" style="margin-left:8px">{{ project.display_id }}</el-tag>
+      <span style="margin-left:12px;color:#999;font-size:13px">前缀：{{ project.custom_prefix || '未设置' }}（创建后不可更改）</span>
+    </div>
+
     <el-tabs v-model="activeTab" tab-position="left" style="min-height:400px">
       <!-- ===== 状态池 ===== -->
       <el-tab-pane label="状态池" name="status">
@@ -209,10 +216,12 @@ import {
   getCommTypes, createCommType, updateCommType, deleteCommType,
   getProjectContacts, addProjectContact, updateProjectContact, deleteProjectContact,
   getTags, createTag, updateTag, deleteTag,
+  getProjects,
 } from '../api'
 
 const route = useRoute()
-const projectId = Number(route.params.projectId)
+const projectId = route.params.projectId
+const project = ref(null)
 const activeTab = ref('status')
 
 const statuses = ref([])
@@ -282,12 +291,14 @@ const removePC = async (pc) => {
 }
 
 const load = async () => {
-  const [s, ct, pcs, tg] = await Promise.all([
+  const [projRes, s, ct, pcs, tg] = await Promise.all([
+    getProjects(),
     getStatuses(projectId),
     getCommTypes(projectId),
     getProjectContacts(projectId, {}),
     getTags(projectId),
   ])
+  project.value = projRes.find(p => p.display_id === projectId) || null
   statuses.value = s
   commTypes.value = ct
   projectContacts.value = pcs
@@ -474,4 +485,5 @@ const onTagDrop = async (i) => {
 .drag-handle { color: #bbb; cursor: grab; display: flex; align-items: center; }
 .drag-handle:active { cursor: grabbing; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; background: #eeedfe; color: #534ab7; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
+.proj-info-bar { padding: 10px 14px; background: #f9f9f8; border-radius: 8px; border: 1px solid #e8e8e4; margin-bottom: 20px; display: flex; align-items: center; }
 </style>

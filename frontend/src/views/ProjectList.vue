@@ -42,10 +42,13 @@
         :key="p.id"
         style="margin-bottom:16px"
       >
-        <div class="proj-card" @click="$router.push(`/projects/${p.id}`)">
+        <div class="proj-card" @click="$router.push(`/projects/${p.display_id}`)">
           <div class="proj-card-header">
             <div class="proj-icon">{{ p.name[0] }}</div>
-            <div class="proj-name">{{ p.name }}</div>
+            <div class="proj-info">
+              <el-tag v-if="p.display_id" size="small" type="info" effect="plain" style="font-size:10px;padding:0 3px;height:16px;line-height:16px;margin-bottom:1px;border-width:0">{{ p.display_id }}</el-tag>
+              <div class="proj-name">{{ p.name }}</div>
+            </div>
             <el-dropdown trigger="click" @command="cmd => onCmd(cmd, p)">
               <el-button size="small" @click.stop>
                 <el-icon><MoreFilled /></el-icon> 操作
@@ -94,6 +97,13 @@
         </el-form-item>
         <el-form-item label="开始时间">
           <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" placeholder="选择开始日期" style="width:100%" />
+        </el-form-item>
+        <el-form-item v-if="!editTarget" label="显示前缀">
+          <el-input v-model="form.custom_prefix" maxlength="3" placeholder="3个大写字母，留空随机生成" @input="v => form.custom_prefix = v.toUpperCase()" />
+          <div style="font-size:12px;color:#999;margin-top:4px">前缀创建后不可更改</div>
+        </el-form-item>
+        <el-form-item v-else label="显示前缀">
+          <el-input :model-value="editTarget.custom_prefix" disabled />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -207,14 +217,14 @@ const form = ref({ name: '', description: '', start_date: null })
 
 onMounted(() => load())
 
-const resetForm = () => { form.value = { name: '', description: '', start_date: null }; editTarget.value = null }
+const resetForm = () => { form.value = { name: '', description: '', start_date: null, custom_prefix: '' }; editTarget.value = null }
 
 const submit = async () => {
   if (!form.value.name.trim()) { ElMessage.warning('项目名称不能为空'); return }
   loading.value = true
   try {
     if (editTarget.value) {
-      await updateProject(editTarget.value.id, form.value)
+      await updateProject(editTarget.value.display_id, form.value)
       ElMessage.success('已更新')
     } else {
       await createProject(form.value)
@@ -228,11 +238,11 @@ const submit = async () => {
 const onCmd = async (cmd, p) => {
   if (cmd === 'edit') {
     editTarget.value = p
-    form.value = { name: p.name, description: p.description, start_date: p.start_date }
+    form.value = { name: p.name, description: p.description, start_date: p.start_date, custom_prefix: p.custom_prefix }
     showCreate.value = true
   } else if (cmd === 'delete') {
     await ElMessageBox.confirm(`确定删除项目「${p.name}」及其所有任务吗？`, '警告', { type: 'warning' })
-    await deleteProject(p.id)
+    await deleteProject(p.display_id)
     ElMessage.success('已删除')
     await load(searchText.value)
   }
@@ -291,7 +301,8 @@ const onCmd = async (cmd, p) => {
   font-weight: 600;
   flex-shrink: 0;
 }
-.proj-name { font-weight: 500; font-size: 15px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-name { font-weight: 500; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; }
 .proj-desc {
   font-size: 13px;
   color: #888;
@@ -303,6 +314,7 @@ const onCmd = async (cmd, p) => {
   overflow: hidden;
 }
 .proj-date { font-size: 12px; color: #bbb; }
+.proj-display-id { margin-bottom: 4px; }
 .date-sep { margin: 0 6px; color: #ddd; }
 .error-card {
   text-align: center;

@@ -297,8 +297,10 @@ const loadTasksForProjects = async (pids) => {
   const all = []
   for (const pid of pids) {
     try {
-      const ts = await getTasks(pid)
-      all.push(...ts.map((t) => ({ ...t, _projectLabel: projects.value.find((p) => p.id === pid)?.name })))
+      const proj = projects.value.find((p) => p.id === pid)
+      if (!proj) continue
+      const ts = await getTasks(proj.display_id || pid)
+      all.push(...ts.map((t) => ({ ...t, _projectLabel: proj.name })))
     } catch {}
   }
   tasksForSelected.value = all
@@ -319,7 +321,7 @@ const submitCheckin = async () => {
   } finally { checkinLoading.value = false }
 }
 const removeCheckin = async (chk) => {
-  await deleteCheckin(chk.projects?.[0]?.id || 0, chk.id)
+  await deleteCheckin(chk.projects?.[0]?.display_id || chk.projects?.[0]?.id || 0, chk.id)
   allCheckins.value = await getAllCheckins()
 }
 
@@ -394,8 +396,10 @@ const loadBatchTasks = async (pids) => {
   const all = []
   for (const pid of pids) {
     try {
-      const ts = await getTasks(pid)
-      all.push(...ts.map((t) => ({ ...t, _projectLabel: projects.value.find((p) => p.id === pid)?.name })))
+      const proj = projects.value.find((p) => p.id === pid)
+      if (!proj) continue
+      const ts = await getTasks(proj.display_id || pid)
+      all.push(...ts.map((t) => ({ ...t, _projectLabel: proj.name })))
     } catch {}
   }
   batchTasks.value = all
