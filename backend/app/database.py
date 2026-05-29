@@ -91,6 +91,7 @@ class Project(Base):
     status_pools = relationship("StatusPool", back_populates="project", cascade="all, delete-orphan")
     comm_type_pools = relationship("CommTypePool", back_populates="project", cascade="all, delete-orphan")
     project_contacts = relationship("ProjectContact", back_populates="project", cascade="all, delete-orphan")
+    tag_pools = relationship("TagPool", back_populates="project", cascade="all, delete-orphan")
 
 
 class StatusPool(Base):
@@ -122,6 +123,7 @@ class Task(Base):
     status = relationship("StatusPool", back_populates="tasks")
     contacts = relationship("Contact", back_populates="task", cascade="all, delete-orphan")
     communications = relationship("Communication", back_populates="task", cascade="all, delete-orphan", order_by="Communication.comm_at")
+    tags = relationship("TagPool", secondary="task_tags", back_populates="tasks", passive_deletes=True)
 
 
 class ProjectContact(Base):
@@ -231,3 +233,23 @@ class CheckinTask(Base):
     __tablename__ = "checkin_tasks"
     checkin_id = Column(Integer, ForeignKey("checkins.id", ondelete="CASCADE"), primary_key=True)
     task_id = Column(Integer, ForeignKey("tasks.id"), primary_key=True)
+
+
+class TagPool(Base):
+    """标签池 —— 项目级别的标签定义"""
+    __tablename__ = "tag_pools"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    color = Column(String(20), default="#5F5E5A")
+    sort_order = Column(Integer, default=0)
+
+    project = relationship("Project", back_populates="tag_pools")
+    tasks = relationship("Task", secondary="task_tags", back_populates="tags", passive_deletes=True)
+
+
+class TaskTag(Base):
+    """任务与标签的多对多关联表"""
+    __tablename__ = "task_tags"
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("tag_pools.id", ondelete="CASCADE"), primary_key=True)

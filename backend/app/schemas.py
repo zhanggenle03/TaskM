@@ -174,6 +174,34 @@ class CommunicationOut(BaseModel):
         from_attributes = True
 
 
+# ---- TagPool ----
+class TagPoolCreate(BaseModel):
+    name: str
+    color: str = "#5F5E5A"
+    sort_order: int = 0
+
+class TagPoolUpdate(BaseModel):
+    name: Optional[str] = None
+    color: Optional[str] = None
+    sort_order: Optional[int] = None
+
+class TagPoolOut(BaseModel):
+    id: int
+    project_id: int
+    name: str
+    color: str
+    sort_order: int
+    class Config:
+        from_attributes = True
+
+class TagBrief(BaseModel):
+    id: int
+    name: str
+    color: str
+    class Config:
+        from_attributes = True
+
+
 # ---- Task ----
 class TaskCreate(BaseModel):
     title: str
@@ -181,6 +209,7 @@ class TaskCreate(BaseModel):
     status_id: Optional[int] = None
     priority: str = "normal"
     due_date: Optional[date] = None
+    tag_ids: List[int] = []
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -188,6 +217,7 @@ class TaskUpdate(BaseModel):
     status_id: Optional[int] = None
     priority: Optional[str] = None
     due_date: Optional[date] = None
+    tag_ids: Optional[List[int]] = None
 
 class TaskOut(BaseModel):
     id: int
@@ -201,6 +231,7 @@ class TaskOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     contacts: List[ContactOut] = []
+    tags: List[TagBrief] = []
     class Config:
         from_attributes = True
 

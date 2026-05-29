@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from ..database import get_db, Project, StatusPool, CommTypePool, Checkin, CheckinProject, CheckinTask, Task, Communication, touch_project, cleanup_comm_files
+from ..database import get_db, Project, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, Communication, touch_project, cleanup_comm_files
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
     CommTypePoolCreate, CommTypePoolUpdate, CommTypePoolOut,
+    TagPoolCreate, TagPoolUpdate, TagPoolOut,
     CheckinCreate, CheckinOut, BatchDeleteIds,
 )
 
@@ -264,6 +265,46 @@ def delete_comm_type(project_id: int, type_id: int, db: Session = Depends(get_db
     if not ct:
         raise HTTPException(404, "沟通类型不存在")
     db.delete(ct)
+    db.commit()
+    touch_project(db, project_id)
+    return {"ok": True}
+
+
+# ---- 标签池 ----
+@router.get("/{project_id}/tags", response_model=List[TagPoolOut])
+def list_tags(project_id: int, db: Session = Depends(get_db)):
+    return db.query(TagPool).filter(TagPool.project_id == project_id).order_by(TagPool.sort_order).all()
+
+
+@router.post("/{project_id}/tags", response_model=TagPoolOut)
+def create_tag(project_id: int, data: TagPoolCreate, db: Session = Depends(get_db)):
+    tag = TagPool(project_id=project_id, **data.model_dump())
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    touch_project(db, project_id)
+    return tag
+
+
+@router.put("/{project_id}/tags/{tag_id}", response_model=TagPoolOut)
+def update_tag(project_id: int, tag_id: int, data: TagPoolUpdate, db: Session = Depends(get_db)):
+    tag = db.query(TagPool).filter(TagPool.id == tag_id, TagPool.project_id == project_id).first()
+    if not tag:
+        raise HTTPException(404, "标签不存在")
+    for k, v in data.model_dump(exclude_none=True).items():
+        setattr(tag, k, v)
+    db.commit()
+    db.refresh(tag)
+    touch_project(db, project_id)
+    return tag
+
+
+@router.delete("/{project_id}/tags/{tag_id}")
+def delete_tag(project_id: int, tag_id: int, db: Session = Depends(get_db)):
+    tag = db.query(TagPool).filter(TagPool.id == tag_id, TagPool.project_id == project_id).first()
+    if not tag:
+        raise HTTPException(404, "标签不存在")
+    db.delete(tag)
     db.commit()
     touch_project(db, project_id)
     return {"ok": True}

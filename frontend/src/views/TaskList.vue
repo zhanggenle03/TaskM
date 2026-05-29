@@ -41,6 +41,20 @@
       >{{ s.name }}</el-button>
     </div>
 
+    <!-- 标签筛选 -->
+    <div class="filter-bar" style="margin-top:8px" v-if="tags.length">
+      <span class="filter-label">标签筛选：</span>
+      <el-button
+        v-for="t in tags"
+        :key="t.id"
+        size="small"
+        round
+        :type="activeTagIds.includes(t.id) ? 'primary' : ''"
+        :style="activeTagIds.includes(t.id) ? { background: t.color, borderColor: t.color } : { borderColor: t.color, color: t.color }"
+        @click="toggleTagFilter(t.id)"
+      >{{ t.name }}</el-button>
+    </div>
+
     <!-- 任务列表 -->
     <div class="task-list" v-if="tasks.length">
       <div
@@ -50,13 +64,15 @@
       >
         <div class="task-status-dot" :style="{ background: statusColor(t.status_id) }"></div>
         <div class="task-info">
-          <div class="task-title">{{ t.title }}<span v-if="t.due_date" class="task-date"> 截止 {{ t.due_date }}</span></div>
+          <div class="task-title">
+            {{ t.title }}
+            <span class="task-tags-inline" v-if="t.tags?.length">
+              <span v-for="tag in t.tags" :key="tag.id" class="tag-chip" :style="{ background: tag.color + '22', color: tag.color, borderColor: tag.color }">{{ tag.name }}</span>
+            </span>
+          </div>
           <div class="task-meta">
             <el-tag v-if="t.priority" :type="priorityType(t.priority)" size="small">{{ priorityLabel(t.priority) }}</el-tag>
-            <span class="task-contacts" v-if="t.contacts?.length">
-              <el-icon><User /></el-icon> {{ t.contacts.map(c => c.name).join('、') }}
-            </span>
-            <span v-if="t.last_comm_at" class="task-comm-time">{{ formatTime(t.last_comm_at) }}</span>
+            <span v-if="t.last_comm_at" class="task-comm-time">变更于 {{ formatTime(t.last_comm_at) }}</span>
           </div>
         </div>
         <div class="task-status-tag">
@@ -64,6 +80,7 @@
             {{ statusName(t.status_id) }}
           </el-tag>
         </div>
+        <span v-if="t.due_date" class="task-date-col">截止 {{ t.due_date }}</span>
         <div class="task-actions" @click.stop>
           <el-button size="small" text @click="openEdit(t)"><el-icon><Edit /></el-icon></el-button>
           <el-button size="small" text type="danger" @click="removeTask(t)"><el-icon><Delete /></el-icon></el-button>
@@ -97,6 +114,13 @@
         <el-form-item label="截止日期">
           <el-date-picker v-model="form.due_date" type="date" value-format="YYYY-MM-DD" placeholder="可选" />
         </el-form-item>
+        <el-form-item label="标签">
+          <el-select v-model="form.tag_ids" multiple placeholder="选择标签" style="width:100%">
+            <el-option v-for="t in tags" :key="t.id" :value="t.id" :label="t.name">
+              <span :style="{ color: t.color, marginRight: '6px' }">●</span>{{ t.name }}
+            </el-option>
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showCreate = false">取消</el-button>
@@ -113,6 +137,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import {
   getTasks, createTask, updateTask, deleteTask, getStatuses, getProjects, deleteProject,
+  getTags,
 } from '../api'
 
 const route = useRoute()
@@ -121,37 +146,54 @@ const projectId = Number(route.params.projectId)
 const project = ref(null)
 const tasks = ref([])
 const statuses = ref([])
+const tags = ref([])
 const activeStatus = ref(route.query.status_id ? Number(route.query.status_id) : null)
+const activeTagIds = ref(route.query.tag_ids ? route.query.tag_ids.split(',').map(Number) : [])
 const sortBy = ref(route.query.sort_by || 'updated_at')
 const sortOptions = [
   { key: 'updated_at', label: '更新时间' },
+  { key: 'due_date', label: '截止时间' },
   { key: 'status', label: '状态' },
   { key: 'title', label: '名称' },
 ]
 const showCreate = ref(false)
 const loading = ref(false)
 const editTarget = ref(null)
-const form = ref({ title: '', description: '', status_id: null, priority: 'normal', due_date: null })
+const form = ref({ title: '', description: '', status_id: null, priority: 'normal', due_date: null, tag_ids: [] })
 
 // 状态池有加载完成时更新 form 的默认状态
 const defaultStatusId = ref(null)
 
 const load = async () => {
-  const [all, s] = await Promise.all([getProjects(), getStatuses(projectId)])
+  const [all, s, tg] = await Promise.all([getProjects(), getStatuses(projectId), getTags(projectId)])
   project.value = all.find(p => p.id === projectId)
   statuses.value = s
+  tags.value = tg
   defaultStatusId.value = s.find(st => st.is_default)?.id ?? null
   await loadTasks()
 }
 const loadTasks = async () => {
-  const params = { sort_by: sortBy.value, sort_order: 'asc' }
+  const orderMap = { updated_at: 'desc', due_date: 'asc', status: 'asc', title: 'asc' }
+  const params = { sort_by: sortBy.value, sort_order: orderMap[sortBy.value] || 'asc' }
   if (activeStatus.value !== null) params.status_id = activeStatus.value
+  if (activeTagIds.value.length) params.tag_ids = activeTagIds.value.join(',')
   tasks.value = await getTasks(projectId, params)
 }
 
 const setFilter = (statusId) => {
   activeStatus.value = statusId
   router.replace({ query: { ...route.query, status_id: statusId || undefined } })
+  loadTasks()
+}
+
+const toggleTagFilter = (tagId) => {
+  const idx = activeTagIds.value.indexOf(tagId)
+  if (idx === -1) {
+    activeTagIds.value.push(tagId)
+  } else {
+    activeTagIds.value.splice(idx, 1)
+  }
+  router.replace({ query: { ...route.query, tag_ids: activeTagIds.value.length ? activeTagIds.value.join(',') : undefined } })
   loadTasks()
 }
 
@@ -198,14 +240,22 @@ const resetForm = () => {
     description: '',
     status_id: defaultStatusId.value,
     priority: 'normal',
-    due_date: null
+    due_date: null,
+    tag_ids: []
   }
   editTarget.value = null
 }
 
 const openEdit = (t) => {
   editTarget.value = t
-  form.value = { title: t.title, description: t.description, status_id: t.status_id, priority: t.priority, due_date: t.due_date }
+  form.value = {
+    title: t.title,
+    description: t.description,
+    status_id: t.status_id,
+    priority: t.priority,
+    due_date: t.due_date,
+    tag_ids: (t.tags || []).map(tag => tag.id)
+  }
   showCreate.value = true
 }
 
@@ -253,13 +303,14 @@ const removeProject = async () => {
 .task-row:hover { border-color: #534ab7; }
 .task-status-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .task-info { flex: 1; min-width: 0; }
-.task-title { font-size: 14px; font-weight: 500; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.task-title .task-date { font-size: 12px; font-weight: 400; }
+.task-title { font-size: 14px; font-weight: 500; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.task-tags-inline { display: inline-flex; align-items: center; gap: 3px; flex-wrap: wrap; }
+.tag-chip { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid; line-height: 1.5; }
 .task-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #888; }
-.task-date { color: #e24b4a; }
 .task-contacts { display: flex; align-items: center; gap: 3px; }
 .task-comm-time { color: #aaa; font-size: 12px; }
 .task-status-tag { flex-shrink: 0; }
+.task-date-col { font-size: 12px; color: #e24b4a; flex-shrink: 0; white-space: nowrap; }
 .task-actions { display: flex; gap: 4px; flex-shrink: 0; }
 
 .checkin-section { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 14px 18px; margin-bottom: 16px; }

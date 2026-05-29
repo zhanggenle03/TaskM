@@ -118,6 +118,20 @@
               @change="quickUpdateDue"
             />
           </div>
+          <div class="side-field side-field-tags">
+            <span class="side-field-label">
+              标签
+              <el-button size="small" text @click="showTagPicker = true" style="padding:2px;height:auto;margin-left:2px">
+                <el-icon><CollectionTag /></el-icon>
+              </el-button>
+            </span>
+            <div class="side-tag-inline">
+              <div class="side-tag-chips" v-if="selectedTagIds.length">
+                <span v-for="id in selectedTagIds" :key="id" class="tag-chip-detail" :style="{ background: tagColor(id) + '22', color: tagColor(id), borderColor: tagColor(id) }">{{ tagLabel(id) }}</span>
+              </div>
+              <span v-else style="color:#bbb;font-size:12px">无</span>
+            </div>
+          </div>
         </div>
 
         <div class="side-card">
@@ -276,10 +290,49 @@
       <el-form :model="taskForm" label-width="80px">
         <el-form-item label="标题"><el-input v-model="taskForm.title" /></el-form-item>
         <el-form-item label="描述"><el-input v-model="taskForm.description" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item label="标签">
+          <el-select v-model="taskForm.tag_ids" multiple placeholder="选择标签" style="width:100%">
+            <el-option v-for="t in tags" :key="t.id" :value="t.id" :label="t.name">
+              <span :style="{ color: t.color, marginRight: '6px' }">●</span>{{ t.name }}
+            </el-option>
+          </el-select>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showEditTask = false">取消</el-button>
         <el-button type="primary" @click="submitEditTask">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 标签选择弹窗 -->
+    <el-dialog v-model="showTagPicker" title="选择标签" width="450px" @open="pickerSelected = [...selectedTagIds]" @close="resetTagPicker">
+      <div class="tag-picker-body">
+        <div class="tag-picker-section">
+          <div class="tag-picker-section-title">待选</div>
+          <div class="tag-picker-capsules" v-if="availableTags.length">
+            <div v-for="t in availableTags" :key="t.id" class="tag-capsule" :style="{ borderColor: t.color, color: t.color }" @click="selectTag(t.id)">
+              <span class="tag-dot" :style="{ background: t.color }"></span>
+              <span>{{ t.name }}</span>
+              <el-icon style="margin-left:3px;font-size:13px"><Plus /></el-icon>
+            </div>
+          </div>
+          <div v-else class="tag-picker-empty">所有标签已选择</div>
+        </div>
+        <div class="tag-picker-divider"></div>
+        <div class="tag-picker-section">
+          <div class="tag-picker-section-title">已选</div>
+          <div class="tag-picker-capsules" v-if="pickerSelected.length">
+            <div v-for="id in pickerSelected" :key="id" class="tag-capsule tag-capsule-selected" :style="{ background: tagColor(id), borderColor: tagColor(id) }" @click="unselectTag(id)">
+              <span>{{ tagLabel(id) }}</span>
+              <el-icon style="margin-left:3px;font-size:13px"><Close /></el-icon>
+            </div>
+          </div>
+          <div v-else class="tag-picker-empty">暂无已选标签</div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showTagPicker = false">取消</el-button>
+        <el-button type="primary" @click="submitTagPicker">确定</el-button>
       </template>
     </el-dialog>
 
@@ -344,7 +397,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -353,7 +406,7 @@ import {
   addContact, updateContact, deleteContact,
   addCommunication, updateCommunication, deleteCommunication,
   uploadCommAttachment, deleteAttachment, renameAttachment, downloadAttachment,
-  getProjectContacts
+  getProjectContacts, getTags
 } from '../api'
 
 const route = useRoute()
@@ -365,6 +418,11 @@ const project = ref(null)
 const statuses = ref([])
 const commTypes = ref([])
 const projectContacts = ref([])  // 项目对接人库（用于选择）
+const tags = ref([])  // 项目标签池
+const selectedTagIds = ref([])  // 当前任务的标签 ID 列表
+const showTagPicker = ref(false)
+const pickerSelected = ref([])  // 弹窗内临时选择的标签 ID
+const availableTags = computed(() => tags.value.filter(t => !pickerSelected.value.includes(t.id)))
 
 const showAddComm = ref(false)
 const commLoading = ref(false)
@@ -381,7 +439,7 @@ const editContactRef = ref(null)  // 编辑中的对接人，null=新增模式
 const contactForm = ref({ name: '', role: '', contact_info: '' })
 
 const showEditTask = ref(false)
-const taskForm = ref({ title: '', description: '', priority: 'normal' })
+const taskForm = ref({ title: '', description: '', priority: 'normal', tag_ids: [] })
 
 // 附件预览
 const previewDialog = ref(false)
@@ -500,12 +558,14 @@ watch(() => contactForm.value.name, (newName) => {
 })
 
 const load = async () => {
-  const [t, s, ct, allProjects] = await Promise.all([getTask(projectId, taskId), getStatuses(projectId), getCommTypes(projectId), getProjects()])
+  const [t, s, ct, allProjects, tg] = await Promise.all([getTask(projectId, taskId), getStatuses(projectId), getCommTypes(projectId), getProjects(), getTags(projectId)])
   // 后端已从沟通记录推导出最终 status_id，直接使用
   task.value = t
   statuses.value = s
   commTypes.value = ct
   project.value = allProjects.find((p) => p.id === projectId) || null
+  tags.value = tg
+  selectedTagIds.value = (t.tags || []).map(tag => tag.id)
   // 加载项目对接人库
   try {
     projectContacts.value = await getProjectContacts(projectId, {})
@@ -529,6 +589,8 @@ const commTypeLabel = (name) => commTypes.value.find((ct) => ct.name === name)?.
 const commTypeColor = (name) => commTypes.value.find((ct) => ct.name === name)?.color || '#888'
 const statusLabel = (id) => statuses.value.find(s => s.id === id)?.name || ''
 const statusColor = (id) => statuses.value.find(s => s.id === id)?.color || '#888'
+const tagColor = (id) => tags.value.find(t => t.id === id)?.color || '#5F5E5A'
+const tagLabel = (id) => tags.value.find(t => t.id === id)?.name || ''
 
 const quickUpdateStatus = async (newStatusId) => {
   if (!task.value) return
@@ -552,6 +614,12 @@ const quickUpdateDue = async (val) => {
 const quickUpdatePriority = async (val) => {
   await updateTask(projectId, taskId, { priority: val })
   ElMessage.success('优先级已更新')
+}
+const quickUpdateTags = async (ids) => {
+  if (!task.value) return
+  await updateTask(projectId, taskId, { tag_ids: ids })
+  // 同步更新本地 task.tags，让标签显示及时刷新
+  task.value.tags = tags.value.filter(t => ids.includes(t.id))
 }
 
 const onOpenCommDialog = () => {
@@ -685,7 +753,12 @@ const onContentPaste = (e) => {
 }
 
 const openEditTask = () => {
-  taskForm.value = { title: task.value.title, description: task.value.description, priority: task.value.priority }
+  taskForm.value = {
+    title: task.value.title,
+    description: task.value.description,
+    priority: task.value.priority,
+    tag_ids: (task.value.tags || []).map(t => t.id)
+  }
   showEditTask.value = true
 }
 const submitEditTask = async () => {
@@ -693,6 +766,25 @@ const submitEditTask = async () => {
   ElMessage.success('已更新')
   showEditTask.value = false
   await load()
+}
+
+// ---- 标签选择弹窗 ----
+const resetTagPicker = () => {
+  // 关闭时丢弃未保存的选择
+}
+const selectTag = (id) => {
+  if (!pickerSelected.value.includes(id)) {
+    pickerSelected.value.push(id)
+  }
+}
+const unselectTag = (id) => {
+  pickerSelected.value = pickerSelected.value.filter(v => v !== id)
+}
+const submitTagPicker = async () => {
+  await updateTask(projectId, taskId, { tag_ids: pickerSelected.value })
+  selectedTagIds.value = [...pickerSelected.value]
+  task.value.tags = tags.value.filter(t => pickerSelected.value.includes(t.id))
+  showTagPicker.value = false
 }
 
 const removeTask = async () => {
@@ -886,7 +978,24 @@ const removeAtt = async (a) => {
 .side-field { display: flex; align-items: center; gap: 8px; padding: 7px 0; }
 .side-field + .side-field { border-top: 1px solid #f0f0ee; }
 .side-field-label { font-size: 13px; color: #555; width: 60px; flex-shrink: 0; }
+.side-field-tags { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
+.side-tag-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; flex: 1; min-width: 0; }
+.side-tag-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.tag-chip-detail { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid; line-height: 1.5; }
 .side-title { font-size: 13px; font-weight: 500; color: #555; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+
+/* 标签选择弹窗 */
+.tag-picker-body { max-height: 460px; }
+.tag-picker-section { margin-bottom: 4px; }
+.tag-picker-section-title { font-size: 13px; font-weight: 500; color: #888; margin-bottom: 8px; }
+.tag-picker-capsules { display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto; padding: 2px 0; }
+.tag-capsule { display: inline-flex; align-items: center; gap: 3px; padding: 4px 10px; border-radius: 20px; border: 1px solid; font-size: 12px; cursor: pointer; transition: all .15s; user-select: none; }
+.tag-capsule:hover { opacity: .8; }
+.tag-capsule-selected { color: #fff; }
+.tag-capsule-selected:hover { opacity: .85; }
+.tag-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.tag-picker-empty { font-size: 12px; color: #bbb; padding: 8px 0; text-align: center; }
+.tag-picker-divider { height: 1px; background: #eee; margin: 12px 0; }
 .contact-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-top: 1px solid #f0f0ee; }
 .contact-avatar { width: 32px; height: 32px; border-radius: 50%; background: #eeedfe; color: #534ab7; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
 .contact-info { flex: 1; min-width: 0; }

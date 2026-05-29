@@ -35,6 +35,12 @@ export const createCommType = (projectId, data) => http.post(`/projects/${projec
 export const updateCommType = (projectId, id, data) => http.put(`/projects/${projectId}/comm-types/${id}`, data)
 export const deleteCommType = (projectId, id) => http.delete(`/projects/${projectId}/comm-types/${id}`)
 
+// --- Tags ---
+export const getTags = (projectId) => http.get(`/projects/${projectId}/tags`)
+export const createTag = (projectId, data) => http.post(`/projects/${projectId}/tags`, data)
+export const updateTag = (projectId, id, data) => http.put(`/projects/${projectId}/tags/${id}`, data)
+export const deleteTag = (projectId, id) => http.delete(`/projects/${projectId}/tags/${id}`)
+
 // --- Checkins ---
 export const getAllCheckins = () => http.get('/projects/checkins')
 export const getCheckins = (projectId) => http.get(`/projects/${projectId}/checkins`)

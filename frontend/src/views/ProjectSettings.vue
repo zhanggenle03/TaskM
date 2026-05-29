@@ -108,6 +108,40 @@
           <el-empty v-if="!commTypes.length" description="暂无沟通类型" :image-size="60" />
         </div>
       </el-tab-pane>
+
+      <!-- ===== 标签池 ===== -->
+      <el-tab-pane label="标签池" name="tag">
+        <div class="tab-header">
+          <span>自定义任务标签，拖拽排序，颜色随意设置。</span>
+          <el-button type="primary" @click="openTagDialog">
+            <el-icon><Plus /></el-icon> 新增标签
+          </el-button>
+        </div>
+
+        <div class="list">
+          <div
+            v-for="(t, i) in tags"
+            :key="t.id"
+            class="list-item"
+            :class="{ 'drag-over': tagDragOver === i }"
+            draggable="true"
+            @dragstart="tagDragIdx = i"
+            @dragover.prevent="tagDragOver = i"
+            @dragleave="tagDragOver = -1"
+            @drop="onTagDrop(i)"
+            @dragend="tagDragIdx = -1; tagDragOver = -1"
+          >
+            <span class="drag-handle"><el-icon><Rank /></el-icon></span>
+            <div class="dot" :style="{ background: t.color }"></div>
+            <div class="item-name">{{ t.name }}</div>
+            <el-color-picker v-model="t.color" size="small" @change="updateTagItem(t.id, { color: t.color })" />
+            <div style="flex:1"></div>
+            <el-button size="small" text @click="openEditTagDialog(t)"><el-icon><Edit /></el-icon></el-button>
+            <el-button size="small" text type="danger" @click="removeTag(t)"><el-icon><Delete /></el-icon></el-button>
+          </div>
+          <el-empty v-if="!tags.length" description="暂无标签" :image-size="60" />
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
     <!-- 新增/编辑弹窗（状态池 + 沟通类型共用） -->
@@ -126,6 +160,22 @@
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>
         <el-button type="primary" :loading="loading" @click="submit">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 标签池弹窗 -->
+    <el-dialog v-model="showTagDialog" :title="editTagRef ? '编辑标签' : '新增标签'" width="380px" @close="resetTagForm">
+      <el-form :model="tagForm" label-width="80px">
+        <el-form-item label="名称" required>
+          <el-input v-model="tagForm.name" placeholder="如：Bug、功能、优化..." />
+        </el-form-item>
+        <el-form-item label="颜色">
+          <el-color-picker v-model="tagForm.color" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTagDialog = false">取消</el-button>
+        <el-button type="primary" :loading="tagLoading" @click="submitTag">确定</el-button>
       </template>
     </el-dialog>
 
@@ -158,6 +208,7 @@ import {
   getStatuses, createStatus, updateStatus, deleteStatus,
   getCommTypes, createCommType, updateCommType, deleteCommType,
   getProjectContacts, addProjectContact, updateProjectContact, deleteProjectContact,
+  getTags, createTag, updateTag, deleteTag,
 } from '../api'
 
 const route = useRoute()
@@ -166,6 +217,13 @@ const activeTab = ref('status')
 
 const statuses = ref([])
 const commTypes = ref([])
+const tags = ref([])
+const tagDragIdx = ref(-1)
+const tagDragOver = ref(-1)
+const showTagDialog = ref(false)
+const tagLoading = ref(false)
+const editTagRef = ref(null)
+const tagForm = ref({ name: '', color: '#5F5E5A' })
 
 // 对接人库
 const projectContacts = ref([])
@@ -224,14 +282,16 @@ const removePC = async (pc) => {
 }
 
 const load = async () => {
-  const [s, ct, pcs] = await Promise.all([
+  const [s, ct, pcs, tg] = await Promise.all([
     getStatuses(projectId),
     getCommTypes(projectId),
-    getProjectContacts(projectId, {})
+    getProjectContacts(projectId, {}),
+    getTags(projectId),
   ])
   statuses.value = s
   commTypes.value = ct
   projectContacts.value = pcs
+  tags.value = tg
 }
 
 // 状态池拖拽
@@ -256,14 +316,31 @@ const dialogTitle = computed(() => {
 onMounted(load)
 
 // ---- 弹窗 ----
+const COLOR_PALETTE = [
+  '#E24B4A', '#E8833A', '#F1A43C', '#6B9F3A', '#1F9A8D',
+  '#1F7EB7', '#534AB7', '#993C9D', '#D43D7A', '#854F0B',
+  '#366092', '#4A8C6F', '#B87C3A', '#8B5CF6', '#EC4899',
+  '#14B8A6', '#0EA5E9', '#F97316', '#84CC16', '#6366F1',
+]
+const _randomUnusedColor = (existingColors) => {
+  const used = new Set(existingColors)
+  const pool = COLOR_PALETTE.filter(c => !used.has(c))
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : COLOR_PALETTE[Math.floor(Math.random() * COLOR_PALETTE.length)]
+}
+
 const resetForm = () => {
   form.value = { name: '', color: '#5F5E5A', is_default: false }
   editTarget.value = null
 }
+const resetTagForm = () => {
+  tagForm.value = { name: '', color: '#5F5E5A' }
+  editTagRef.value = null
+}
 const openAddDialog = (type) => {
   dialogType.value = type
   editTarget.value = null
-  form.value = { name: '', color: '#5F5E5A', is_default: false }
+  const pool = type === 'status' ? statuses.value : commTypes.value
+  form.value = { name: '', color: _randomUnusedColor(pool.map(i => i.color)), is_default: false }
   showDialog.value = true
 }
 const openEditDialog = (type, item) => {
@@ -331,6 +408,57 @@ const onCommTypeDrop = async (i) => {
     }
   }
   commTypes.value = [...arr]
+}
+
+// ---- 标签池 CRUD ----
+const openTagDialog = () => {
+  editTagRef.value = null
+  tagForm.value = { name: '', color: _randomUnusedColor(tags.value.map(i => i.color)) }
+  showTagDialog.value = true
+}
+const openEditTagDialog = (t) => {
+  editTagRef.value = t
+  tagForm.value = { name: t.name, color: t.color }
+  showTagDialog.value = true
+}
+const submitTag = async () => {
+  if (!tagForm.value.name.trim()) { ElMessage.warning('名称不能为空'); return }
+  tagLoading.value = true
+  try {
+    if (editTagRef.value) {
+      await updateTag(projectId, editTagRef.value.id, tagForm.value)
+    } else {
+      await createTag(projectId, tagForm.value)
+    }
+    showTagDialog.value = false
+    tags.value = await getTags(projectId)
+  } finally { tagLoading.value = false }
+}
+const updateTagItem = async (id, data) => {
+  await updateTag(projectId, id, data)
+}
+const removeTag = async (t) => {
+  await ElMessageBox.confirm(`确定删除标签「${t.name}」吗？同时会移除所有任务上的该标签。`, '提示', { type: 'warning' })
+  await deleteTag(projectId, t.id)
+  tags.value = await getTags(projectId)
+}
+
+// ---- 拖拽（标签池） ----
+const onTagDragStart = (i) => { tagDragIdx.value = i }
+const onTagDrop = async (i) => {
+  tagDragOver.value = -1
+  if (tagDragIdx.value < 0 || tagDragIdx.value === i) { tagDragIdx.value = -1; return }
+  const arr = tags.value
+  const [moved] = arr.splice(tagDragIdx.value, 1)
+  arr.splice(i, 0, moved)
+  tagDragIdx.value = -1
+  for (let idx = 0; idx < arr.length; idx++) {
+    if (arr[idx].sort_order !== idx) {
+      arr[idx].sort_order = idx
+      try { await updateTag(projectId, arr[idx].id, { sort_order: idx }) } catch {}
+    }
+  }
+  tags.value = [...arr]
 }
 </script>
 

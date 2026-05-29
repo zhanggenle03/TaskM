@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, date as date_type
 from ..database import (
     get_db, Project, Task, Contact, Communication, CommunicationContact,
-    Attachment, ProjectContact, StatusPool, CommTypePool,
+    Attachment, ProjectContact, StatusPool, CommTypePool, TagPool, TaskTag,
     touch_project, derive_task_status, sync_task_status, cleanup_comm_files
 )
 from ..schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskDetail,
     ContactCreate, ContactUpdate, ContactOut,
-    CommunicationCreate, CommunicationUpdate, CommunicationOut
+    CommunicationCreate, CommunicationUpdate, CommunicationOut,
+    TagBrief,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
@@ -39,13 +40,35 @@ def _get_comm_type_name(db, project_id):
 def list_tasks(
     project_id: int,
     status_id: Optional[int] = None,
+    tag_ids: Optional[str] = None,
     sort_by: str = "updated_at",
     sort_order: str = "desc",
     db: Session = Depends(get_db),
 ):
-    tasks = db.query(Task).options(
-        joinedload(Task.contacts)
-    ).filter(Task.project_id == project_id).all()
+    # 如果传了 tag_ids，先筛选出符合条件的 task_id 列表
+    if tag_ids:
+        tag_id_list = [int(x) for x in tag_ids.split(",") if x.strip()]
+        if tag_id_list:
+            from sqlalchemy import func as sa_func
+            sub = db.query(TaskTag.task_id).filter(
+                TaskTag.tag_id.in_(tag_id_list)
+            ).group_by(TaskTag.task_id).having(
+                sa_func.count(TaskTag.tag_id.distinct()) == len(tag_id_list)
+            ).subquery()
+            tasks = db.query(Task).options(
+                joinedload(Task.contacts)
+            ).filter(
+                Task.project_id == project_id,
+                Task.id.in_(sub)
+            ).all()
+        else:
+            tasks = db.query(Task).options(
+                joinedload(Task.contacts)
+            ).filter(Task.project_id == project_id).all()
+    else:
+        tasks = db.query(Task).options(
+            joinedload(Task.contacts)
+        ).filter(Task.project_id == project_id).all()
 
     if not tasks:
         return tasks
@@ -82,6 +105,10 @@ def list_tasks(
             pool_rank[p.id] = idx
         sort_key = lambda t: pool_rank.get(t.status_id, 9999)
         reverse = (sort_order == "desc")
+    elif sort_by == "due_date":
+        # 按截止日期正序，没有截止日期的排最后
+        sort_key = lambda t: (0, t.due_date) if t.due_date else (1, date_type.max)
+        reverse = False
     else:  # 默认按最后沟通时间
         sort_key = lambda t: comm_at_map.get(t.id) or datetime.min
         reverse = (sort_order == "desc")
@@ -91,9 +118,25 @@ def list_tasks(
     if status_id is not None:
         tasks = [t for t in tasks if t.status_id == status_id]
 
-    # 构建最终返回数据（含 last_comm_at）
+    # 构建最终返回数据（含 last_comm_at 和 tags）
     result = []
+    # 批量加载所有 task 的 tags（避免 N+1）
+    all_tag_rows = db.query(TaskTag).filter(TaskTag.task_id.in_(task_ids)).all()
+    task_tags_map = {}
+    for row in all_tag_rows:
+        task_tags_map.setdefault(row.task_id, []).append(row.tag_id)
+    # 获取所有用到的标签信息
+    all_tag_ids = set()
+    for ids in task_tags_map.values():
+        all_tag_ids.update(ids)
+    tag_info_map = {}
+    if all_tag_ids:
+        tag_rows = db.query(TagPool).filter(TagPool.id.in_(all_tag_ids)).all()
+        tag_info_map = {tr.id: {"id": tr.id, "name": tr.name, "color": tr.color} for tr in tag_rows}
+
     for t in tasks:
+        tag_ids_for_task = task_tags_map.get(t.id, [])
+        tags_for_task = [tag_info_map[tid] for tid in tag_ids_for_task if tid in tag_info_map]
         result.append({
             "id": t.id,
             "project_id": t.project_id,
@@ -105,6 +148,7 @@ def list_tasks(
             "created_at": t.created_at,
             "updated_at": t.updated_at,
             "contacts": t.contacts,
+            "tags": tags_for_task,
             "last_comm_at": comm_at_map.get(t.id),
         })
     return result
@@ -112,7 +156,9 @@ def list_tasks(
 
 @router.post("", response_model=TaskOut)
 def create_task(project_id: int, data: TaskCreate, db: Session = Depends(get_db)):
-    task = Task(project_id=project_id, **data.model_dump())
+    task_data = data.model_dump()
+    tag_ids = task_data.pop("tag_ids", [])
+    task = Task(project_id=project_id, **task_data)
     db.add(task)
     db.flush()  # 获取 task.id 但不提交
 
@@ -124,6 +170,10 @@ def create_task(project_id: int, data: TaskCreate, db: Session = Depends(get_db)
     if default_status and task.status_id is None:
         task.status_id = default_status.id
 
+    # 创建标签关联
+    for tid in tag_ids:
+        db.add(TaskTag(task_id=task.id, tag_id=tid))
+
     db.commit()
     db.refresh(task)
     touch_project(db, project_id)
@@ -134,6 +184,7 @@ def create_task(project_id: int, data: TaskCreate, db: Session = Depends(get_db)
 def get_task(project_id: int, task_id: int, db: Session = Depends(get_db)):
     task = db.query(Task).options(
         joinedload(Task.contacts),
+        joinedload(Task.tags),
         joinedload(Task.communications)
             .joinedload(Communication.attachments),
         joinedload(Task.communications)
@@ -158,9 +209,13 @@ def update_task(project_id: int, task_id: int, data: TaskUpdate, db: Session = D
     # 从沟通记录推导真实当前状态（而非 task.status_id）
     current_status = derive_task_status(db, task_id)
 
-    # 应用非状态字段的更新（exclude_unset 保留前端传的 null 值，如清空 due_date）
-    status_id = data.model_dump().get("status_id")
-    for k, v in data.model_dump(exclude_unset=True).items():
+    # 提取 tag_ids（Task 模型无此字段，需单独处理）
+    update_data = data.model_dump(exclude_unset=True)
+    tag_ids = update_data.pop("tag_ids", None)
+    status_id = update_data.get("status_id")
+
+    # 应用非状态字段的更新
+    for k, v in update_data.items():
         if k != "status_id":
             setattr(task, k, v)
 
@@ -185,6 +240,14 @@ def update_task(project_id: int, task_id: int, data: TaskUpdate, db: Session = D
 
         # 将 task.status_id 写为新状态
         task.status_id = status_id
+
+    # 同步标签关联
+    if tag_ids is not None:
+        # 删除旧的标签关联
+        db.query(TaskTag).filter(TaskTag.task_id == task_id).delete()
+        # 创建新的标签关联
+        for tid in tag_ids:
+            db.add(TaskTag(task_id=task_id, tag_id=tid))
 
     db.commit()
 
