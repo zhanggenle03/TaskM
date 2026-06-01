@@ -278,16 +278,15 @@ def generate_project_display_id(db, prefix: str) -> tuple:
 
 
 def generate_task_display_id(db, project) -> str:
-    """生成任务显示ID"""
-    prefix = project.custom_prefix or _random_prefix()
-    proj_suffix = project.display_id[-6:] if project.display_id else f"{project.id:06d}"[-6:]
-    # 查询同一项目下的最大序号
+    """生成任务显示ID 格式: T + 项目ID(不含P) + "-" + 4位序号"""
+    proj_id_no_p = project.display_id[1:] if project.display_id and project.display_id.startswith("P") else str(project.id)
+    # 查询同一项目下最大序号
     last = db.query(Task.display_id).filter(
-        Task.display_id.like(f"T{prefix}{proj_suffix}%")
+        Task.display_id.like(f"T{proj_id_no_p}-%")
     ).order_by(Task.display_id.desc()).first()
-    seq = (int(last[0][-3:]) + 1) if last and last[0][-3:].isdigit() else 1
-    seq_str = f"{seq:03d}"
-    return f"T{prefix}{proj_suffix}{seq_str}"
+    seq = (int(last[0][-4:]) + 1) if last and last[0][-4:].isdigit() else 1
+    seq_str = f"{seq:04d}"
+    return f"T{proj_id_no_p}-{seq_str}"
 
 
 # ---- 显示ID查找工具函数 ----
