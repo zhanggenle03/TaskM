@@ -328,6 +328,10 @@ def remove_contact(project_id: str, task_id: str, contact_id: int, db: Session =
     c = db.query(Contact).filter(Contact.id == contact_id, Contact.task_id == task.id).first()
     if not c:
         raise HTTPException(404, "对接人不存在")
+    # 先清理 CommunicationContact 关联记录，避免悬挂引用导致沟通记录加载失败
+    db.query(CommunicationContact).filter(CommunicationContact.contact_id == contact_id).delete(
+        synchronize_session=False
+    )
     db.delete(c)
     db.commit()
     touch_project(db, proj.id)

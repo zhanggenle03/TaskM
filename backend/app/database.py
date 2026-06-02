@@ -104,6 +104,7 @@ class StatusPool(Base):
     color = Column(String(20), default="#5F5E5A")
     sort_order = Column(Integer, default=0)
     is_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
 
     project = relationship("Project", back_populates="status_pools")
     tasks = relationship("Task", back_populates="status")
@@ -137,6 +138,7 @@ class ProjectContact(Base):
     role = Column(String(100), default="")
     contact_info = Column(String(200), default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(Boolean, default=True)
 
     project = relationship("Project")
 
@@ -182,7 +184,7 @@ class CommunicationContact(Base):
     __tablename__ = "communication_contacts"
     id = Column(Integer, primary_key=True, index=True)
     communication_id = Column(Integer, ForeignKey("communications.id", ondelete="CASCADE"), nullable=False)
-    contact_id = Column(Integer, ForeignKey("contacts.id"), nullable=False)
+    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False)
 
     communication = relationship("Communication", back_populates="communication_contacts")
     contact = relationship("Contact")
@@ -210,6 +212,7 @@ class CommTypePool(Base):
     color = Column(String(20), default="#5F5E5A")
     sort_order = Column(Integer, default=0)
     is_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
 
     project = relationship("Project", back_populates="comm_type_pools")
 
@@ -246,6 +249,7 @@ class TagPool(Base):
     name = Column(String(100), nullable=False)
     color = Column(String(20), default="#5F5E5A")
     sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
 
     project = relationship("Project", back_populates="tag_pools")
     tasks = relationship("Task", secondary="task_tags", back_populates="tags", passive_deletes=True)

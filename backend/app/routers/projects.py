@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 from typing import List, Optional
-from ..database import get_db, Project, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, Communication, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project
+from ..database import get_db, Project, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -21,6 +22,50 @@ def _ensure_single_default(db: Session, model_class, project_id: int, exclude_id
         others = others.filter(model_class.id != exclude_id)
     for item in others.all():
         item.is_default = False
+
+
+def _count_status_refs(db: Session, status_id: int) -> dict:
+    """统计状态被引用的次数"""
+    return {
+        "任务": db.query(Task).filter(Task.status_id == status_id).count(),
+        "沟通记录（旧状态）": db.query(Communication).filter(Communication.old_status_id == status_id).count(),
+        "沟通记录（新状态）": db.query(Communication).filter(Communication.new_status_id == status_id).count(),
+    }
+
+
+def _clear_status_refs(db: Session, status_id: int):
+    """清理状态引用（SET NULL）"""
+    db.query(Task).filter(Task.status_id == status_id).update({Task.status_id: None}, synchronize_session=False)
+    db.query(Communication).filter(Communication.old_status_id == status_id).update({Communication.old_status_id: None}, synchronize_session=False)
+    db.query(Communication).filter(Communication.new_status_id == status_id).update({Communication.new_status_id: None}, synchronize_session=False)
+
+
+def _count_comm_type_refs(db: Session, type_name: str) -> dict:
+    """统计沟通类型被引用的次数（comm_type 存的是名称字符串）"""
+    count = db.query(Communication).filter(Communication.comm_type == type_name).count()
+    return {"沟通记录": count} if count else {}
+
+
+def _clear_tag_refs(db: Session, tag_id: int):
+    """清理标签引用（删除关联表）"""
+    db.query(TaskTag).filter(TaskTag.tag_id == tag_id).delete(synchronize_session=False)
+
+
+def _count_tag_refs(db: Session, tag_id: int) -> dict:
+    """统计标签被引用的次数"""
+    count = db.query(TaskTag).filter(TaskTag.tag_id == tag_id).count()
+    return {"任务": count} if count else {}
+
+
+def _count_contact_refs(db: Session, contact_id: int) -> dict:
+    """统计项目对接人被引用的次数（实际对接到任务的 contacts 表）"""
+    count = db.query(Contact).filter(Contact.project_contact_id == contact_id).count()
+    return {"任务对接人": count} if count else {}
+
+
+def _clear_contact_refs(db: Session, contact_id: int):
+    """清理对接人引用（SET NULL）"""
+    db.query(Contact).filter(Contact.project_contact_id == contact_id).update({Contact.project_contact_id: None}, synchronize_session=False)
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -188,14 +233,34 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
 
 # ---- 状态池 ----
 @router.get("/{project_id}/statuses", response_model=List[StatusPoolOut])
-def list_statuses(project_id: str, db: Session = Depends(get_db)):
+def list_statuses(project_id: str, show_inactive: bool = False, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
-    return db.query(StatusPool).filter(StatusPool.project_id == proj.id).order_by(StatusPool.sort_order).all()
+    q = db.query(StatusPool).filter(StatusPool.project_id == proj.id)
+    if not show_inactive:
+        q = q.filter(StatusPool.is_active == True)
+    return q.order_by(StatusPool.sort_order).all()
 
 
 @router.post("/{project_id}/statuses", response_model=StatusPoolOut)
 def create_status(project_id: str, data: StatusPoolCreate, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
+    # 检查同名非活动项，重新激活
+    inactive = db.query(StatusPool).filter(
+        StatusPool.project_id == proj.id,
+        StatusPool.name == data.name,
+        StatusPool.is_active == False
+    ).first()
+    if inactive:
+        for k, v in data.model_dump().items():
+            setattr(inactive, k, v)
+        inactive.is_active = True
+        db.flush()
+        if data.is_default:
+            _ensure_single_default(db, StatusPool, proj.id, exclude_id=inactive.id)
+        db.commit()
+        db.refresh(inactive)
+        touch_project(db, proj.id)
+        return inactive
     status = StatusPool(project_id=proj.id, **data.model_dump())
     db.add(status)
     db.flush()
@@ -225,12 +290,22 @@ def update_status(project_id: str, status_id: int, data: StatusPoolUpdate, db: S
 
 
 @router.delete("/{project_id}/statuses/{status_id}")
-def delete_status(project_id: str, status_id: int, db: Session = Depends(get_db)):
+def delete_status(project_id: str, status_id: int, force: bool = False, confirmed: bool = False, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
     status = db.query(StatusPool).filter(StatusPool.id == status_id, StatusPool.project_id == proj.id).first()
     if not status:
         raise HTTPException(404, "状态不存在")
-    db.delete(status)
+    if force:
+        refs = _count_status_refs(db, status_id)
+        real_refs = {k: v for k, v in refs.items() if v > 0}
+        if real_refs and not confirmed:
+            raise HTTPException(409, detail={"message": "有数据引用该状态", "refs": real_refs})
+        _clear_status_refs(db, status_id)
+        db.delete(status)
+        db.commit()
+        touch_project(db, proj.id)
+        return {"ok": True, "refs_cleaned": real_refs}
+    status.is_active = False
     db.commit()
     touch_project(db, proj.id)
     return {"ok": True}
@@ -238,14 +313,34 @@ def delete_status(project_id: str, status_id: int, db: Session = Depends(get_db)
 
 # ---- 沟通类型池 ----
 @router.get("/{project_id}/comm-types", response_model=List[CommTypePoolOut])
-def list_comm_types(project_id: str, db: Session = Depends(get_db)):
+def list_comm_types(project_id: str, show_inactive: bool = False, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
-    return db.query(CommTypePool).filter(CommTypePool.project_id == proj.id).order_by(CommTypePool.sort_order).all()
+    q = db.query(CommTypePool).filter(CommTypePool.project_id == proj.id)
+    if not show_inactive:
+        q = q.filter(CommTypePool.is_active == True)
+    return q.order_by(CommTypePool.sort_order).all()
 
 
 @router.post("/{project_id}/comm-types", response_model=CommTypePoolOut)
 def create_comm_type(project_id: str, data: CommTypePoolCreate, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
+    # 检查同名非活动项，重新激活
+    inactive = db.query(CommTypePool).filter(
+        CommTypePool.project_id == proj.id,
+        CommTypePool.name == data.name,
+        CommTypePool.is_active == False
+    ).first()
+    if inactive:
+        for k, v in data.model_dump().items():
+            setattr(inactive, k, v)
+        inactive.is_active = True
+        db.flush()
+        if data.is_default:
+            _ensure_single_default(db, CommTypePool, proj.id, exclude_id=inactive.id)
+        db.commit()
+        db.refresh(inactive)
+        touch_project(db, proj.id)
+        return inactive
     ct = CommTypePool(project_id=proj.id, **data.model_dump())
     db.add(ct)
     db.flush()
@@ -275,12 +370,20 @@ def update_comm_type(project_id: str, type_id: int, data: CommTypePoolUpdate, db
 
 
 @router.delete("/{project_id}/comm-types/{type_id}")
-def delete_comm_type(project_id: str, type_id: int, db: Session = Depends(get_db)):
+def delete_comm_type(project_id: str, type_id: int, force: bool = False, confirmed: bool = False, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
     ct = db.query(CommTypePool).filter(CommTypePool.id == type_id, CommTypePool.project_id == proj.id).first()
     if not ct:
         raise HTTPException(404, "沟通类型不存在")
-    db.delete(ct)
+    if force:
+        refs = _count_comm_type_refs(db, ct.name)
+        if refs and not confirmed:
+            raise HTTPException(409, detail={"message": "有数据引用该沟通类型", "refs": refs})
+        db.delete(ct)
+        db.commit()
+        touch_project(db, proj.id)
+        return {"ok": True, "refs_cleaned": refs}
+    ct.is_active = False
     db.commit()
     touch_project(db, proj.id)
     return {"ok": True}
@@ -288,14 +391,31 @@ def delete_comm_type(project_id: str, type_id: int, db: Session = Depends(get_db
 
 # ---- 标签池 ----
 @router.get("/{project_id}/tags", response_model=List[TagPoolOut])
-def list_tags(project_id: str, db: Session = Depends(get_db)):
+def list_tags(project_id: str, show_inactive: bool = False, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
-    return db.query(TagPool).filter(TagPool.project_id == proj.id).order_by(TagPool.sort_order).all()
+    q = db.query(TagPool).filter(TagPool.project_id == proj.id)
+    if not show_inactive:
+        q = q.filter(TagPool.is_active == True)
+    return q.order_by(TagPool.sort_order).all()
 
 
 @router.post("/{project_id}/tags", response_model=TagPoolOut)
 def create_tag(project_id: str, data: TagPoolCreate, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
+    # 检查同名非活动项，重新激活
+    inactive = db.query(TagPool).filter(
+        TagPool.project_id == proj.id,
+        TagPool.name == data.name,
+        TagPool.is_active == False
+    ).first()
+    if inactive:
+        for k, v in data.model_dump().items():
+            setattr(inactive, k, v)
+        inactive.is_active = True
+        db.commit()
+        db.refresh(inactive)
+        touch_project(db, proj.id)
+        return inactive
     tag = TagPool(project_id=proj.id, **data.model_dump())
     db.add(tag)
     db.commit()
@@ -319,12 +439,21 @@ def update_tag(project_id: str, tag_id: int, data: TagPoolUpdate, db: Session = 
 
 
 @router.delete("/{project_id}/tags/{tag_id}")
-def delete_tag(project_id: str, tag_id: int, db: Session = Depends(get_db)):
+def delete_tag(project_id: str, tag_id: int, force: bool = False, confirmed: bool = False, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
     tag = db.query(TagPool).filter(TagPool.id == tag_id, TagPool.project_id == proj.id).first()
     if not tag:
         raise HTTPException(404, "标签不存在")
-    db.delete(tag)
+    if force:
+        refs = _count_tag_refs(db, tag_id)
+        if refs and not confirmed:
+            raise HTTPException(409, detail={"message": "有数据引用该标签", "refs": refs})
+        _clear_tag_refs(db, tag_id)
+        db.delete(tag)
+        db.commit()
+        touch_project(db, proj.id)
+        return {"ok": True, "refs_cleaned": refs}
+    tag.is_active = False
     db.commit()
     touch_project(db, proj.id)
     return {"ok": True}

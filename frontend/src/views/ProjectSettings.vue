@@ -18,9 +18,13 @@
       <el-tab-pane label="状态池" name="status">
         <div class="tab-header">
           <span>自定义任务状态，拖拽排序，颜色随意设置。</span>
-          <el-button type="primary" @click="openAddDialog('status')">
-            <el-icon><Plus /></el-icon> 新增状态
-          </el-button>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:#999">显示已停用</span>
+            <el-switch v-model="showInactive.status" size="small" @change="load" />
+            <el-button type="primary" @click="openAddDialog('status')">
+              <el-icon><Plus /></el-icon> 新增状态
+            </el-button>
+          </span>
         </div>
 
         <div class="list">
@@ -28,22 +32,30 @@
             v-for="(s, i) in statuses"
             :key="s.id"
             class="list-item"
-            :class="{ 'drag-over': statusDragOver === i }"
-            draggable="true"
-            @dragstart="onStatusDragStart(i)"
-            @dragover.prevent="statusDragOver = i"
+            :class="{
+              'drag-over': statusDragOver === i,
+              'inactive': !s.is_active
+            }"
+            :draggable="s.is_active ? 'true' : 'false'"
+            @dragstart="s.is_active && onStatusDragStart(i)"
+            @dragover.prevent="s.is_active && (statusDragOver = i)"
             @dragleave="statusDragOver = -1"
-            @drop="onStatusDrop(i)"
+            @drop="s.is_active && onStatusDrop(i)"
             @dragend="statusDragIdx = -1; statusDragOver = -1"
           >
-            <span class="drag-handle"><el-icon><Rank /></el-icon></span>
+            <span class="drag-handle" :style="{ opacity: s.is_active ? 1 : 0.3 }"><el-icon><Rank /></el-icon></span>
             <div class="dot" :style="{ background: s.color }"></div>
-            <div class="item-name">{{ s.name }}</div>
-            <el-color-picker v-model="s.color" size="small" @change="updateItem('status', s.id, { color: s.color })" />
+            <div class="item-name" :class="{ 'inactive-text': !s.is_active }">{{ s.name }}</div>
+            <el-color-picker v-if="s.is_active" v-model="s.color" size="small" @change="updateItem('status', s.id, { color: s.color })" />
             <el-tag v-if="s.is_default" type="info" size="small">默认</el-tag>
+            <el-tag v-if="!s.is_active" type="warning" size="small">已停用</el-tag>
             <div style="flex:1"></div>
-            <el-button size="small" text @click="openEditDialog('status', s)"><el-icon><Edit /></el-icon></el-button>
-            <el-button size="small" text type="danger" @click="removeItem('status', s)"><el-icon><Delete /></el-icon></el-button>
+            <el-button v-if="s.is_active" size="small" text @click="openEditDialog('status', s)"><el-icon><Edit /></el-icon></el-button>
+            <el-button v-if="s.is_active" size="small" text type="danger" @click="removeItem('status', s)"><el-icon><Delete /></el-icon></el-button>
+            <template v-else>
+              <el-button size="small" text type="primary" @click="restoreItem('status', s)"><el-icon><Refresh /></el-icon> 还原</el-button>
+              <el-button size="small" text type="danger" @click="permanentDelete('status', s)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
+            </template>
           </div>
           <el-empty v-if="!statuses.length" description="暂无状态" :image-size="60" />
         </div>
@@ -53,9 +65,13 @@
       <el-tab-pane label="对接人库" name="contact">
         <div class="tab-header">
           <span>项目常用对接人库，按首字母排序。</span>
-          <el-button type="primary" @click="openAddPC">
-            <el-icon><Plus /></el-icon> 新增对接人
-          </el-button>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:#999">显示已停用</span>
+            <el-switch v-model="showInactive.contact" size="small" @change="load" />
+            <el-button type="primary" @click="openAddPC">
+              <el-icon><Plus /></el-icon> 新增对接人
+            </el-button>
+          </span>
         </div>
 
         <el-input v-model="pcSearch" placeholder="搜索对接人..." clearable style="width:300px;margin-bottom:12px">
@@ -67,15 +83,21 @@
             v-for="pc in filteredProjectContacts"
             :key="pc.id"
             class="list-item"
+            :class="{ 'inactive': !pc.is_active }"
             style="cursor:default"
           >
-            <div class="avatar">{{ pc.name[0] }}</div>
+            <div class="avatar" :style="{ opacity: pc.is_active ? 1 : 0.5 }">{{ pc.name[0] }}</div>
             <div style="flex:1;min-width:0">
-              <div class="item-name">{{ pc.name }}</div>
+              <div class="item-name" :class="{ 'inactive-text': !pc.is_active }">{{ pc.name }}</div>
               <div style="font-size:12px;color:#888">{{ pc.role }} · {{ pc.contact_info }}</div>
             </div>
-            <el-button size="small" text @click="openEditPC(pc)"><el-icon><Edit /></el-icon></el-button>
-            <el-button size="small" text type="danger" @click="removePC(pc)"><el-icon><Delete /></el-icon></el-button>
+            <el-tag v-if="!pc.is_active" type="warning" size="small">已停用</el-tag>
+            <el-button v-if="pc.is_active" size="small" text @click="openEditPC(pc)"><el-icon><Edit /></el-icon></el-button>
+            <el-button v-if="pc.is_active" size="small" text type="danger" @click="removePC(pc)"><el-icon><Delete /></el-icon></el-button>
+            <template v-else>
+              <el-button size="small" text type="primary" @click="restorePC(pc)"><el-icon><Refresh /></el-icon> 还原</el-button>
+              <el-button size="small" text type="danger" @click="permanentDelete('contact', pc)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
+            </template>
           </div>
           <el-empty v-if="!filteredProjectContacts.length" description="暂无对接人" :image-size="60" />
         </div>
@@ -85,9 +107,13 @@
       <el-tab-pane label="沟通类型" name="commType">
         <div class="tab-header">
           <span>自定义沟通类型（备注/会议/邮件/电话等），拖拽排序。</span>
-          <el-button type="primary" @click="openAddDialog('commType')">
-            <el-icon><Plus /></el-icon> 新增类型
-          </el-button>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:#999">显示已停用</span>
+            <el-switch v-model="showInactive.commType" size="small" @change="load" />
+            <el-button type="primary" @click="openAddDialog('commType')">
+              <el-icon><Plus /></el-icon> 新增类型
+            </el-button>
+          </span>
         </div>
 
         <div class="list">
@@ -95,22 +121,30 @@
             v-for="(t, i) in commTypes"
             :key="t.id"
             class="list-item"
-            :class="{ 'drag-over': ctDragOver === i }"
-            draggable="true"
-            @dragstart="ctDragIdx = i"
-            @dragover.prevent="ctDragOver = i"
+            :class="{
+              'drag-over': ctDragOver === i,
+              'inactive': !t.is_active
+            }"
+            :draggable="t.is_active ? 'true' : 'false'"
+            @dragstart="t.is_active && (ctDragIdx = i)"
+            @dragover.prevent="t.is_active && (ctDragOver = i)"
             @dragleave="ctDragOver = -1"
-            @drop="onCommTypeDrop(i)"
+            @drop="t.is_active && onCommTypeDrop(i)"
             @dragend="ctDragIdx = -1; ctDragOver = -1"
           >
-            <span class="drag-handle"><el-icon><Rank /></el-icon></span>
+            <span class="drag-handle" :style="{ opacity: t.is_active ? 1 : 0.3 }"><el-icon><Rank /></el-icon></span>
             <div class="dot" :style="{ background: t.color }"></div>
-            <div class="item-name">{{ t.name }}</div>
-            <el-color-picker v-model="t.color" size="small" @change="updateItem('commType', t.id, { color: t.color })" />
+            <div class="item-name" :class="{ 'inactive-text': !t.is_active }">{{ t.name }}</div>
+            <el-color-picker v-if="t.is_active" v-model="t.color" size="small" @change="updateItem('commType', t.id, { color: t.color })" />
             <el-tag v-if="t.is_default" type="info" size="small">默认</el-tag>
+            <el-tag v-if="!t.is_active" type="warning" size="small">已停用</el-tag>
             <div style="flex:1"></div>
-            <el-button size="small" text @click="openEditDialog('commType', t)"><el-icon><Edit /></el-icon></el-button>
-            <el-button size="small" text type="danger" @click="removeItem('commType', t)"><el-icon><Delete /></el-icon></el-button>
+            <el-button v-if="t.is_active" size="small" text @click="openEditDialog('commType', t)"><el-icon><Edit /></el-icon></el-button>
+            <el-button v-if="t.is_active" size="small" text type="danger" @click="removeItem('commType', t)"><el-icon><Delete /></el-icon></el-button>
+            <template v-else>
+              <el-button size="small" text type="primary" @click="restoreItem('commType', t)"><el-icon><Refresh /></el-icon> 还原</el-button>
+              <el-button size="small" text type="danger" @click="permanentDelete('commType', t)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
+            </template>
           </div>
           <el-empty v-if="!commTypes.length" description="暂无沟通类型" :image-size="60" />
         </div>
@@ -120,9 +154,13 @@
       <el-tab-pane label="标签池" name="tag">
         <div class="tab-header">
           <span>自定义任务标签，拖拽排序，颜色随意设置。</span>
-          <el-button type="primary" @click="openTagDialog">
-            <el-icon><Plus /></el-icon> 新增标签
-          </el-button>
+          <span style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:12px;color:#999">显示已停用</span>
+            <el-switch v-model="showInactive.tag" size="small" @change="load" />
+            <el-button type="primary" @click="openTagDialog">
+              <el-icon><Plus /></el-icon> 新增标签
+            </el-button>
+          </span>
         </div>
 
         <div class="list">
@@ -130,21 +168,29 @@
             v-for="(t, i) in tags"
             :key="t.id"
             class="list-item"
-            :class="{ 'drag-over': tagDragOver === i }"
-            draggable="true"
-            @dragstart="tagDragIdx = i"
-            @dragover.prevent="tagDragOver = i"
+            :class="{
+              'drag-over': tagDragOver === i,
+              'inactive': !t.is_active
+            }"
+            :draggable="t.is_active ? 'true' : 'false'"
+            @dragstart="t.is_active && (tagDragIdx = i)"
+            @dragover.prevent="t.is_active && (tagDragOver = i)"
             @dragleave="tagDragOver = -1"
-            @drop="onTagDrop(i)"
+            @drop="t.is_active && onTagDrop(i)"
             @dragend="tagDragIdx = -1; tagDragOver = -1"
           >
-            <span class="drag-handle"><el-icon><Rank /></el-icon></span>
+            <span class="drag-handle" :style="{ opacity: t.is_active ? 1 : 0.3 }"><el-icon><Rank /></el-icon></span>
             <div class="dot" :style="{ background: t.color }"></div>
-            <div class="item-name">{{ t.name }}</div>
-            <el-color-picker v-model="t.color" size="small" @change="updateTagItem(t.id, { color: t.color })" />
+            <div class="item-name" :class="{ 'inactive-text': !t.is_active }">{{ t.name }}</div>
+            <el-color-picker v-if="t.is_active" v-model="t.color" size="small" @change="updateTagItem(t.id, { color: t.color })" />
+            <el-tag v-if="!t.is_active" type="warning" size="small">已停用</el-tag>
             <div style="flex:1"></div>
-            <el-button size="small" text @click="openEditTagDialog(t)"><el-icon><Edit /></el-icon></el-button>
-            <el-button size="small" text type="danger" @click="removeTag(t)"><el-icon><Delete /></el-icon></el-button>
+            <el-button v-if="t.is_active" size="small" text @click="openEditTagDialog(t)"><el-icon><Edit /></el-icon></el-button>
+            <el-button v-if="t.is_active" size="small" text type="danger" @click="removeTag(t)"><el-icon><Delete /></el-icon></el-button>
+            <template v-else>
+              <el-button size="small" text type="primary" @click="restoreTag(t)"><el-icon><Refresh /></el-icon> 还原</el-button>
+              <el-button size="small" text type="danger" @click="permanentDelete('tag', t)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
+            </template>
           </div>
           <el-empty v-if="!tags.length" description="暂无标签" :image-size="60" />
         </div>
@@ -242,6 +288,9 @@ const pcLoading = ref(false)
 const editPCRef = ref(null)
 const pcForm = ref({ name: '', role: '', contact_info: '' })
 
+// 每项池的「显示已停用」开关
+const showInactive = ref({ status: false, commType: false, tag: false, contact: false })
+
 const filteredProjectContacts = computed(() => {
   let list = projectContacts.value || []
   if (pcSearch.value) {
@@ -287,16 +336,30 @@ const submitPC = async () => {
 const removePC = async (pc) => {
   await ElMessageBox.confirm('确定从对接人库中删除？', '提示', { type: 'warning' })
   await deleteProjectContact(projectId, pc.id)
-  projectContacts.value = await getProjectContacts(projectId, {})
+  projectContacts.value = await getProjectContacts(projectId, { show_inactive: showInactive.value.contact || undefined })
+}
+
+const restorePC = async (pc) => {
+  // 重新激活：用原名重新添加（后端会自动激活同名非活动项）
+  try {
+    await addProjectContact(projectId, { name: pc.name, role: pc.role, contact_info: pc.contact_info })
+    projectContacts.value = await getProjectContacts(projectId, { show_inactive: showInactive.value.contact || undefined })
+  } catch (e) {
+    // 如果同名活跃项已存在，用 update 直接还原
+    if (e.response?.status === 400) {
+      await updateProjectContact(projectId, pc.id, { is_active: true })
+      projectContacts.value = await getProjectContacts(projectId, { show_inactive: showInactive.value.contact || undefined })
+    }
+  }
 }
 
 const load = async () => {
   const [projRes, s, ct, pcs, tg] = await Promise.all([
     getProjects(),
-    getStatuses(projectId),
-    getCommTypes(projectId),
-    getProjectContacts(projectId, {}),
-    getTags(projectId),
+    getStatuses(projectId, { show_inactive: showInactive.value.status || undefined }),
+    getCommTypes(projectId, { show_inactive: showInactive.value.commType || undefined }),
+    getProjectContacts(projectId, { show_inactive: showInactive.value.contact || undefined }),
+    getTags(projectId, { show_inactive: showInactive.value.tag || undefined }),
   ])
   project.value = projRes.find(p => p.display_id === projectId) || null
   statuses.value = s
@@ -380,9 +443,65 @@ const updateItem = async (type, id, data) => {
 }
 const removeItem = async (type, item) => {
   const label = type === 'status' ? '状态' : '沟通类型'
-  await ElMessageBox.confirm(`确定删除${label}「${item.name}」吗？`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(`确定停用${label}「${item.name}」吗？\n已使用该${label}的数据不受影响。`, '提示', { type: 'warning' })
   const fn = type === 'status' ? deleteStatus : deleteCommType
   await fn(projectId, item.id)
+  await load()
+}
+const restoreItem = async (type, item) => {
+  // 用同名数据重新创建，由后端自动激活
+  const data = { name: item.name, color: item.color, sort_order: item.sort_order, is_default: item.is_default }
+  const createFn = type === 'status' ? createStatus : createCommType
+  await createFn(projectId, data)
+  await load()
+}
+
+// ---- 彻底删除 ----
+const deleteFnMap = {
+  status: (id) => deleteStatus(projectId, id, { params: { force: true }, _silentError: true }),
+  commType: (id) => deleteCommType(projectId, id, { params: { force: true }, _silentError: true }),
+  tag: (id) => deleteTag(projectId, id, { params: { force: true }, _silentError: true }),
+  contact: (id) => deleteProjectContact(projectId, id, { params: { force: true }, _silentError: true }),
+}
+const deleteConfirmedMap = {
+  status: (id) => deleteStatus(projectId, id, { params: { force: true, confirmed: true }, _silentError: true }),
+  commType: (id) => deleteCommType(projectId, id, { params: { force: true, confirmed: true }, _silentError: true }),
+  tag: (id) => deleteTag(projectId, id, { params: { force: true, confirmed: true }, _silentError: true }),
+  contact: (id) => deleteProjectContact(projectId, id, { params: { force: true, confirmed: true }, _silentError: true }),
+}
+const labels = { status: '状态', commType: '沟通类型', tag: '标签', contact: '对接人' }
+
+const permanentDelete = async (type, item) => {
+  try {
+    const result = await deleteFnMap[type](item.id)
+    const refs = result?.refs_cleaned
+    if (refs && Object.keys(refs).length) {
+      const text = Object.entries(refs).map(([k, v]) => `${k}: ${v}`).join('、')
+      ElMessage.success(`已彻底删除「${item.name}」，清理了 ${text}`)
+    } else {
+      ElMessage.success(`已彻底删除「${item.name}」`)
+    }
+  } catch (err) {
+    if (err.response?.status === 409) {
+      const refs = err.response.data.detail.refs
+      const refText = Object.entries(refs).map(([k, v]) => `${k}: ${v}个`).join('、')
+      await ElMessageBox.confirm(
+        `「${item.name}」被以下数据引用：\n${refText}\n\n彻底删除后，这些引用将被置空。确认彻底删除？`,
+        '确认彻底删除',
+        { type: 'warning', confirmButtonText: '彻底删除' }
+      )
+      const result = await deleteConfirmedMap[type](item.id)
+      const cleaned = result?.refs_cleaned
+      if (cleaned && Object.keys(cleaned).length) {
+        const text = Object.entries(cleaned).map(([k, v]) => `${k}: ${v}`).join('、')
+        ElMessage.success(`已彻底删除「${item.name}」，清理了 ${text}`)
+      } else {
+        ElMessage.success(`已彻底删除「${item.name}」`)
+      }
+    } else {
+      ElMessage.error(err.response?.data?.detail || '删除失败')
+    }
+  }
   await load()
 }
 
@@ -449,9 +568,13 @@ const updateTagItem = async (id, data) => {
   await updateTag(projectId, id, data)
 }
 const removeTag = async (t) => {
-  await ElMessageBox.confirm(`确定删除标签「${t.name}」吗？同时会移除所有任务上的该标签。`, '提示', { type: 'warning' })
+  await ElMessageBox.confirm(`确定停用标签「${t.name}」吗？\n已使用该标签的数据不受影响。\n如需恢复，重新添加同名标签即可。`, '提示', { type: 'warning' })
   await deleteTag(projectId, t.id)
-  tags.value = await getTags(projectId)
+  tags.value = await getTags(projectId, { show_inactive: showInactive.value.tag || undefined })
+}
+const restoreTag = async (t) => {
+  await createTag(projectId, { name: t.name, color: t.color, sort_order: t.sort_order })
+  tags.value = await getTags(projectId, { show_inactive: showInactive.value.tag || undefined })
 }
 
 // ---- 拖拽（标签池） ----
@@ -486,4 +609,6 @@ const onTagDrop = async (i) => {
 .drag-handle:active { cursor: grabbing; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; background: #eeedfe; color: #534ab7; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
 .proj-info-bar { padding: 10px 14px; background: #f9f9f8; border-radius: 8px; border: 1px solid #e8e8e4; margin-bottom: 20px; display: flex; align-items: center; }
+.list-item.inactive { background: #f5f5f5; opacity: 0.7; }
+.inactive-text { color: #999; }
 </style>

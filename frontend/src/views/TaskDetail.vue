@@ -96,7 +96,7 @@
           <div class="side-field">
             <span class="side-field-label">任务状态</span>
             <el-select v-model="task.status_id" placeholder="设置状态" size="small" style="flex:1" @change="quickUpdateStatus">
-              <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id">
+              <el-option v-for="s in statuses.filter(s => s.is_active || s.id === task.status_id)" :key="s.id" :label="s.name" :value="s.id">
                 <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
               </el-option>
             </el-select>
@@ -175,7 +175,7 @@
         </el-form-item>
         <el-form-item label="沟通类型">
           <el-select v-model="commForm.comm_type">
-            <el-option v-for="ct in commTypes" :key="ct.name" :value="ct.name" :label="ct.name">
+            <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commForm.comm_type)" :key="ct.name" :value="ct.name" :label="ct.name">
               <span :style="{ color: ct.color, marginRight: '4px' }">●</span>{{ ct.name }}
             </el-option>
           </el-select>
@@ -186,13 +186,13 @@
         <el-form-item label="状态变更">
           <div style="display:flex;align-items:center;gap:8px;width:100%">
             <el-select v-model="commForm.old_status_id" placeholder="当前" style="width:160px">
-              <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id">
+              <el-option v-for="s in statuses.filter(s => s.is_active || s.id === commForm.old_status_id)" :key="s.id" :label="s.name" :value="s.id">
                 <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
               </el-option>
             </el-select>
             <el-icon><ArrowRight /></el-icon>
             <el-select v-model="commForm.new_status_id" placeholder="不变更" clearable style="width:160px">
-              <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id" :disabled="s.id === commForm.old_status_id">
+              <el-option v-for="s in statuses.filter(s => s.is_active || s.id === commForm.new_status_id)" :key="s.id" :label="s.name" :value="s.id" :disabled="s.id === commForm.old_status_id">
                 <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
               </el-option>
             </el-select>
@@ -260,7 +260,7 @@
             style="width:100%"
           >
             <el-option
-              v-for="pc in projectContacts.filter(pc => !task?.contacts?.find(c => c.name === pc.name))"
+              v-for="pc in projectContacts.filter(pc => (pc.is_active || pc.name === contactForm.name) && !task?.contacts?.find(c => c.name === pc.name))"
               :key="pc.id"
               :label="pc.name"
               :value="pc.name"
@@ -415,7 +415,7 @@ const tags = ref([])  // 项目标签池
 const selectedTagIds = ref([])  // 当前任务的标签 ID 列表
 const showTagPicker = ref(false)
 const pickerSelected = ref([])  // 弹窗内临时选择的标签 ID
-const availableTags = computed(() => tags.value.filter(t => !pickerSelected.value.includes(t.id)))
+const availableTags = computed(() => tags.value.filter(t => t.is_active && !pickerSelected.value.includes(t.id)))
 
 const showAddComm = ref(false)
 const commLoading = ref(false)
@@ -551,7 +551,7 @@ watch(() => contactForm.value.name, (newName) => {
 })
 
 const load = async () => {
-  const [t, s, ct, allProjects, tg] = await Promise.all([getTask(projectId, taskId), getStatuses(projectId), getCommTypes(projectId), getProjects(), getTags(projectId)])
+  const [t, s, ct, allProjects, tg] = await Promise.all([getTask(projectId, taskId), getStatuses(projectId, { show_inactive: true }), getCommTypes(projectId, { show_inactive: true }), getProjects(), getTags(projectId, { show_inactive: true })])
   // 后端已从沟通记录推导出最终 status_id，直接使用
   task.value = t
   statuses.value = s
@@ -561,7 +561,7 @@ const load = async () => {
   selectedTagIds.value = (t.tags || []).map(tag => tag.id)
   // 加载项目对接人库
   try {
-    projectContacts.value = await getProjectContacts(projectId, {})
+    projectContacts.value = await getProjectContacts(projectId, { show_inactive: true })
   } catch (e) {
     console.error('加载项目对接人库失败', e)
   }

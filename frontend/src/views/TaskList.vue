@@ -31,7 +31,7 @@
     <div class="filter-bar">
       <span class="filter-label">状态筛选：</span>
       <el-button
-        v-for="s in [{ id: null, name: '全部', color: '#888' }, ...statuses]"
+        v-for="s in [{ id: null, name: '全部', color: '#888' }, ...statuses.filter(s => s.is_active || usedStatusIds.has(s.id))]"
         :key="s.id"
         size="small"
         :type="activeStatus === s.id ? 'primary' : ''"
@@ -45,7 +45,7 @@
     <div class="filter-bar" style="margin-top:8px" v-if="tags.length">
       <span class="filter-label">标签筛选：</span>
       <el-button
-        v-for="t in tags"
+        v-for="t in tags.filter(t => usedTagIds.has(t.id))"
         :key="t.id"
         size="small"
         round
@@ -100,7 +100,7 @@
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status_id" placeholder="选择状态" clearable>
-            <el-option v-for="s in statuses" :key="s.id" :label="s.name" :value="s.id" />
+            <el-option v-for="s in statuses.filter(s => s.is_active || s.id === form.status_id)" :key="s.id" :label="s.name" :value="s.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="优先级">
@@ -116,7 +116,7 @@
         </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="form.tag_ids" multiple placeholder="选择标签" style="width:100%">
-            <el-option v-for="t in tags" :key="t.id" :value="t.id" :label="t.name">
+            <el-option v-for="t in tags.filter(t => t.is_active || form.tag_ids?.includes(t.id))" :key="t.id" :value="t.id" :label="t.name">
               <span :style="{ color: t.color, marginRight: '6px' }">●</span>{{ t.name }}
             </el-option>
           </el-select>
@@ -163,13 +163,22 @@ const form = ref({ title: '', description: '', status_id: null, priority: 'norma
 
 // 状态池有加载完成时更新 form 的默认状态
 const defaultStatusId = ref(null)
+// 项目内所有任务的当前状态和标签（用于决定是否显示已停用筛选项）
+const usedStatusIds = ref(new Set())
+const usedTagIds = ref(new Set())
 
 const load = async () => {
-  const [all, s, tg] = await Promise.all([getProjects(), getStatuses(projectId), getTags(projectId)])
+  const [all, s, tg] = await Promise.all([
+    getProjects(),
+    getStatuses(projectId, { show_inactive: true }),
+    getTags(projectId, { show_inactive: true }),
+  ])
   project.value = all.find(p => p.display_id === projectId)
   statuses.value = s
   tags.value = tg
   defaultStatusId.value = s.find(st => st.is_default)?.id ?? null
+  usedStatusIds.value = new Set()
+  usedTagIds.value = new Set()
   await loadTasks()
 }
 const loadTasks = async () => {
@@ -178,6 +187,10 @@ const loadTasks = async () => {
   if (activeStatus.value !== null) params.status_id = activeStatus.value
   if (activeTagIds.value.length) params.tag_ids = activeTagIds.value.join(',')
   tasks.value = await getTasks(projectId, params)
+  // 刷新后重新计算当前使用的状态/标签ID（覆盖筛选后可见的已停用项）
+  const allTasks = await getTasks(projectId, {})
+  usedStatusIds.value = new Set(allTasks.map(t => t.status_id).filter(Boolean))
+  usedTagIds.value = new Set(allTasks.flatMap(t => t.tags?.map(tag => tag.id) || []))
 }
 
 const setFilter = (statusId) => {

@@ -48,6 +48,7 @@ class StatusPoolOut(BaseModel):
     color: str
     sort_order: int
     is_default: bool
+    is_active: bool = True
     class Config:
         from_attributes = True
 
@@ -72,6 +73,7 @@ class CommTypePoolOut(BaseModel):
     color: str
     sort_order: int
     is_default: bool
+    is_active: bool = True
     class Config:
         from_attributes = True
 
@@ -116,6 +118,7 @@ class ProjectContactOut(BaseModel):
     role: str
     contact_info: str
     created_at: datetime
+    is_active: bool = True
     class Config:
         from_attributes = True
 
@@ -194,6 +197,7 @@ class TagPoolOut(BaseModel):
     name: str
     color: str
     sort_order: int
+    is_active: bool = True
     class Config:
         from_attributes = True
 
