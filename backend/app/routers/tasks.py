@@ -375,8 +375,25 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
     comm = db.query(Communication).filter(Communication.id == comm_id, Communication.task_id == task.id).first()
     if not comm:
         raise HTTPException(404, "沟通记录不存在")
-    comm_data = data.model_dump(exclude_none=True)
+    # ========== 检测状态字段变化（含 null） ==========
+    raw_data = data.model_dump()
+    comm_data = {k: v for k, v in raw_data.items() if v is not None}
     contact_ids = comm_data.pop("contact_ids", None)
+
+    old_status_changed = "old_status_id" in raw_data and raw_data["old_status_id"] != comm.old_status_id
+    new_status_changed = "new_status_id" in raw_data and raw_data["new_status_id"] != comm.new_status_id
+    new_old_value = raw_data.get("old_status_id") if old_status_changed else None
+    new_new_value = raw_data.get("new_status_id") if new_status_changed else None
+    # 记录当前 comm 的原始类型（在 setattr 之前判断）
+    was_no_change = comm.new_status_id is None or comm.new_status_id == comm.old_status_id
+
+    # ========== 先获取时间线（按 (comm_at, id) 排序），定位当前索引 ==========
+    all_comms = db.query(Communication).filter(
+        Communication.task_id == task.id
+    ).order_by(Communication.comm_at, Communication.id).all()
+    idx = next((i for i, c in enumerate(all_comms) if c.id == comm.id), None)
+
+    # ========== 应用编辑到 comm 对象 ==========
     for k, v in comm_data.items():
         if k in ('contact_ids',):
             continue
@@ -389,6 +406,49 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
         for cid in contact_ids:
             cc = CommunicationContact(communication_id=comm.id, contact_id=cid)
             db.add(cc)
+
+    # ========== 重新按时间排序（comm_at 可能已变），重新定位索引 ==========
+    all_comms.sort(key=lambda c: (c.comm_at, c.id))
+    idx = next((i for i, c in enumerate(all_comms) if c.id == comm.id), None)
+
+    # ========== 辅助函数 ==========
+    def _is_change(r):
+        """有状态变更：new IS NOT NULL 且 old != new"""
+        return r.new_status_id is not None and r.new_status_id != r.old_status_id
+
+    def _forward(comms, start, val):
+        """往前传播（到更早的记录）：
+        无变更 → 改 old，继续
+        有变更 → 改 new，停止"""
+        for j in range(start, -1, -1):
+            c = comms[j]
+            if _is_change(c):
+                c.new_status_id = val
+                break
+            c.old_status_id = val
+
+    def _backward(comms, start, val):
+        """往后传播（到更晚的记录）：
+        统一改 old，无变更继续，有变更停止"""
+        for j in range(start, len(comms)):
+            c = comms[j]
+            if _is_change(c):
+                c.old_status_id = val
+                break
+            c.old_status_id = val
+
+    # ========== 状态链一致性同步 ==========
+    # old 变了 → 往前传播
+    if old_status_changed and new_old_value is not None and idx is not None:
+        _forward(all_comms, idx - 1, new_old_value)
+
+    # new 变了 → 往后传播
+    if new_status_changed and new_new_value is not None and idx is not None:
+        _backward(all_comms, idx + 1, new_new_value)
+
+    # 无状态变更记录只改了 old：effective_new = old 也变了，后面也要同步
+    if was_no_change and old_status_changed and not new_status_changed and new_old_value is not None and idx is not None:
+        _backward(all_comms, idx + 1, new_old_value)
 
     db.commit()
     sync_task_status(db, task.id)
