@@ -156,16 +156,13 @@ def today_checkin_status(date: Optional[str] = None, db: Session = Depends(get_d
         for t in chk.tasks:
             task_ids.add(t.id)
 
-    # ---- ② 沟通记录（comm_at 存 UTC，需转换到本地时区） ----
-    utc_now = datetime.utcnow()
+    # ---- ② 沟通记录（comm_at 存的是 datetime.now() 本地时间，直接用本地时间查询） ----
     local_today_start = datetime(local_date.year, local_date.month, local_date.day)
-    # UTC+8 的"今天 00:00"对应的 UTC 时间
-    utc_today_start = local_today_start - timedelta(hours=8)
-    utc_today_end = utc_today_start + timedelta(days=1)
+    local_today_end = local_today_start + timedelta(days=1)
 
     comms = db.query(Communication).filter(
-        Communication.comm_at >= utc_today_start,
-        Communication.comm_at < utc_today_end,
+        Communication.comm_at >= local_today_start,
+        Communication.comm_at < local_today_end,
     ).all()
 
     for comm in comms:
