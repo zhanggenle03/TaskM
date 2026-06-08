@@ -31,6 +31,10 @@ frontend/*.local
 .DS_Store
 Thumbs.db
 
+# --- 自动生成的 VBS 启动脚本（含本机绝对路径，访问设置页时自动重写） ---
+autostart_backend.vbs
+autostart_full.vbs
+
 # --- 项目临时文件 ---
 .workbuddy/
 taskm.pid
