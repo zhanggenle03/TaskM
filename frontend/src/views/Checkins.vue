@@ -120,12 +120,18 @@
         </el-form-item>
         <el-form-item :label="checkinForm.multi_project ? '项目' : '项目'" required>
           <el-select v-model="projectSelectModel" :multiple="checkinForm.multi_project" placeholder="选择项目" style="width:100%" @change="onProjectChange">
-            <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="p.name" />
+            <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="p.name">
+              <span class="status-dot" :class="hasProjectUpdateToday(p.id) ? 'dot-green' : 'dot-gray'"></span>
+              {{ p.name }}
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="相关任务">
           <el-select v-model="checkinForm.task_ids" multiple placeholder="可选，可多选" style="width:100%">
-            <el-option v-for="t in tasksForSelected" :key="t.id" :value="t.id" :label="t.title" />
+            <el-option v-for="t in tasksForSelected" :key="t.id" :value="t.id" :label="t.title">
+              <span class="status-dot" :class="hasTaskUpdateToday(t.id) ? 'dot-green' : 'dot-gray'"></span>
+              {{ t.title }}
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="工作记录">
@@ -147,12 +153,18 @@
         </el-form-item>
         <el-form-item label="项目" required>
           <el-select v-model="batchProjectModel" :multiple="batchForm.multi_project" placeholder="选择项目" style="width:100%" @change="onBatchProjectChange">
-            <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="p.name" />
+            <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="p.name">
+              <span class="status-dot" :class="hasProjectUpdateToday(p.id) ? 'dot-green' : 'dot-gray'"></span>
+              {{ p.name }}
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="相关任务">
           <el-select v-model="batchForm.task_ids" multiple placeholder="可选" style="width:100%">
-            <el-option v-for="t in batchTasks" :key="t.id" :value="t.id" :label="t.title" />
+            <el-option v-for="t in batchTasks" :key="t.id" :value="t.id" :label="t.title">
+              <span class="status-dot" :class="hasTaskUpdateToday(t.id) ? 'dot-green' : 'dot-gray'"></span>
+              {{ t.title }}
+            </el-option>
           </el-select>
         </el-form-item>
         <el-form-item label="工作记录">
@@ -176,7 +188,7 @@ import utc from 'dayjs/plugin/utc'
 dayjs.extend(utc)
 dayjs.locale('zh-cn')
 import {
-  getProjects, getAllCheckins, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
+  getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
 } from '../api'
 
 const projects = ref([])
@@ -204,6 +216,14 @@ const calYear = ref(dayjs().year())
 const calMonth = ref(dayjs().month() + 1)
 const weekDays = ['日', '一', '二', '三', '四', '五', '六']
 const todayStr = dayjs().format('YYYY-MM-DD')
+
+// 当日更新状态指示 — 基于当前签到日期
+const todayUpdateStatus = ref({ project_ids: [], task_ids: [] })
+const loadStatusForDate = async (date) => {
+  try { todayUpdateStatus.value = await getTodayCheckinStatus(date || undefined) } catch {}
+}
+const hasProjectUpdateToday = (pid) => todayUpdateStatus.value.project_ids?.includes(pid)
+const hasTaskUpdateToday = (tid) => todayUpdateStatus.value.task_ids?.includes(tid)
 
 // ---- v-model 代理 ----
 const projectSelectModel = computed({
@@ -253,6 +273,7 @@ const load = async () => {
   projects.value = p
   allCheckins.value = c
   selectedDate.value = todayStr
+  loadStatusForDate(todayStr)
 }
 onMounted(load)
 
@@ -274,6 +295,7 @@ const openCheckinDialog = () => {
   const date = selectedDate.value || todayStr
   resetCheckinForm()
   checkinForm.value.date = date
+  loadStatusForDate(date)  // 加载该日期的更新状态
   // 如果该日已有签到记录，预填数据视为编辑
   const existing = checkinsByDate.value[date]?.[0]
   if (existing) {
@@ -318,11 +340,13 @@ const submitCheckin = async () => {
     }
     showCheckinDlg.value = false
     allCheckins.value = await getAllCheckins()
+    loadStatusForDate(selectedDate.value)
   } finally { checkinLoading.value = false }
 }
 const removeCheckin = async (chk) => {
   await deleteCheckin(chk.projects?.[0]?.display_id || chk.projects?.[0]?.id || 0, chk.id)
   allCheckins.value = await getAllCheckins()
+  loadStatusForDate(selectedDate.value)
 }
 
 // ---- 批量删除签到（日历选日期） ----
@@ -351,6 +375,7 @@ const confirmBatchDelete = async () => {
   ElMessage.success(`已删除 ${ids.length} 条签到记录（${deleteDates.value.length} 天）`)
   deleteDates.value = []
   allCheckins.value = await getAllCheckins()
+  loadStatusForDate(selectedDate.value)
 }
 
 // ---- 批量签到 ----
@@ -417,6 +442,7 @@ const submitBatch = async () => {
     ElMessage.success(`批量签到完成（${count} 天）`)
     showBatchDlg.value = false
     allCheckins.value = await getAllCheckins()
+    loadStatusForDate(selectedDate.value)
     toggleBatchMode()
   } finally { batchLoading.value = false }
 }
@@ -470,4 +496,9 @@ const submitBatch = async () => {
 .cal-cc-content { font-size: 14px; line-height: 1.5; color: #333; white-space: pre-wrap; }
 
 .delete-date-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #fef0f0; border-radius: 6px; font-size: 13px; margin-bottom: 4px; }
+
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; vertical-align: middle; }
+.dot-green { background: #52c41a; }
+.dot-gray { background: #d9d9d9; }
+
 </style>

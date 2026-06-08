@@ -45,6 +45,7 @@ export const deleteTag = (projectId, id, config) => http.delete(`/projects/${pro
 
 // --- Checkins ---
 export const getAllCheckins = () => http.get('/projects/checkins')
+export const getTodayCheckinStatus = (date) => http.get('/projects/checkins/today-update-status', { params: date ? { date } : {} })
 export const getCheckins = (projectId) => http.get(`/projects/${projectId}/checkins`)
 export const createCheckin = (data) => http.post('/projects/checkins', data)
 export const updateCheckin = (id, data) => http.put(`/projects/checkins/${id}`, data)

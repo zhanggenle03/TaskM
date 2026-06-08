@@ -138,6 +138,46 @@ def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
 
 
 # ---- 签到（全局路由必须在 /{project_id} 之前） ----
+@router.get("/checkins/today-update-status")
+def today_checkin_status(date: Optional[str] = None, db: Session = Depends(get_db)):
+    from datetime import date as date_type, datetime, timedelta
+    local_date = date_type.fromisoformat(date) if date else date_type.today()
+
+    # ---- ① 签到记录 ----
+    checkins = db.query(Checkin).options(
+        joinedload(Checkin.projects), joinedload(Checkin.tasks)
+    ).filter(Checkin.date == local_date).all()
+
+    project_ids = set()
+    task_ids = set()
+    for chk in checkins:
+        for p in chk.projects:
+            project_ids.add(p.id)
+        for t in chk.tasks:
+            task_ids.add(t.id)
+
+    # ---- ② 沟通记录（comm_at 存 UTC，需转换到本地时区） ----
+    utc_now = datetime.utcnow()
+    local_today_start = datetime(local_date.year, local_date.month, local_date.day)
+    # UTC+8 的"今天 00:00"对应的 UTC 时间
+    utc_today_start = local_today_start - timedelta(hours=8)
+    utc_today_end = utc_today_start + timedelta(days=1)
+
+    comms = db.query(Communication).filter(
+        Communication.comm_at >= utc_today_start,
+        Communication.comm_at < utc_today_end,
+    ).all()
+
+    for comm in comms:
+        task_ids.add(comm.task_id)
+        # 通过 task 找到所属项目
+        task = db.query(Task).filter(Task.id == comm.task_id).first()
+        if task:
+            project_ids.add(task.project_id)
+
+    return {"project_ids": list(project_ids), "task_ids": list(task_ids)}
+
+
 @router.get("/checkins", response_model=List[CheckinOut])
 def list_all_checkins(db: Session = Depends(get_db)):
     return db.query(Checkin).options(
