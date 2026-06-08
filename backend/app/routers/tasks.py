@@ -108,8 +108,8 @@ def list_tasks(
     elif sort_by == "due_date":
         sort_key = lambda t: (0, t.due_date) if t.due_date else (1, date_type.max)
         reverse = False
-    else:  # 默认按最后沟通时间
-        sort_key = lambda t: comm_at_map.get(t.id) or datetime.min
+    else:  # 默认按最后沟通时间，无沟通任务的按创建时间
+        sort_key = lambda t: comm_at_map.get(t.id) or t.created_at or datetime.min
         reverse = (sort_order == "desc")
 
     tasks.sort(key=sort_key, reverse=reverse)
