@@ -28,6 +28,9 @@
             <el-button size="small" @click="timelineAsc = !timelineAsc">
               <el-icon><Sort /></el-icon> {{ timelineAsc ? '最早优先' : '最新优先' }}
             </el-button>
+            <el-button size="small" @click="showExportDialog = true">
+              <el-icon><Document /></el-icon> 导出说明文档
+            </el-button>
             <el-button size="small" type="danger" @click="removeTask">
               <el-icon><Delete /></el-icon> 删除
             </el-button>
@@ -42,16 +45,34 @@
           <el-button size="small" type="primary" text @click="showAddComm = true">+ 添加记录</el-button>
         </div>
 
+        <!-- 时间线选择工具栏 -->
+        <div v-if="showTimelineCheckboxes" class="timeline-select-bar">
+          <el-icon><Select /></el-icon>
+          <template v-if="timelineSelectedCommIds.size">
+            已选中 <b>{{ timelineSelectedCommIds.size }}</b> 条记录
+          </template>
+          <template v-else>
+            请在下方勾选需要导出的沟通记录，完成勾选后点击导出说明文档继续导出操作
+          </template>
+          <el-button size="small" text style="margin-left:auto" @click="clearTimelineSelection">清除选择</el-button>
+        </div>
+
         <div class="timeline-scroll">
           <el-timeline v-if="task.communications?.length">
             <el-timeline-item
-              v-for="c in (timelineAsc ? task.communications : [...task.communications].reverse())"
+              v-for="(c, idx) in (timelineAsc ? task.communications : [...task.communications].reverse())"
               :key="c.id"
               :timestamp="formatTime(c.comm_at)"
               placement="top"
             >
-              <div class="comm-card">
+              <div class="comm-card" :class="{ 'comm-card-selected': timelineSelectedCommIds.has(c.id) }">
                 <div class="comm-header">
+                  <el-checkbox
+                    v-if="showTimelineCheckboxes"
+                    :model-value="timelineSelectedCommIds.has(c.id)"
+                    @change="(val) => onTimelineCommSelect(c.id, val)"
+                    style="margin-right:6px;line-height:1"
+                  />
                   <span class="comm-type-badge" :style="{ background: commTypeColor(c.comm_type) + '22', color: commTypeColor(c.comm_type) }">{{ commTypeLabel(c.comm_type) }}</span>
                   <span class="comm-user">{{ (c.contacts?.length ? c.contacts.map(cn => cn.name).join('、') : c.contact?.name) || '我' }}</span>
                   <span v-if="c.old_status_id || c.new_status_id" class="comm-status">
@@ -386,6 +407,63 @@
         <el-button type="primary" @click="downloadPreview">下载</el-button>
       </template>
     </el-dialog>
+
+    <!-- 导出说明文档弹窗 -->
+    <el-dialog v-model="showExportDialog" title="导出说明文档" width="560px" @open="initExportDialog" @close="resetExportDialog">
+      <el-form label-width="100px">
+        <el-form-item label="时间范围" :disabled="showTimelineCheckboxes && timelineSelectedCommIds.size > 0">
+          <div style="width:100%">
+            <el-radio-group v-model="exportTimeRange" style="margin-bottom:10px" :disabled="showTimelineCheckboxes && timelineSelectedCommIds.size > 0">
+              <el-radio value="all">全部记录</el-radio>
+              <el-radio value="today">仅今日</el-radio>
+              <el-radio value="custom">自定义范围</el-radio>
+            </el-radio-group>
+            <el-date-picker
+              v-if="exportTimeRange === 'custom'"
+              v-model="exportDateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              style="width:100%"
+              :disabled-date="exportDisabledDate"
+              :disabled="showTimelineCheckboxes && timelineSelectedCommIds.size > 0"
+            />
+          </div>
+        </el-form-item>
+        <el-form-item label="沟通记录">
+          <div style="width:100%;font-size:13px;color:#666">
+            <template v-if="showTimelineCheckboxes && timelineSelectedCommIds.size">
+              已从时间线选中 <b style="color:#534ab7">{{ timelineSelectedCommIds.size }}</b> 条记录
+              <el-button size="small" text style="margin-left:8px" @click="clearTimelineSelection">取消选择</el-button>
+            </template>
+            <template v-else-if="showTimelineCheckboxes">
+              请在时间线上勾选要导出的记录
+            </template>
+            <template v-else>
+              <el-button size="small" @click="startCommSelection">选择沟通记录</el-button>
+              <span style="margin-left:8px">选择指定沟通记录导出</span>
+            </template>
+          </div>
+        </el-form-item>
+        <el-form-item label="任务属性">
+          <el-checkbox-group v-model="exportFields">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <el-checkbox v-for="opt in exportFieldOptions" :key="opt.key" :label="opt.key">
+                {{ opt.label }}
+              </el-checkbox>
+            </div>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showExportDialog = false">取消</el-button>
+        <el-button type="primary" :loading="exportLoading" @click="submitExport">
+          <el-icon><Download /></el-icon> 导出
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -399,7 +477,7 @@ import {
   addContact, updateContact, deleteContact,
   addCommunication, updateCommunication, deleteCommunication,
   uploadCommAttachment, deleteAttachment, renameAttachment, downloadAttachment,
-  getProjectContacts, getTags
+  getProjectContacts, getTags, exportTaskDoc
 } from '../api'
 
 const route = useRoute()
@@ -410,6 +488,9 @@ const task = ref(null)
 const project = ref(null)
 const statuses = ref([])
 const commTypes = ref([])
+// 时间线复选状态（用于导出）
+const timelineSelectedCommIds = ref(new Set())
+const showTimelineCheckboxes = ref(false)
 const projectContacts = ref([])  // 项目对接人库（用于选择）
 const tags = ref([])  // 项目标签池
 const selectedTagIds = ref([])  // 当前任务的标签 ID 列表
@@ -450,6 +531,27 @@ const imgState = ref({ x: 0, y: 0, scale: 1 })
 const isDragging = ref(false)
 const dragStart = { x: 0, y: 0 }
 const dragImgState = { x: 0, y: 0 }
+
+// 导出说明文档
+const showExportDialog = ref(false)
+const exportLoading = ref(false)
+const exportTimeRange = ref('all')
+const exportDateRange = ref(null)
+const exportFields = ref([])
+const exportFieldOptions = [
+  { key: 'title', label: '任务名称' },
+  { key: 'display_id', label: '显示ID' },
+  { key: 'status', label: '状态' },
+  { key: 'priority', label: '优先级' },
+  { key: 'due_date', label: '截止日期' },
+  { key: 'description', label: '描述' },
+  { key: 'contacts', label: '对接人' },
+  { key: 'tags', label: '标签' },
+  { key: 'created_at', label: '创建时间' },
+  { key: 'updated_at', label: '更新时间' },
+]
+const exportMinDate = ref(null)
+const exportMaxDate = ref(null)
 
 const openPreview = (a, list) => {
   previewList.value = list || []
@@ -554,6 +656,8 @@ const load = async () => {
   const [t, s, ct, allProjects, tg] = await Promise.all([getTask(projectId, taskId), getStatuses(projectId, { show_inactive: true }), getCommTypes(projectId, { show_inactive: true }), getProjects(), getTags(projectId, { show_inactive: true })])
   // 后端已从沟通记录推导出最终 status_id，直接使用
   task.value = t
+  timelineSelectedCommIds.value = new Set()
+  showTimelineCheckboxes.value = false
   statuses.value = s
   commTypes.value = ct
   project.value = allProjects.find((p) => p.display_id === projectId) || null
@@ -877,6 +981,145 @@ const removeContact = async (c) => {
   await load()
 }
 
+// ---- 时间线复选（用于导出） ----
+const onTimelineCommSelect = (commId, val) => {
+  const set = timelineSelectedCommIds.value
+  if (val) {
+    set.add(commId)
+  } else {
+    set.delete(commId)
+  }
+  // 触发响应式更新（Set 需要重新赋值）
+  timelineSelectedCommIds.value = new Set(set)
+}
+
+const clearTimelineSelection = () => {
+  timelineSelectedCommIds.value = new Set()
+  showTimelineCheckboxes.value = false
+}
+
+const startCommSelection = () => {
+  showTimelineCheckboxes.value = true
+  showExportDialog.value = false
+}
+
+// ---- 导出说明文档 ----
+const initExportDialog = () => {
+  // 重置时间范围
+  exportTimeRange.value = 'all'
+  exportDateRange.value = null
+  // 如果已从时间线勾选了记录，不使用时间范围筛选
+  if (timelineSelectedCommIds.value.size > 0) {
+    exportTimeRange.value = 'all'
+  }
+  // 如果用户清空了选择，隐藏复选框
+  if (timelineSelectedCommIds.value.size === 0) {
+    showTimelineCheckboxes.value = false
+  }
+
+  // 计算沟通记录的最早和最晚日期（用于自定义范围限制）
+  if (task.value?.communications?.length) {
+    const comms = task.value.communications
+    let minDate = null
+    let maxDate = null
+    for (const c of comms) {
+      if (c.comm_at) {
+        const d = new Date(c.comm_at)
+        if (!minDate || d < minDate) minDate = d
+        if (!maxDate || d > maxDate) maxDate = d
+      }
+    }
+    exportMinDate.value = minDate
+    exportMaxDate.value = maxDate
+  } else {
+    exportMinDate.value = null
+    exportMaxDate.value = null
+  }
+
+  // 默认勾选有内容的属性
+  if (task.value) {
+    const t = task.value
+    const defaults = []
+    if (t.title) defaults.push('title')
+    if (t.display_id) defaults.push('display_id')
+    if (t.status_id) defaults.push('status')
+    if (t.priority) defaults.push('priority')
+    if (t.due_date) defaults.push('due_date')
+    if (t.description) defaults.push('description')
+    if (t.contacts && t.contacts.length) defaults.push('contacts')
+    if (t.tags && t.tags.length) defaults.push('tags')
+    if (t.created_at) defaults.push('created_at')
+    if (t.updated_at) defaults.push('updated_at')
+    exportFields.value = defaults
+  } else {
+    exportFields.value = []
+  }
+}
+
+const exportDisabledDate = (time) => {
+  // 禁止选择超出沟通记录时间范围外的日期
+  if (exportMinDate.value && time < exportMinDate.value) return true
+  if (exportMaxDate.value && time > exportMaxDate.value) return true
+  return false
+}
+
+const resetExportDialog = () => {
+  showExportDialog.value = false
+  exportLoading.value = false
+}
+
+const submitExport = async () => {
+  exportLoading.value = true
+  try {
+    const params = {}
+    if (exportTimeRange.value === 'today') {
+      const today = new Date()
+      const y = today.getFullYear()
+      const m = String(today.getMonth() + 1).padStart(2, '0')
+      const d = String(today.getDate()).padStart(2, '0')
+      params.start_date = `${y}-${m}-${d}`
+      params.end_date = `${y}-${m}-${d}`
+    } else if (exportTimeRange.value === 'custom' && exportDateRange.value) {
+      params.start_date = exportDateRange.value[0]
+      params.end_date = exportDateRange.value[1]
+    }
+    // 'all' → 不传参，后端不筛选
+    if (exportFields.value.length) {
+      params.fields = exportFields.value.join(',')
+    }
+    // 沟通记录复选：使用时间线上勾选的记录
+    if (timelineSelectedCommIds.value.size) {
+      params.comm_ids = Array.from(timelineSelectedCommIds.value).join(',')
+    }
+
+    const res = await exportTaskDoc(projectId, taskId, params)
+    // res 是完整 response（含 headers），res.data 是 blob
+    const disposition = res.headers?.['content-disposition'] || ''
+    let filename = task.value?.title ? `${task.value.title}_导出包.zip` : 'task_export.zip'
+    const match = disposition.match(/filename="?(.+?)"?$/)
+    if (match) {
+      filename = decodeURIComponent(match[1])
+    }
+
+    const blob = new Blob([res.data], { type: 'application/zip' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+
+    showExportDialog.value = false
+    ElMessage.success('导出成功')
+  } catch (err) {
+    ElMessage.error('导出失败：' + (err.response?.data?.detail || err.message))
+  } finally {
+    exportLoading.value = false
+  }
+}
+
 const renameAtt = async (a) => {
   // 提取原文件扩展名
   const dotIdx = a.original_filename.lastIndexOf('.')
@@ -941,8 +1184,10 @@ const removeAtt = async (a) => {
 .timeline-scroll::-webkit-scrollbar-track { background: transparent; }
 .timeline-scroll::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; transition: background 0.2s; }
 .timeline-scroll::-webkit-scrollbar-thumb:hover { background: #b0b0b0; }
-.comm-card { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 14px 16px; }
+.comm-card { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 14px 16px; transition: border-color .2s; }
+.comm-card-selected { border-color: #534ab7; background: #f8f7ff; }
 .comm-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.timeline-select-bar { display: flex; align-items: center; gap: 6px; padding: 8px 14px; background: #f0f0ff; border-radius: 8px; margin-bottom: 12px; font-size: 13px; color: #534ab7; }
 .comm-type-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
 .comm-user { font-size: 13px; color: #888; }
 .comm-status { font-size: 12px; color: #666; display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; }

@@ -7,7 +7,7 @@ const http = axios.create({
 })
 
 http.interceptors.response.use(
-  res => res.data,
+  res => res.config.rawResponse ? res : res.data,
   err => {
     // 携带 _silentError 标记的请求不自动弹错误提示（如彻底删除的 409）
     if (err.config?._silentError) return Promise.reject(err)
@@ -90,3 +90,12 @@ export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { o
 // --- Settings ---
 export const getSettings = () => http.get('/process/settings')
 export const updateSettings = (data) => http.put('/process/settings', data)
+
+// --- Export ---
+export const exportTaskDoc = (projectId, taskId, params) =>
+  http.get(`/projects/${projectId}/tasks/${taskId}/export`, {
+    params,
+    responseType: 'blob',
+    rawResponse: true,
+    _silentError: true,
+  })
