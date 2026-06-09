@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import Base, engine
 
-from .routers import projects, tasks, attachments, process, project_contacts, export as export_router
+from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements
 
 
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.include_router(attachments.router)
 app.include_router(process.router)
 app.include_router(project_contacts.router)
 app.include_router(export_router.router)
+app.include_router(requirements.router)
 
 
 @app.get("/")

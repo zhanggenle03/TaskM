@@ -21,6 +21,7 @@ export default http
 
 // --- Projects ---
 export const getProjects = (params) => http.get('/projects', { params })
+export const getProject = (id) => http.get(`/projects/${id}`)
 export const createProject = (data) => http.post('/projects', data)
 export const updateProject = (id, data) => http.put(`/projects/${id}`, data)
 export const deleteProject = (id) => http.delete(`/projects/${id}`)
@@ -99,3 +100,31 @@ export const exportTaskDoc = (projectId, taskId, params) =>
     rawResponse: true,
     _silentError: true,
   })
+
+// --- Requirements ---
+export const getRequirements = (projectId, params) => http.get(`/projects/${projectId}/requirements`, { params })
+export const createRequirement = (projectId, data) => http.post(`/projects/${projectId}/requirements`, data)
+export const getRequirement = (projectId, reqId) => http.get(`/projects/${projectId}/requirements/${reqId}`)
+export const updateRequirement = (projectId, reqId, data) => http.put(`/projects/${projectId}/requirements/${reqId}`, data)
+export const deleteRequirement = (projectId, reqId) => http.delete(`/projects/${projectId}/requirements/${reqId}`)
+
+// --- Requirement Custom Fields ---
+export const getReqCustomFields = (projectId, params) => http.get(`/projects/${projectId}/requirements/fields`, { params })
+export const createReqCustomField = (projectId, data) => http.post(`/projects/${projectId}/requirements/fields`, data)
+export const updateReqCustomField = (projectId, fieldId, data) => http.put(`/projects/${projectId}/requirements/fields/${fieldId}`, data)
+export const deleteReqCustomField = (projectId, fieldId, config) => http.delete(`/projects/${projectId}/requirements/fields/${fieldId}`, config)
+
+// --- Dashboard ---
+export const getDashboardStats = (projectId) => http.get(`/projects/${projectId}/requirements/stats/dashboard`)
+
+// --- Requirement Status Pools ---
+export const getReqStatusPools = (projectId, params) => http.get(`/projects/${projectId}/requirements/status-pools`, { params })
+export const createReqStatusPool = (projectId, data) => http.post(`/projects/${projectId}/requirements/status-pools`, data)
+export const updateReqStatusPool = (projectId, id, data) => http.put(`/projects/${projectId}/requirements/status-pools/${id}`, data)
+export const deleteReqStatusPool = (projectId, id, config) => http.delete(`/projects/${projectId}/requirements/status-pools/${id}`, config)
+
+// --- Requirement Priority Pools ---
+export const getReqPriorityPools = (projectId, params) => http.get(`/projects/${projectId}/requirements/priority-pools`, { params })
+export const createReqPriorityPool = (projectId, data) => http.post(`/projects/${projectId}/requirements/priority-pools`, data)
+export const updateReqPriorityPool = (projectId, id, data) => http.put(`/projects/${projectId}/requirements/priority-pools/${id}`, data)
+export const deleteReqPriorityPool = (projectId, id, config) => http.delete(`/projects/${projectId}/requirements/priority-pools/${id}`, config)

@@ -94,6 +94,86 @@ class Project(Base):
     comm_type_pools = relationship("CommTypePool", back_populates="project", cascade="all, delete-orphan")
     project_contacts = relationship("ProjectContact", back_populates="project", cascade="all, delete-orphan")
     tag_pools = relationship("TagPool", back_populates="project", cascade="all, delete-orphan")
+    requirements = relationship("Requirement", back_populates="project", cascade="all, delete-orphan")
+    requirement_fields = relationship("RequirementCustomField", back_populates="project", cascade="all, delete-orphan")
+    requirement_status_pools = relationship("RequirementStatusPool", back_populates="project", cascade="all, delete-orphan")
+    requirement_priority_pools = relationship("RequirementPriorityPool", back_populates="project", cascade="all, delete-orphan")
+
+
+# ========== 需求模块 ==========
+
+class Requirement(Base):
+    """需求表"""
+    __tablename__ = "requirements"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    display_id = Column(String(50), unique=True, nullable=True)
+    title = Column(String(300), nullable=False)
+    description = Column(Text, default="")
+    priority = Column(String(20), default="normal")  # low/normal/high/urgent
+    status = Column(String(50), default="todo")       # todo/in_progress/done/cancelled
+    due_date = Column(Date, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    project = relationship("Project", back_populates="requirements")
+    custom_values = relationship("RequirementCustomValue", back_populates="requirement", cascade="all, delete-orphan")
+
+
+class RequirementCustomField(Base):
+    """需求自定义字段定义"""
+    __tablename__ = "requirement_custom_fields"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    field_name = Column(String(100), nullable=False)
+    field_type = Column(String(20), nullable=False)  # text/dropdown/date/number
+    field_options = Column(Text, default="")  # JSON string for dropdown options
+    sort_order = Column(Integer, default=0)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    project = relationship("Project", back_populates="requirement_fields")
+    values = relationship("RequirementCustomValue", back_populates="field", cascade="all, delete-orphan")
+
+
+class RequirementCustomValue(Base):
+    """需求自定义字段值"""
+    __tablename__ = "requirement_custom_values"
+    id = Column(Integer, primary_key=True, index=True)
+    requirement_id = Column(Integer, ForeignKey("requirements.id", ondelete="CASCADE"), nullable=False)
+    field_id = Column(Integer, ForeignKey("requirement_custom_fields.id", ondelete="CASCADE"), nullable=False)
+    value = Column(Text, default="")
+
+    requirement = relationship("Requirement", back_populates="custom_values")
+    field = relationship("RequirementCustomField", back_populates="values")
+
+
+class RequirementStatusPool(Base):
+    """需求状态池"""
+    __tablename__ = "requirement_status_pools"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    color = Column(String(20), default="#5F5E5A")
+    sort_order = Column(Integer, default=0)
+    is_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+
+    project = relationship("Project", back_populates="requirement_status_pools")
+
+
+class RequirementPriorityPool(Base):
+    """需求优先级池"""
+    __tablename__ = "requirement_priority_pools"
+    id = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
+    name = Column(String(100), nullable=False)
+    color = Column(String(20), default="#5F5E5A")
+    sort_order = Column(Integer, default=0)
+    is_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+
+    project = relationship("Project", back_populates="requirement_priority_pools")
 
 
 class StatusPool(Base):
@@ -291,6 +371,18 @@ def generate_task_display_id(db, project) -> str:
     seq = (int(last[0][-4:]) + 1) if last and last[0][-4:].isdigit() else 1
     seq_str = f"{seq:04d}"
     return f"T{proj_id_no_p}-{seq_str}"
+
+
+def generate_requirement_display_id(db, project) -> str:
+    """生成需求显示ID 格式: Q + 项目ID(不含P) + "-" + 3位序号"""
+    proj_id_no_p = project.display_id[1:] if project.display_id and project.display_id.startswith("P") else str(project.id)
+    # 查询同一项目下最大序号
+    last = db.query(Requirement.display_id).filter(
+        Requirement.display_id.like(f"Q{proj_id_no_p}-%")
+    ).order_by(Requirement.display_id.desc()).first()
+    seq = (int(last[0][-3:]) + 1) if last and last[0][-3:].isdigit() else 1
+    seq_str = f"{seq:03d}"
+    return f"Q{proj_id_no_p}-{seq_str}"
 
 
 # ---- 显示ID查找工具函数 ----

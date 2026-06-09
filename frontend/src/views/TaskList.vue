@@ -4,11 +4,12 @@
     <el-breadcrumb separator="/" style="margin-bottom:20px">
       <el-breadcrumb-item :to="{ path: '/projects' }">项目列表</el-breadcrumb-item>
       <el-breadcrumb-item>{{ project?.name }}</el-breadcrumb-item>
+      <el-breadcrumb-item>任务列表</el-breadcrumb-item>
     </el-breadcrumb>
 
     <div class="page-header">
       <div>
-        <h1 class="page-title">{{ project?.name }}</h1>
+        <h1 class="page-title">任务管理</h1>
         <p class="page-sub">{{ project?.description }}</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">

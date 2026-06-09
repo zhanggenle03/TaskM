@@ -6,13 +6,6 @@
       <el-breadcrumb-item>设置</el-breadcrumb-item>
     </el-breadcrumb>
 
-    <!-- 项目信息 -->
-    <div class="proj-info-bar" v-if="project">
-      <span><strong>{{ project.name }}</strong></span>
-      <el-tag v-if="project.display_id" size="small" type="info" effect="plain" style="margin-left:8px">{{ project.display_id }}</el-tag>
-      <span style="margin-left:12px;color:#999;font-size:13px">前缀：{{ project.custom_prefix || '未设置' }}（创建后不可更改）</span>
-    </div>
-
     <el-tabs v-model="activeTab" tab-position="left" style="min-height:400px">
       <!-- ===== 状态池 ===== -->
       <el-tab-pane label="状态池" name="status">
@@ -51,9 +44,12 @@
             <el-tag v-if="!s.is_active" type="warning" size="small">已停用</el-tag>
             <div style="flex:1"></div>
             <el-button v-if="s.is_active" size="small" text @click="openEditDialog('status', s)"><el-icon><Edit /></el-icon></el-button>
-            <el-button v-if="s.is_active" size="small" text type="danger" @click="removeItem('status', s)"><el-icon><Delete /></el-icon></el-button>
-            <template v-else>
+            <template v-if="!s.is_active">
               <el-button size="small" text type="primary" @click="restoreItem('status', s)"><el-icon><Refresh /></el-icon> 还原</el-button>
+              <el-button size="small" text type="danger" @click="permanentDelete('status', s)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
+            </template>
+            <template v-else-if="!s.is_default">
+              <el-button size="small" text type="warning" @click="removeItem('status', s)"><el-icon><Remove /></el-icon> 停用</el-button>
               <el-button size="small" text type="danger" @click="permanentDelete('status', s)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
             </template>
           </div>
@@ -93,7 +89,8 @@
             </div>
             <el-tag v-if="!pc.is_active" type="warning" size="small">已停用</el-tag>
             <el-button v-if="pc.is_active" size="small" text @click="openEditPC(pc)"><el-icon><Edit /></el-icon></el-button>
-            <el-button v-if="pc.is_active" size="small" text type="danger" @click="removePC(pc)"><el-icon><Delete /></el-icon></el-button>
+            <el-button v-if="pc.is_active" size="small" text type="warning" @click="removePC(pc)"><el-icon><Remove /></el-icon> 停用</el-button>
+            <el-button v-if="pc.is_active" size="small" text type="danger" @click="permanentDelete('contact', pc)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
             <template v-else>
               <el-button size="small" text type="primary" @click="restorePC(pc)"><el-icon><Refresh /></el-icon> 还原</el-button>
               <el-button size="small" text type="danger" @click="permanentDelete('contact', pc)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
@@ -140,9 +137,12 @@
             <el-tag v-if="!t.is_active" type="warning" size="small">已停用</el-tag>
             <div style="flex:1"></div>
             <el-button v-if="t.is_active" size="small" text @click="openEditDialog('commType', t)"><el-icon><Edit /></el-icon></el-button>
-            <el-button v-if="t.is_active" size="small" text type="danger" @click="removeItem('commType', t)"><el-icon><Delete /></el-icon></el-button>
-            <template v-else>
+            <template v-if="!t.is_active">
               <el-button size="small" text type="primary" @click="restoreItem('commType', t)"><el-icon><Refresh /></el-icon> 还原</el-button>
+              <el-button size="small" text type="danger" @click="permanentDelete('commType', t)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
+            </template>
+            <template v-else-if="!t.is_default">
+              <el-button size="small" text type="warning" @click="removeItem('commType', t)"><el-icon><Remove /></el-icon> 停用</el-button>
               <el-button size="small" text type="danger" @click="permanentDelete('commType', t)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
             </template>
           </div>
@@ -186,7 +186,8 @@
             <el-tag v-if="!t.is_active" type="warning" size="small">已停用</el-tag>
             <div style="flex:1"></div>
             <el-button v-if="t.is_active" size="small" text @click="openEditTagDialog(t)"><el-icon><Edit /></el-icon></el-button>
-            <el-button v-if="t.is_active" size="small" text type="danger" @click="removeTag(t)"><el-icon><Delete /></el-icon></el-button>
+            <el-button v-if="t.is_active" size="small" text type="warning" @click="removeTag(t)"><el-icon><Remove /></el-icon> 停用</el-button>
+            <el-button v-if="t.is_active" size="small" text type="danger" @click="permanentDelete('tag', t)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
             <template v-else>
               <el-button size="small" text type="primary" @click="restoreTag(t)"><el-icon><Refresh /></el-icon> 还原</el-button>
               <el-button size="small" text type="danger" @click="permanentDelete('tag', t)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
@@ -486,7 +487,7 @@ const permanentDelete = async (type, item) => {
       const refs = err.response.data.detail.refs
       const refText = Object.entries(refs).map(([k, v]) => `${k}: ${v}个`).join('、')
       await ElMessageBox.confirm(
-        `「${item.name}」被以下数据引用：\n${refText}\n\n彻底删除后，这些引用将被置空。确认彻底删除？`,
+        `「${item.name}」被以下数据引用：\n${refText}\n\n彻底删除后，这些引用将被置为默认值。确认彻底删除？`,
         '确认彻底删除',
         { type: 'warning', confirmButtonText: '彻底删除' }
       )

@@ -33,11 +33,18 @@ def _count_status_refs(db: Session, status_id: int) -> dict:
     }
 
 
-def _clear_status_refs(db: Session, status_id: int):
-    """清理状态引用（SET NULL）"""
-    db.query(Task).filter(Task.status_id == status_id).update({Task.status_id: None}, synchronize_session=False)
-    db.query(Communication).filter(Communication.old_status_id == status_id).update({Communication.old_status_id: None}, synchronize_session=False)
-    db.query(Communication).filter(Communication.new_status_id == status_id).update({Communication.new_status_id: None}, synchronize_session=False)
+def _clear_status_refs(db: Session, status_id: int, project_id: int):
+    """清理状态引用（设为默认状态）"""
+    # 查找项目默认状态
+    default_status = db.query(StatusPool).filter(
+        StatusPool.project_id == project_id,
+        StatusPool.is_default == True,
+        StatusPool.id != status_id,
+    ).first()
+    default_id = default_status.id if default_status else None
+    db.query(Task).filter(Task.status_id == status_id).update({Task.status_id: default_id}, synchronize_session=False)
+    db.query(Communication).filter(Communication.old_status_id == status_id).update({Communication.old_status_id: default_id}, synchronize_session=False)
+    db.query(Communication).filter(Communication.new_status_id == status_id).update({Communication.new_status_id: default_id}, synchronize_session=False)
 
 
 def _count_comm_type_refs(db: Session, type_name: str) -> dict:
@@ -332,12 +339,14 @@ def delete_status(project_id: str, status_id: int, force: bool = False, confirme
     status = db.query(StatusPool).filter(StatusPool.id == status_id, StatusPool.project_id == proj.id).first()
     if not status:
         raise HTTPException(404, "状态不存在")
+    if status.is_default:
+        raise HTTPException(400, "默认值不允许停用或删除，请先设置其他状态为默认值")
     if force:
         refs = _count_status_refs(db, status_id)
         real_refs = {k: v for k, v in refs.items() if v > 0}
         if real_refs and not confirmed:
             raise HTTPException(409, detail={"message": "有数据引用该状态", "refs": real_refs})
-        _clear_status_refs(db, status_id)
+        _clear_status_refs(db, status_id, proj.id)
         db.delete(status)
         db.commit()
         touch_project(db, proj.id)
@@ -412,10 +421,22 @@ def delete_comm_type(project_id: str, type_id: int, force: bool = False, confirm
     ct = db.query(CommTypePool).filter(CommTypePool.id == type_id, CommTypePool.project_id == proj.id).first()
     if not ct:
         raise HTTPException(404, "沟通类型不存在")
+    if ct.is_default:
+        raise HTTPException(400, "默认值不允许停用或删除，请先设置其他沟通类型为默认值")
     if force:
         refs = _count_comm_type_refs(db, ct.name)
         if refs and not confirmed:
             raise HTTPException(409, detail={"message": "有数据引用该沟通类型", "refs": refs})
+        # 查找默认沟通类型，将引用改为默认值
+        default_ct = db.query(CommTypePool).filter(
+            CommTypePool.project_id == proj.id,
+            CommTypePool.is_default == True,
+            CommTypePool.id != type_id,
+        ).first()
+        default_name = default_ct.name if default_ct else "备注"
+        db.query(Communication).filter(Communication.comm_type == ct.name).update(
+            {Communication.comm_type: default_name}, synchronize_session=False
+        )
         db.delete(ct)
         db.commit()
         touch_project(db, proj.id)

@@ -4,6 +4,7 @@
     <el-breadcrumb separator="/" style="margin-bottom:20px">
       <el-breadcrumb-item :to="{ path: '/projects' }">项目列表</el-breadcrumb-item>
       <el-breadcrumb-item :to="{ path: `/projects/${projectId}` }">{{ project?.name || `项目 #${projectId}` }}</el-breadcrumb-item>
+      <el-breadcrumb-item :to="{ path: `/projects/${projectId}` }">任务列表</el-breadcrumb-item>
       <el-breadcrumb-item>{{ task?.title || '任务详情' }}</el-breadcrumb-item>
     </el-breadcrumb>
 
