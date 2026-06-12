@@ -1230,6 +1230,7 @@ async def import_requirements(
                     }
 
         if dup_result:
+            dup_result["warning"] = True
             return dup_result
 
     # ── 按策略去重 ──
