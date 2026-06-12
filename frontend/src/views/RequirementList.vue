@@ -1,93 +1,175 @@
 <template>
   <div class="requirement-page">
-    <!-- 面包屑 -->
-    <el-breadcrumb separator="/" style="margin-bottom: 20px;">
-      <el-breadcrumb-item :to="{ name: 'projects' }">项目列表</el-breadcrumb-item>
-      <el-breadcrumb-item>{{ projectName }}</el-breadcrumb-item>
-      <el-breadcrumb-item>需求列表</el-breadcrumb-item>
-    </el-breadcrumb>
-    <!-- 页面头部 -->
-    <div class="page-header">
-      <h2>需求管理</h2>
-      <div class="header-actions">
-        <el-button @click="$router.push(`/projects/${projectId}/requirements/settings`)" size="small">
-          <el-icon><Setting /></el-icon> 设置
-        </el-button>
-        <el-button type="primary" @click="openCreate">
-          <el-icon><Plus /></el-icon> 新建需求
-        </el-button>
+    <div class="req-top-section">
+      <!-- 面包屑 -->
+      <el-breadcrumb separator="/" style="margin-bottom: 20px;">
+        <el-breadcrumb-item :to="{ name: 'projects' }">项目列表</el-breadcrumb-item>
+        <el-breadcrumb-item>{{ projectName }}</el-breadcrumb-item>
+        <el-breadcrumb-item>需求列表</el-breadcrumb-item>
+      </el-breadcrumb>
+      <!-- 页面头部 -->
+      <div class="page-header">
+        <h2>需求管理</h2>
+        <div class="header-actions">
+          <el-button @click="$router.push(`/projects/${projectId}/requirements/settings`)" size="small">
+            <el-icon><Setting /></el-icon> 设置
+          </el-button>
+          <el-dropdown size="small" trigger="click" :disabled="!selectedReqs.length">
+            <el-button size="small" :disabled="!selectedReqs.length">
+              批量操作<el-icon><ArrowDown /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-item @click="batchDeleteReq">
+                <el-icon><Delete /></el-icon> 批量删除 ({{ selectedReqs.length }})
+              </el-dropdown-item>
+            </template>
+          </el-dropdown>
+          <el-dropdown split-button type="primary" size="small" @click="openCreate" trigger="hover">
+            新建
+            <template #dropdown>
+              <el-dropdown-item @click="openExcelImport('append')">
+                <el-icon><Upload /></el-icon> 追加导入
+              </el-dropdown-item>
+              <el-dropdown-item @click="openExcelImport('update')">
+                <el-icon><Edit /></el-icon> 更新导入
+              </el-dropdown-item>
+              <el-dropdown-item @click="openExcelImport('overwrite')">
+                <el-icon><Refresh /></el-icon> 覆盖导入
+              </el-dropdown-item>
+            </template>
+          </el-dropdown>
+        </div>
       </div>
+
     </div>
 
-    <!-- 筛选栏 -->
-    <div class="filter-bar">
-      <el-input
-        v-model="searchKeyword"
-        placeholder="搜索需求标题/描述..."
-        clearable
-        style="width: 260px"
-        @input="onSearch"
+    <!-- 需求明细表（仅数据区滚动） -->
+    <div v-if="requirements.length" class="req-table-wrap" style="flex:1;min-height:0;padding-bottom:56px">
+      <el-table
+        ref="tableRef"
+        :key="tableKey"
+        :data="requirements"
+        :max-height="tableMaxHeight"
+        stripe
+        border
+        style="width: 100%"
+        size="small"
+        :cell-class-name="cellClassName"
+        @cell-click="onCellClick"
+        @cell-dblclick="onCellDblClick"
+        @cell-contextmenu="onCellContextMenu"
+        @header-dragend="onColumnResize"
+        class="req-table"
       >
-        <template #prefix><el-icon><Search /></el-icon></template>
-      </el-input>
-      <el-select v-model="filterStatus" placeholder="状态筛选" clearable multiple collapse-tags style="width: 180px" @change="loadRequirements">
-        <el-option
-          v-for="s in statusPools"
-          :key="s.id"
-          :label="s.name"
-          :value="statusNameToValue(s.name)"
-        />
-      </el-select>
-      <el-select v-model="filterPriority" placeholder="优先级筛选" clearable multiple collapse-tags style="width: 160px" @change="loadRequirements">
-        <el-option
-          v-for="p in priorityPools"
-          :key="p.id"
-          :label="p.name"
-          :value="priorityNameToValue(p.name)"
-        />
-      </el-select>
-    </div>
-
-    <!-- 统计摘要 -->
-    <div class="stats-row">
-      <el-tag>全部 {{ requirements.length }}</el-tag>
-      <el-tag type="warning">待处理 {{ statusCount('todo') }}</el-tag>
-      <el-tag type="primary">进行中 {{ statusCount('in_progress') }}</el-tag>
-      <el-tag type="success">已完成 {{ statusCount('done') }}</el-tag>
-    </div>
-
-    <!-- 需求明细表 -->
-    <el-table
-      v-if="requirements.length"
-      :data="requirements"
-      stripe
-      border
-      style="width: 100%"
-      size="small"
-      @row-click="openEdit"
-      @sort-change="onSortChange"
-      class="req-table"
-    >
-      <el-table-column label="显示ID" width="160" align="center" prop="display_id">
+      <el-table-column width="42" align="center">
+        <template #header>
+          <el-checkbox
+            :model-value="headerChecked"
+            :indeterminate="headerIndeterminate"
+            @change="onHeaderSelectChange"
+            size="small"
+          />
+        </template>
+        <template #default="{ row }">
+          <el-checkbox
+            :model-value="selectedReqs.some(r => r.id === row.id)"
+            @change="(v) => toggleRowSelection(row, v)"
+            size="small"
+          />
+        </template>
+      </el-table-column>
+      <el-table-column label="显示ID" :width="mergedColWidth('显示ID', 160)" align="center">
+        <template #header>
+          <span class="th-with-filter">
+            <span style="flex:1">显示ID</span>
+            <el-icon
+              class="filter-icon"
+              :class="{ active: hasFilter('display_id') }"
+              @click.stop="toggleFilterCol('display_id', $event)"
+            ><Filter /></el-icon>
+          </span>
+        </template>
         <template #default="{ row }">
           <span class="id-cell">{{ row.display_id || '—' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="标题" min-width="180" sortable="custom" prop="title">
+      <el-table-column prop="title" :width="mergedColWidth('title', columnWidths.title || 240)" show-overflow-tooltip>
+        <template #header>
+          <span class="th-with-filter">
+            <span class="sortable-header" @click.stop="toggleSort('title')" style="flex:1">
+              标题
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('title') === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('title') === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('title')" class="sort-rank">{{ getSortRank('title') }}</span>
+              </span>
+            </span>
+            <el-icon
+              class="filter-icon"
+              :class="{ active: hasFilter('title') }"
+              @click.stop="toggleFilterCol('title', $event)"
+            ><Filter /></el-icon>
+          </span>
+        </template>
         <template #default="{ row }">
           <span class="req-title-cell">{{ row.title }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90" align="center" sortable :sort-method="sortByStatus">
+      <el-table-column prop="status" :width="mergedColWidth('status', 90)" align="center">
+        <template #header>
+          <span class="th-with-filter">
+            <span class="sortable-header" @click.stop="toggleSort('status')" style="flex:1">
+              状态
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('status') === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('status') === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('status')" class="sort-rank">{{ getSortRank('status') }}</span>
+              </span>
+            </span>
+            <el-icon
+              class="filter-icon"
+              :class="{ active: hasFilter('status') }"
+              @click.stop="toggleFilterCol('status', $event)"
+            ><Filter /></el-icon>
+          </span>
+        </template>
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small" effect="plain">
+          <el-tag
+            size="small"
+            class="pool-tag-plain"
+            :style="{ borderColor: statusPoolColor(row.status), color: statusPoolColor(row.status) }"
+          >
             {{ statusLabel(row.status) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="优先级" width="80" align="center" sortable :sort-method="sortByPriority">
+      <el-table-column prop="priority" :width="mergedColWidth('priority', 80)" align="center">
+        <template #header>
+          <span class="th-with-filter">
+            <span class="sortable-header" @click.stop="toggleSort('priority')" style="flex:1">
+              优先级
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('priority') === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('priority') === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('priority')" class="sort-rank">{{ getSortRank('priority') }}</span>
+              </span>
+            </span>
+            <el-icon
+              class="filter-icon"
+              :class="{ active: hasFilter('priority') }"
+              @click.stop="toggleFilterCol('priority', $event)"
+            ><Filter /></el-icon>
+          </span>
+        </template>
         <template #default="{ row }">
-          <el-tag :type="priorityTagType(row.priority)" size="small">
+          <el-tag
+            size="small"
+            class="pool-tag-plain"
+            :style="{ borderColor: priorityPoolColor(row.priority), color: priorityPoolColor(row.priority) }"
+          >
             {{ priorityLabel(row.priority) }}
           </el-tag>
         </template>
@@ -96,26 +178,154 @@
       <el-table-column
         v-for="cf in customFields"
         :key="'cf_' + cf.id"
+        :prop="'cf_' + cf.id"
         :label="cf.field_name"
-        :width="cf.field_type === 'text' ? 140 : 100"
+        :width="mergedColWidth('cf_' + cf.id, columnWidths['cf_' + cf.id] || 120)"
         :align="cf.field_type === 'number' ? 'right' : 'center'"
+        show-overflow-tooltip
       >
+        <template #header>
+          <span class="th-with-filter">
+            <span class="sortable-header" @click.stop="toggleSort('cf_' + cf.id)" style="flex:1">
+              {{ cf.field_name }}
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('cf_' + cf.id) === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('cf_' + cf.id) === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('cf_' + cf.id)" class="sort-rank">{{ getSortRank('cf_' + cf.id) }}</span>
+              </span>
+            </span>
+            <el-icon
+              class="filter-icon"
+              :class="{ active: hasFilter('cf_' + cf.id) }"
+              @click.stop="toggleFilterCol('cf_' + cf.id, $event)"
+            ><Filter /></el-icon>
+          </span>
+        </template>
         <template #default="{ row }">
-          <span class="cf-value">{{ getCustomValue(row.custom_values, cf.id) }}</span>
+          <span v-if="cf.field_type === 'multi_dropdown'" class="cf-value multi-dropdown-value">
+            <el-tag
+              v-for="opt in splitMultiValue(getCustomValue(row.custom_values, cf.id))"
+              :key="opt"
+              size="small"
+              class="multi-tag"
+              :style="optionTagStyle(cf.field_options, opt)"
+            >{{ opt }}</el-tag>
+          </span>
+          <span v-else-if="cf.field_type === 'dropdown'" class="cf-value">
+            <el-tag
+              v-if="getCustomValue(row.custom_values, cf.id)"
+              size="small"
+              :style="optionTagStyle(cf.field_options, getCustomValue(row.custom_values, cf.id))"
+            >{{ getCustomValue(row.custom_values, cf.id) }}</el-tag>
+          </span>
+          <span v-else-if="cf.field_type === 'text'" class="cf-value cf-text-cell" :title="getCustomValue(row.custom_values, cf.id)">{{ getCustomValue(row.custom_values, cf.id) }}</span>
+          <span v-else-if="cf.field_type === 'datetime'" class="cf-value">{{ formatDateTime(getCustomValue(row.custom_values, cf.id)) }}</span>
+          <span v-else-if="cf.field_type === 'date'" class="cf-value">{{ formatDate(getCustomValue(row.custom_values, cf.id)) }}</span>
+    <span v-else class="cf-value">{{ getCustomValue(row.custom_values, cf.id) }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="70" align="center" fixed="right">
+      <el-table-column label="操作" :width="mergedColWidth('操作', 70)" align="center" fixed="right">
         <template #default="{ row }">
           <el-button text size="small" type="danger" @click.stop="removeReq(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
+    <!-- 列筛选面板 -->
+    <div v-if="filterOpen" class="filter-overlay" @click="closeFilter" />
+    <div v-if="filterOpen" class="filter-panel-wrap" :style="filterPanelStyle" @click.stop>
+      <div class="filter-search-wrap">
+        <el-input v-model="filterSearch" size="small" placeholder="搜索… 空格分隔多关键词" clearable />
+      </div>
+      <div class="filter-options">
+        <!-- 日期/时间列：分级树（扁平渲染） -->
+        <template v-if="isDateFilter">
+          <div
+            v-for="node in flattenedDateNodes"
+            :key="node.value"
+            class="filter-opt-row dt-row"
+            :style="{ paddingLeft: (8 + node.depth * 16) + 'px' }"
+            @click.stop="node.hasChildren && toggleDateNode(node)"
+          >
+            <span v-if="node.hasChildren" class="dt-toggle">{{ dtExpanded.has(node.value) ? '▼' : '▶' }}</span>
+            <span v-else style="width:14px;flex-shrink:0" />
+            <el-checkbox
+              :model-value="isFilterSelected(node.value)"
+              size="small"
+              @change="toggleFilterVal(node.value)"
+              @click.stop
+            />
+            <span class="filter-opt-text">{{ node.label }}</span>
+            <span class="filter-opt-count">{{ node.count }}</span>
+          </div>
+        </template>
+        <!-- 普通列：平铺列表 -->
+        <template v-else>
+        <label v-for="opt in filteredColOptions" :key="opt.value" class="filter-opt-row">
+          <el-checkbox
+            :model-value="isFilterSelected(opt.value)"
+            size="small"
+            @change="toggleFilterVal(opt.value)"
+          />
+          <span class="filter-opt-text">{{ opt.value }}</span>
+          <span class="filter-opt-count">{{ opt.count }}</span>
+        </label>
+        </template>
+        <div v-if="(isDateFilter && !flattenedDateNodes.length) || (!isDateFilter && !filteredColOptions.length)" class="filter-empty">
+          {{ filterSearch ? '无匹配结果' : '暂无数据' }}
+        </div>
+      </div>
+      <div class="filter-actions-bar">
+        <el-checkbox
+          :model-value="filterSelectAllChecked"
+          :indeterminate="filterSelectAllIndeterminate"
+          size="small"
+          @change="filterSelectAll"
+        >全选</el-checkbox>
+        <div class="filter-btn-group">
+          <el-button text size="small" @click.stop="filterInvert">反选</el-button>
+          <el-button v-if="hasFilter(filterCol)" text size="small" type="danger" @click.stop="filterClear">清除筛选</el-button>
+        </div>
+      </div>
+    </div>
+    <div class="pagination-sticky">
+        <span v-if="total !== totalAll && totalAll" class="filter-total-tip">已筛选 {{ total }} 条 / 共 {{ totalAll }} 条</span>
+        <span v-else class="filter-total-tip">共 {{ total }} 条</span>
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[25, 50, 75, 100]"
+          :total="total"
+          layout="sizes, prev, pager, next, jumper"
+          background
+          small
+          @current-change="loadRequirements"
+          @size-change="loadRequirements"
+        />
+      </div>
+    </div>
     <el-empty v-else description="暂无需求" />
 
-    <!-- 新建/编辑对话框 -->
+    <!-- 批量操作悬浮进度条 -->
+    <div v-if="batchDeleting" class="batch-progress-overlay">
+      <div class="batch-progress-card">
+        <el-progress
+          :percentage="Math.round(deleteProgress.current / deleteProgress.total * 100)"
+          :stroke-width="10"
+          :show-text="false"
+          :stroke-linecap="'round'"
+          style="width: 200px"
+        />
+        <span class="batch-progress-text">
+          {{ deleteProgress.current }} / {{ deleteProgress.total }}
+        </span>
+      </div>
+    </div>
+
+    <!-- 新建需求对话框 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="isEditing ? '编辑需求' : '新建需求'"
+      title="新建需求"
       width="600px"
       :close-on-click-modal="false"
     >
@@ -143,46 +353,245 @@
             />
           </el-select>
         </el-form-item>
-        <!-- 自定义字段 -->
-        <template v-for="cf in customFields" :key="cf.id">
-          <el-form-item :label="cf.field_name">
-            <el-input v-if="cf.field_type === 'text'" v-model="form.customValues[cf.id]" />
-            <el-select v-else-if="cf.field_type === 'dropdown'" v-model="form.customValues[cf.id]" style="width: 100%">
-              <el-option
-                v-for="opt in parseOptions(cf.field_options)"
-                :key="opt"
-                :label="opt"
-                :value="opt"
-              />
-            </el-select>
-            <el-date-picker
-              v-else-if="cf.field_type === 'date'"
-              v-model="form.customValues[cf.id]"
-              type="date"
-              placeholder="选择日期"
-              style="width: 100%"
-              value-format="YYYY-MM-DD"
-            />
-            <el-input-number v-else-if="cf.field_type === 'number'" v-model="form.customValues[cf.id]" style="width: 100%" />
-          </el-form-item>
-        </template>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" @click="submit">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 单元格编辑对话框 -->
+    <el-dialog
+      v-model="cellEditVisible"
+      :title="cellEditTitle"
+      width="420px"
+      :close-on-click-modal="false"
+      class="cell-edit-dialog"
+    >
+      <el-form label-position="top" class="cell-edit-form">
+        <el-form-item label="标题" v-if="cellEditField === 'title'">
+          <el-input v-model="cellEditValue" placeholder="输入需求标题" clearable @keyup.enter="saveCellEdit" />
+        </el-form-item>
+        <el-form-item label="状态" v-if="cellEditField === 'status'">
+          <el-select v-model="cellEditValue" placeholder="选择状态" style="width: 100%">
+            <el-option
+              v-for="s in statusPools"
+              :key="s.id"
+              :label="s.name"
+              :value="statusNameToValue(s.name)"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="优先级" v-if="cellEditField === 'priority'">
+          <el-select v-model="cellEditValue" placeholder="选择优先级" style="width: 100%">
+            <el-option
+              v-for="p in priorityPools"
+              :key="p.id"
+              :label="p.name"
+              :value="priorityNameToValue(p.name)"
+            />
+          </el-select>
+        </el-form-item>
+        <!-- 自定义字段编辑 -->
+        <el-form-item
+          v-if="cellEditField.startsWith('cf_')"
+          :label="(cellEditFieldDef && cellEditFieldDef.field_name) || '自定义字段'"
+        >
+          <el-input
+            v-if="cellEditFieldDef && cellEditFieldDef.field_type === 'text'"
+            v-model="cellEditValue"
+            placeholder="输入值"
+            clearable
+          />
+          <el-select
+            v-else-if="cellEditFieldDef && cellEditFieldDef.field_type === 'dropdown'"
+            v-model="cellEditValue"
+            placeholder="请选择"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in parseOptions(cellEditFieldDef.field_options)"
+              :key="opt"
+              :label="opt"
+              :value="opt"
+            >
+              <span class="option-label">
+                <span v-if="getOptionColor(cellEditFieldDef.field_options, opt)" class="option-dot" :style="{ backgroundColor: getOptionColor(cellEditFieldDef.field_options, opt) }"></span>
+                {{ opt }}
+              </span>
+            </el-option>
+          </el-select>
+          <el-select
+            v-else-if="cellEditFieldDef && cellEditFieldDef.field_type === 'multi_dropdown'"
+            v-model="cellEditValue"
+            multiple
+            placeholder="请选择（可多选）"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="opt in parseOptions(cellEditFieldDef.field_options)"
+              :key="opt"
+              :label="opt"
+              :value="opt"
+            >
+              <span class="option-label">
+                <span v-if="getOptionColor(cellEditFieldDef.field_options, opt)" class="option-dot" :style="{ backgroundColor: getOptionColor(cellEditFieldDef.field_options, opt) }"></span>
+                {{ opt }}
+              </span>
+            </el-option>
+          </el-select>
+          <el-date-picker
+            v-else-if="cellEditFieldDef && cellEditFieldDef.field_type === 'date'"
+            v-model="cellEditValue"
+            type="date"
+            placeholder="选择日期"
+            style="width: 100%"
+            value-format="YYYY-MM-DD"
+          />
+          <el-date-picker
+            v-else-if="cellEditFieldDef && cellEditFieldDef.field_type === 'datetime'"
+            v-model="cellEditValue"
+            type="datetime"
+            placeholder="选择时间"
+            style="width: 100%"
+            value-format="YYYY-MM-DD HH:mm:ss"
+          />
+          <el-input-number
+            v-else-if="cellEditFieldDef && cellEditFieldDef.field_type === 'number'"
+            v-model="cellEditValue"
+            :controls="false"
+            style="width: 100%"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="cellEditVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveCellEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- Excel 导入对话框 -->
+    <el-dialog
+      v-model="importDialogVisible"
+      :title="'Excel 导入需求 - ' + (importMode === 'overwrite' ? '覆盖模式' : importMode === 'update' ? '更新模式' : '追加模式')"
+      width="700px"
+      :close-on-click-modal="false"
+      :before-close="resetImport"
+    >
+      <!-- 步骤1: 上传文件 -->
+      <template v-if="importStep === 'upload'">
+        <div class="import-upload-area">
+          <input
+            type="file"
+            ref="importFileInputRef"
+            accept=".xlsx,.xls"
+            @change="onImportFileSelected"
+            style="display:none"
+          />
+          <el-button type="primary" @click="$refs.importFileInputRef.click()">
+            <el-icon><Upload /></el-icon> 选择 Excel 文件
+          </el-button>
+          <div v-if="importFile" style="margin-top:8px;font-size:13px;color:#888">
+            已选择：<strong>{{ importFile.name }}</strong>
+          </div>
+          <div class="el-upload__tip">支持 .xlsx / .xls 格式，第一行为表头</div>
+        </div>
+        <div style="margin-top: 16px">
+          <el-button type="primary" :disabled="!importFile" :loading="importPreviewLoading" @click="loadImportPreview">
+            预览数据
+          </el-button>
+        </div>
+        <div v-if="importPreview" style="margin-top: 12px">
+          <p style="margin:0 0 8px;font-size:13px;color:#888">
+            识别到 <strong>{{ importPreview.headers.length }}</strong> 列，<strong>{{ importPreview.total_rows }}</strong> 行数据
+          </p>
+        </div>
+      </template>
+
+      <!-- 步骤2: 列映射 -->
+      <template v-if="importStep === 'mapping'">
+        <p style="margin:0 0 12px;font-size:13px;color:#555">将 Excel 列映射到需求字段，未映射的列将被忽略</p>
+        <div v-for="(h, i) in importPreview.headers" :key="i" class="import-mapping-row">
+          <span class="import-mapping-label">{{ h }}</span>
+          <el-icon style="margin:0 8px"><ArrowRight /></el-icon>
+          <el-select v-model="importMapping[h].target" style="width:160px" @change="onMappingTargetChange(h)">
+            <el-option label="— 忽略 —" value="" />
+            <el-option label="标题" value="title" />
+            <el-option label="状态" value="status" />
+            <el-option label="优先级" value="priority" />
+            <el-option-group v-if="importMode !== 'overwrite'" label="自定义字段">
+              <el-option
+                v-for="cf in customFields"
+                :key="cf.id"
+                :label="cf.field_name"
+                :value="'field:' + cf.id"
+              />
+            </el-option-group>
+            <el-option label="+ 新建列" value="new" />
+          </el-select>
+          <!-- 新建字段配置 -->
+          <span v-if="importMapping[h].target === 'new'" class="import-new-field">
+            <el-input v-model="importMapping[h].field_name" placeholder="字段名" size="small" style="width:120px" />
+            <el-select v-model="importMapping[h].field_type" size="small" style="width:100px">
+              <el-option label="文本" value="text" />
+              <el-option label="单选" value="dropdown" />
+              <el-option label="多选" value="multi_dropdown" />
+              <el-option label="时间" value="datetime" />
+              <el-option label="日期" value="date" />
+              <el-option label="数字" value="number" />
+            </el-select>
+          </span>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:8px">
+          <el-button @click="importStep = 'upload'">上一步</el-button>
+          <el-button type="primary" @click="doImport()" :loading="importLoading">确认导入</el-button>
+        </div>
+        <div v-if="importResult" style="margin-top:12px">
+          <el-alert :title="importResult.message" type="success" show-icon :closable="false" />
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- 重复标题对话框 -->
+    <el-dialog
+      v-model="dupDialogVisible"
+      title="发现重复标题"
+      width="500px"
+      :close-on-click-modal="false"
+      :show-close="false"
+    >
+      <p style="margin:0 0 12px">{{ dupMessage }}</p>
+      <div v-if="dupDuplicates.length" style="margin-bottom:8px">
+        <div v-for="d in dupDuplicates" :key="d.title" style="font-size:13px;margin:2px 0">
+          「{{ d.title }}」— 第 {{ d.rows.join('、') }} 行
+        </div>
+      </div>
+      <template #footer>
+        <template v-if="dupDialogType === 'choice'">
+          <el-button @click="onDupConfirm('cancel')">放弃导入</el-button>
+          <el-button type="primary" @click="onDupConfirm('add_sequence')">添加序号导入</el-button>
+        </template>
+        <template v-else-if="dupDialogType === 'abandon_only'">
+          <el-button type="primary" @click="onDupConfirm('cancel')">取消导入</el-button>
+        </template>
+        <template v-else-if="dupDialogType === 'info_only'">
+          <el-button type="primary" @click="onDupConfirm('ok')">知道了</el-button>
+        </template>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import dayjs from 'dayjs'
 import {
   getRequirements, createRequirement, updateRequirement, deleteRequirement,
   getReqCustomFields, getProject,
-  getReqStatusPools, getReqPriorityPools,
+  getReqStatusPools, getReqPriorityPools, getReqFilterStats,
+  importRequirementsPreview, importRequirements,
 } from '../api/index.js'
 
 const route = useRoute()
@@ -195,14 +604,499 @@ const customFields = ref([])
 const statusPools = ref([])
 const priorityPools = ref([])
 const projectName = ref('')
-const searchKeyword = ref('')
-const filterStatus = ref([])
-const filterPriority = ref([])
-const sortBy = ref('')
-const sortOrder = ref('')
-const dialogVisible = ref(false)
+// 分页
+const currentPage = ref(1)
+const pageSize = ref(50)
+const total = ref(0)
+const totalAll = ref(0)     // 未筛选时的总条数
+// 表格高度（仅数据区滚动）
+const tableRef = ref(null)
+const tableMaxHeight = ref(600)
+let resizeObserver = null
+
+function calcTableHeight() {
+  requestAnimationFrame(() => {
+    const page = document.querySelector('.requirement-page')
+    const topSection = page?.querySelector('.req-top-section')
+    if (page && topSection) {
+      const pageRect = page.getBoundingClientRect()
+      const topRect = topSection.getBoundingClientRect()
+      tableMaxHeight.value = pageRect.bottom - topRect.bottom - 68 // 68 = pagination(50) + padding(18)
+    }
+  })
+}
+// 多列排序状态：使用有序数组保持点击顺序，sortKeys[0]=主排序
+const sortKeys = reactive([])
+
+// 表格 key：自定义字段变化时强制重绘
+const tableKey = computed(() => {
+  return 'req-table-' + customFields.value.map(cf => cf.id).join(',')
+})
+
+// ── 列宽计算：基于字符权重 + 随机采样 ──
+const SAMPLE_SIZE = 200
+const CHAR_WEIGHT_CN = 2
+const CHAR_WEIGHT_EN = 1
+const WEIGHT_BUFFER = 1.25  // 乘以 1.25 获得 20% 缓冲
+const COL_MIN = 80
+const COL_MAX = 400
+const COL_OVERFLOW = 350   // 推荐宽度超过此值 → 固定 280px
+const COL_OVERFLOW_FIX = 280
+// 表头在列名字之外占用的固定开销：排序图标(14) + 筛选图标(14) + 间距(8) + 单元格内边距(20) ≈ 56
+// 无排序的列（显示ID）少一个图标：56 - 14 - 4 ≈ 38
+const HEADER_EXTRA_SORT = 56
+const HEADER_EXTRA_NOSORT = 38
+
+/** 字符权重：中文=2，英文/数字/标点=1 */
+function charWeight(s) {
+  let w = 0
+  for (const ch of String(s || '')) {
+    w += ch.charCodeAt(0) > 127 ? CHAR_WEIGHT_CN : CHAR_WEIGHT_EN
+  }
+  return w
+}
+
+/** 列名总宽度 = MAX(80, 列名字符权重×1.25) + 表头图标开销 */
+function labelMinWidth(label, hasSort = true) {
+  const overhead = hasSort ? HEADER_EXTRA_SORT : HEADER_EXTRA_NOSORT
+  return Math.max(charWeight(label) * WEIGHT_BUFFER, COL_MIN) + overhead
+}
+
+/**
+ * 基于采样数据计算列宽 (px)
+ * - 随机采样 200 行，不足则全量
+ * - 每列取最大字符权重 × 1.25
+ * - 超过 COL_OVERFLOW 的列固定为 COL_OVERFLOW_FIX
+ * - 限制 [COL_MIN, COL_MAX]
+ */
+function calcWidths(rows, fields) {
+  // 随机采样
+  const sampled = rows.length > SAMPLE_SIZE
+    ? [...rows].sort(() => Math.random() - 0.5).slice(0, SAMPLE_SIZE)
+    : rows
+
+  const widths = {}
+
+  // 基础列：标题 / 状态 / 优先级 / 显示ID
+  const baseCols = { title: '标题', status: '状态', priority: '优先级', display_id: '显示ID' }
+  for (const [key, label] of Object.entries(baseCols)) {
+    let maxW = 0
+    for (const row of sampled) {
+      maxW = Math.max(maxW, charWeight(row[key]))
+    }
+    let w = Math.round(maxW * WEIGHT_BUFFER)
+    // display_id 无排序图标，其他列有排序+筛选图标
+    w = Math.max(w, key === 'display_id' ? labelMinWidth(label, false) : labelMinWidth(label))
+    if (w > COL_OVERFLOW) w = COL_OVERFLOW_FIX
+    w = Math.min(w, COL_MAX)
+    widths[key] = w
+  }
+
+  // 自定义字段列
+  for (const cf of fields) {
+    let maxW = 0
+    for (const row of sampled) {
+      const val = getCustomValue(row.custom_values, cf.id)
+      maxW = Math.max(maxW, charWeight(val))
+    }
+    let w = Math.round(maxW * WEIGHT_BUFFER)
+    w = Math.max(w, labelMinWidth(cf.field_name))
+    if (w > COL_OVERFLOW) w = COL_OVERFLOW_FIX
+    w = Math.min(w, COL_MAX)
+    widths['cf_' + cf.id] = w
+  }
+
+  return widths
+}
+
+/** 基于当前数据重算列宽并持久化到 localStorage */
+function recalcAndSaveWidths() {
+  const newWidths = calcWidths(requirements.value, customFields.value)
+  savedWidths.value = { ...newWidths }
+  saveWidths(newWidths)
+}
+
+const columnWidths = computed(() => calcWidths(requirements.value, customFields.value))
+
+// ── 列筛选 ──
+const columnFilters = ref({})  // { prop: string[] }
+const filterOpen = ref(false)
+const filterCol = ref('')       // 当前筛选列 prop
+const filterRect = ref(null)    // 触发元素 DOMRect
+const filterSearch = ref('')    // 筛选面板内搜索词
+const filterStats = ref({})     // 全量数据统计 { prop: [{value, count}] }
+const dtExpanded = ref(new Set()) // 日期树展开节点
+
+const filterPanelStyle = computed(() => {
+  const r = filterRect.value
+  if (!r) return { display: 'none' }
+  const w = 240  // 面板宽度
+  const h = 340  // 面板最大高度
+  const vw = window.innerWidth
+  const vh = window.innerHeight
+  // 水平方向：不超出右边界
+  let left = Math.max(4, r.left)
+  if (left + w > vw - 4) left = vw - w - 4
+  // 垂直方向：距离底部不够则翻到上方
+  let top
+  if (r.bottom + h + 12 > vh) {
+    top = Math.max(4, r.top - h - 4)
+  } else {
+    top = r.bottom + 4
+  }
+  return { position: 'fixed', left: left + 'px', top: top + 'px', zIndex: 9999 }
+})
+
+function toggleFilterCol(colProp, event) {
+  event.stopPropagation()
+  const target = event.currentTarget || event.target
+  if (target) {
+    filterRect.value = target.getBoundingClientRect()
+  } else {
+    // 后备：鼠标位置附近
+    filterRect.value = {
+      left: event.clientX || 100,
+      top: event.clientY || 100,
+      right: (event.clientX || 100) + 240,
+      bottom: (event.clientY || 100) + 20,
+      width: 240,
+      height: 20,
+      x: event.clientX || 100,
+      y: event.clientY || 100,
+    }
+  }
+  filterCol.value = colProp
+  filterSearch.value = ''
+  filterOpen.value = true
+  // 获取跨列联动后的筛选统计数据（排除当前列自己的筛选）
+  const otherFilters = Object.fromEntries(
+    Object.entries(columnFilters.value).filter(([k, v]) => k !== colProp && v && v.length)
+  )
+  const params = {}
+  if (Object.keys(otherFilters).length) {
+    // status/priority 转回英文
+    if (otherFilters.status) otherFilters.status = otherFilters.status.map(s => statusNameToValue(s))
+    if (otherFilters.priority) otherFilters.priority = otherFilters.priority.map(p => priorityNameToValue(p))
+    params.column_filters = JSON.stringify(otherFilters)
+  }
+  getReqFilterStats(projectId, params).then(stats => { filterStats.value = stats }).catch(() => {})
+}
+
+function closeFilter() {
+  filterOpen.value = false
+}
+
+function hasFilter(colProp) {
+  const sel = columnFilters.value[colProp]
+  return sel && sel.length > 0
+}
+
+function getCellValue(row, colProp) {
+  if (!row) return ''
+  if (colProp.startsWith('cf_')) {
+    const fieldId = parseInt(colProp.replace('cf_', ''), 10)
+    const raw = getCustomValue(row.custom_values, fieldId) || ''
+    // 日期/时间列：格式化为标准形式以支持前缀匹配
+    const cf = customFields.value.find(c => c.id === fieldId)
+    if (cf && raw) {
+      if (cf.field_type === 'date') {
+        const d = parseDate(raw)
+        if (d) return d.format('YYYY-MM-DD')
+      }
+      if (cf.field_type === 'datetime') {
+        const d = parseDate(raw)
+        if (d) return d.format('YYYY-MM-DD HH:mm:ss')
+      }
+    }
+    return raw
+  }
+  if (colProp === 'status') return statusLabel(row.status)
+  if (colProp === 'priority') return priorityLabel(row.priority)
+  const v = row[colProp]
+  return v !== null && v !== undefined ? String(v) : ''
+}
+
+function getFilterOptions(colProp) {
+  if (!colProp) return []
+  const stats = filterStats.value[colProp]
+  if (stats && stats.length) {
+    return [...stats].sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+  }
+  // 后备：客户端计算
+  const counter = {}
+  const rows = requirements.value || []
+  for (const row of rows) {
+    if (!row) continue
+    const val = getCellValue(row, colProp)
+    if (val === '') continue
+    counter[val] = (counter[val] || 0) + 1
+  }
+  return Object.entries(counter)
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+}
+
+// 不再需要 getDataWithoutCol，筛选面板始终显示全量数据选项
+function getDataWithoutCol(colProp) {
+  let data = requirements.value
+  if (!data) return []
+  const filters = columnFilters.value
+  for (const [prop, selected] of Object.entries(filters)) {
+    if (prop === colProp) continue
+    if (!selected || selected.length === 0) continue
+    const selSet = new Set(selected)
+    data = data.filter(row => row && selSet.has(getCellValue(row, prop)))
+  }
+  return data
+}
+
+const displayedRequirements = computed(() => {
+  try {
+    let data = requirements.value
+    const filters = columnFilters.value
+    for (const [prop, selected] of Object.entries(filters)) {
+      if (!selected || selected.length === 0) continue
+      if (prop.startsWith('cf_') && isDateFilterByProp(prop)) {
+        // 日期列：前缀匹配
+        data = data.filter(row => {
+          const val = getCellValue(row, prop)
+          return selected.some(prefix => val.startsWith(prefix))
+        })
+      } else {
+        // 普通列：精确匹配
+        const selSet = new Set(selected)
+        data = data.filter(row => row && selSet.has(getCellValue(row, prop)))
+      }
+    }
+    return data
+  } catch (e) {
+    console.error('displayedRequirements error:', e)
+    return requirements.value || []
+  }
+})
+
+function isDateFilterByProp(prop) {
+  if (!prop || !prop.startsWith('cf_')) return false
+  const fid = parseInt(prop.replace('cf_', ''), 10)
+  const cf = customFields.value.find(c => c.id === fid)
+  return cf && (cf.field_type === 'date' || cf.field_type === 'datetime')
+}
+
+// 筛选面板内的筛选后选项（按搜索词过滤）
+const filteredColOptions = computed(() => {
+  if (!filterCol.value) return []
+  const all = getFilterOptions(filterCol.value)
+  const kw = filterSearch.value.trim().split(/\s+/).filter(Boolean)
+  if (!kw.length) return all
+  return all.filter(opt => kw.some(k => opt.value.includes(k)))
+})
+
+// ── 日期/时间列分级树 ──
+const isDateFilter = computed(() => {
+  if (!filterCol.value || !filterCol.value.startsWith('cf_')) return false
+  const fid = parseInt(filterCol.value.replace('cf_', ''), 10)
+  const cf = customFields.value.find(c => c.id === fid)
+  return cf && (cf.field_type === 'date' || cf.field_type === 'datetime')
+})
+
+const dateTreeDepth = computed(() => {
+  if (!filterCol.value || !filterCol.value.startsWith('cf_')) return 0
+  const fid = parseInt(filterCol.value.replace('cf_', ''), 10)
+  const cf = customFields.value.find(c => c.id === fid)
+  return cf?.field_type === 'datetime' ? 6 : 3
+})
+
+const dateFilterTree = computed(() => {
+  if (!isDateFilter.value) return { roots: [] }
+  const stats = filterStats.value[filterCol.value] || getFilterOptions(filterCol.value)
+  const depth = dateTreeDepth.value  // 3=date, 6=datetime
+  // 按层级前缀聚合
+  const prefixMap = {}
+  for (const { value, count } of stats) {
+    const segments = value.match(/\d+/g) || []
+    for (let i = 1; i <= depth; i++) {
+      const prefix = buildPrefix(segments, i)
+      if (!prefixMap[prefix]) prefixMap[prefix] = { value: prefix, count: 0, level: i, children: {} }
+      prefixMap[prefix].count += count
+    }
+  }
+  // 构建树形结构
+  const roots = []
+  const nodeCache = {}
+  for (const [path, node] of Object.entries(prefixMap)) {
+    if (node.level === 1) {
+      node.label = formatNodeLabel(path, node.level, depth)
+      roots.push(node)
+      nodeCache[path] = node
+    } else {
+      const segments = path.match(/\d+/g) || []
+      const parentPath = buildPrefix(segments, node.level - 1)
+      const parent = nodeCache[parentPath]
+      if (parent) {
+        node.label = formatNodeLabel(path, node.level, depth)
+        parent.children[path] = node
+        nodeCache[path] = node
+      }
+    }
+  }
+  roots.sort((a, b) => a.value.localeCompare(b.value))
+  // 为每个节点排序子节点
+  for (const n of Object.values(nodeCache)) {
+    const keys = Object.keys(n.children).sort()
+    const sorted = {}
+    for (const k of keys) sorted[k] = n.children[k]
+    n.children = sorted
+  }
+  return { roots }
+})
+
+// 扁平化日期树为渲染列表
+const flattenedDateNodes = computed(() => {
+  if (!isDateFilter.value) return []
+  const result = []
+  function walk(nodes, depth, parentExpanded) {
+    if (!parentExpanded) return
+    for (const node of nodes) {
+      result.push({ ...node, depth, hasChildren: Object.keys(node.children).length > 0 })
+      walk(Object.values(node.children), depth + 1, dtExpanded.value.has(node.value))
+    }
+  }
+  for (const r of dateFilterTree.value.roots) {
+    walk([r], 0, true)
+  }
+  // 应用搜索过滤
+  const kw = filterSearch.value.trim().split(/\s+/).filter(Boolean)
+  if (!kw.length) return result
+  return result.filter(n => kw.some(k => n.value.includes(k) || (n.label || '').includes(k)))
+})
+
+function toggleDateNode(node) {
+  const s = new Set(dtExpanded.value)
+  if (s.has(node.value)) { s.delete(node.value) } else { s.add(node.value) }
+  dtExpanded.value = s
+}
+
+function buildPrefix(segments, level) {
+  // 日期部分用 - 分隔，时间部分用空格+冒号分隔
+  if (level <= 3) return segments.slice(0, level).join('-')
+  return segments.slice(0, 3).join('-') + ' ' + segments.slice(3, level).join(':')
+}
+
+function formatNodeLabel(path, level, depth) {
+  // path: "2026-01-27" (date) or "2026-01-27 17:39:08" (datetime prefixes)
+  if (depth <= 3) {
+    // date only
+    if (level === 1) return extractSeg(path, 0) + '年'
+    if (level === 2) return extractSeg(path, 1) + '月'
+    if (level === 3) return extractSeg(path, 2) + '日'
+  } else {
+    if (level === 1) return extractSeg(path, 0) + '年'
+    if (level === 2) return extractSeg(path, 1) + '月'
+    if (level === 3) return extractSeg(path, 2) + '日'
+    if (level === 4) return extractSeg(path, 3) + '时'
+    if (level === 5) return extractSeg(path, 4) + '分'
+    if (level === 6) return extractSeg(path, 5) + '秒'
+  }
+  return path
+}
+
+function extractSeg(path, idx) {
+  const m = path.match(/\d+/g)
+  return m && m[idx] ? m[idx] : '?'
+}
+
+const filterSelectAllChecked = computed(() => {
+  if (!filterCol.value) return false
+  const all = getFilterOptions(filterCol.value)
+  const sel = columnFilters.value[filterCol.value] || []
+  return all.length > 0 && sel.length === all.length
+})
+
+const filterSelectAllIndeterminate = computed(() => {
+  if (!filterCol.value) return false
+  const sel = columnFilters.value[filterCol.value] || []
+  const all = getFilterOptions(filterCol.value)
+  return sel.length > 0 && sel.length < all.length
+})
+
+function isFilterSelected(val) {
+  const sel = columnFilters.value[filterCol.value]
+  return sel ? sel.includes(val) : false
+}
+
+function toggleFilterVal(val) {
+  const col = filterCol.value
+  const cur = [...(columnFilters.value[col] || [])]
+  const idx = cur.indexOf(val)
+  if (idx === -1) { cur.push(val) } else { cur.splice(idx, 1) }
+  columnFilters.value = { ...columnFilters.value, [col]: cur }
+}
+
+function filterSelectAll() {
+  const col = filterCol.value
+  const all = getFilterOptions(col).map(o => o.value)
+  const cur = columnFilters.value[col] || []
+  columnFilters.value = { ...columnFilters.value, [col]: cur.length === all.length ? [] : all }
+}
+
+function filterInvert() {
+  const col = filterCol.value
+  const all = getFilterOptions(col).map(o => o.value)
+  const cur = columnFilters.value[col] || []
+  columnFilters.value = { ...columnFilters.value, [col]: all.filter(v => !cur.includes(v)) }
+}
+
+function filterClear() {
+  const col = filterCol.value
+  const copy = { ...columnFilters.value }
+  delete copy[col]
+  columnFilters.value = copy
+  closeFilter()
+}
+
+// 手动调整列宽持久化
+const STORAGE_KEY = 'taskm_req_col_widths'
+
+function loadSavedWidths() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch { return {} }
+}
+
+function saveWidths(widths) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(widths))
+  } catch {}
+}
+
+const savedWidths = ref(loadSavedWidths())
+
+// 合并计算宽度：优先取手动保存的宽度，没有则用自动计算值
+const mergedColWidth = (colKey, autoWidth) => {
+  return savedWidths.value[colKey] || autoWidth
+}
+
+function onColumnResize(newWidth, _, column) {
+  // column.property 对于带 prop 的列有效；无 prop 的列用 label
+  const colKey = column.property || column.label
+  if (!colKey) return
+  savedWidths.value[colKey] = newWidth
+  saveWidths(savedWidths.value)
+}
+
+const getSortOrder = (prop) => {
+  const found = sortKeys.find(s => s.prop === prop)
+  return found ? found.order : ''
+}
+
+const getSortRank = (prop) => {
+  const idx = sortKeys.findIndex(s => s.prop === prop)
+  return idx >= 0 ? idx + 1 : 0
+}
 const isEditing = ref(false)
 const editingId = ref(null)
+const dialogVisible = ref(false)
 
 // 表单
 const form = ref({
@@ -212,42 +1106,307 @@ const form = ref({
   customValues: {},
 })
 
+// 单元格选中与编辑
+const selectedCell = reactive({ rowId: null, prop: null })  // 单击选中的单元格
+const cellEditVisible = ref(false)  // 编辑对话框显隐
+const cellEditField = ref('')       // 当前编辑的字段名
+const cellEditRow = ref(null)       // 当前编辑的行
+const cellEditValue = ref('')       // 当前编辑的值
+let cellEditOrigValue = ''          // 打开对话框时的原始值（用于判空跳过）
+const cellEditTitle = computed(() => {
+  const titles = { title: '编辑标题', status: '编辑状态', priority: '编辑优先级' }
+  const row = cellEditRow.value
+  const suffix = row ? ` - ${row.title}` : ''
+  let fieldLabel = titles[cellEditField.value]
+  if (!fieldLabel && cellEditField.value.startsWith('cf_')) {
+    fieldLabel = cellEditFieldDef.value
+      ? `编辑${cellEditFieldDef.value.field_name}`
+      : '编辑自定义字段'
+  }
+  return `${fieldLabel || '编辑'}${suffix}`
+})
+
+const cellEditFieldDef = computed(() => {
+  if (!cellEditField.value || !cellEditField.value.startsWith('cf_')) return null
+  const fieldId = parseInt(cellEditField.value.replace('cf_', ''), 10)
+  return customFields.value.find(cf => cf.id === fieldId) || null
+})
+
 // 工具函数
 const statusLabel = (s) => ({ todo: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }[s] || s)
-const statusTagType = (s) => ({ todo: 'warning', in_progress: 'primary', done: 'success', cancelled: 'info' }[s] || '')
+const statusTagType = (s) => ({ todo: 'warning', in_progress: 'primary', done: 'success', cancelled: 'info' }[s] || 'info')
 const priorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', urgent: '紧急' }[p] || p)
-const priorityTagType = (p) => ({ low: 'info', normal: '', high: 'warning', urgent: 'danger' }[p] || '')
-const parseOptions = (opts) => opts ? opts.split('\n').filter(Boolean) : []
+const priorityTagType = (p) => ({ low: 'info', normal: 'info', high: 'warning', urgent: 'danger' }[p] || 'info')
+const statusPoolColor = (s) => {
+  const name = statusLabel(s)
+  const pool = statusPools.value.find(p => p.name === name)
+  return pool ? pool.color : '#909399'
+}
+const priorityPoolColor = (p) => {
+  const name = priorityLabel(p)
+  const pool = priorityPools.value.find(p => p.name === name)
+  return pool ? pool.color : '#909399'
+}
+const parseOptions = (opts) => {
+  if (!opts) return []
+  if (opts.startsWith('[')) {
+    try { return JSON.parse(opts).map(o => o.label) } catch { return [] }
+  }
+  return opts.split('\n').filter(Boolean)
+}
+const getOptionColor = (opts, label) => {
+  if (!opts || !opts.startsWith('[')) return ''
+  try {
+    const items = JSON.parse(opts)
+    const found = items.find(o => o.label === label)
+    return found ? found.color : ''
+  } catch { return '' }
+}
+const optionTagStyle = (opts, label) => {
+  const c = getOptionColor(opts, label)
+  return c
+    ? { borderColor: c, color: c, backgroundColor: '#fff' }
+    : { borderColor: '#dcdfe6', color: '#606266', backgroundColor: '#fff' }
+}
+const splitMultiValue = (val) => val ? val.split(',').filter(Boolean) : []
+
+// 日期/时间解析：支持多种常见格式
+function parseDate(val) {
+  if (!val) return null
+  const s = val.trim()
+  // 1) dayjs 直接解析（ISO、YYYY-MM-DD、YYYY/MM/DD 等）
+  let d = dayjs(s)
+  if (d.isValid()) return d
+  // 2) YYYYMMDD
+  let m = s.match(/^(\d{4})(\d{2})(\d{2})$/)
+  if (m) {
+    d = dayjs(`${m[1]}-${m[2]}-${m[3]}`)
+    if (d.isValid()) return d
+  }
+  // 3) YYYYMMDDHHmmss
+  m = s.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/)
+  if (m) {
+    d = dayjs(`${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}`)
+    if (d.isValid()) return d
+  }
+  // 4) YYYY年M月D日 [H时m分[s秒]]
+  m = s.match(/^(\d{4})年(\d{1,2})月(\d{1,2})日(?:\s+(\d{1,2})时(\d{1,2})分(?:\s*(\d{1,2})秒)?)?$/)
+  if (m) {
+    let ds = `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`
+    if (m[4]) ds += ` ${m[4].padStart(2,'0')}:${(m[5]||'00').padStart(2,'0')}:${(m[6]||'00').padStart(2,'0')}`
+    d = dayjs(ds)
+    if (d.isValid()) return d
+  }
+  return null
+}
+
+const formatDateTime = (val) => {
+  if (!val) return ''
+  const d = parseDate(val)
+  return d ? d.format('YYYY-MM-DD HH:mm:ss') : `(格式错误) ${val}`
+}
+
+const formatDate = (val) => {
+  if (!val) return ''
+  const d = parseDate(val)
+  return d ? d.format('YYYY-MM-DD') : `(格式错误) ${val}`
+}
+// 按下拉选项的顺序对多选值排序
+const sortByOptionOrder = (selected, fieldDef) => {
+  if (!fieldDef || !fieldDef.field_options) return selected.join(',')
+  const order = parseOptions(fieldDef.field_options)
+  const orderMap = {}
+  order.forEach((opt, i) => { orderMap[opt] = i })
+  return selected
+    .filter(v => v)
+    .sort((a, b) => (orderMap[a] ?? 999) - (orderMap[b] ?? 999))
+    .join(',')
+}
 
 const statusCount = (s) => requirements.value.filter(r => r.status === s).length
 
 const getCustomValue = (values, fieldId) => {
   const found = values.find(v => v.field_id === fieldId)
-  return found ? found.value : '—'
+  return found ? found.value : ''
 }
 
-let searchTimer = null
-const onSearch = () => {
-  clearTimeout(searchTimer)
-  searchTimer = setTimeout(loadRequirements, 300)
-}
-
-const onSortChange = ({ prop, order }) => {
-  sortBy.value = prop
-  sortOrder.value = order || ''
+const toggleSort = (prop) => {
+  const idx = sortKeys.findIndex(s => s.prop === prop)
+  if (idx === -1) {
+    // 未排序：追加到末尾（次要排序）
+    sortKeys.push({ prop, order: 'asc' })
+  } else {
+    const cur = sortKeys[idx].order
+    if (cur === 'asc') {
+      sortKeys[idx].order = 'desc'
+    } else {
+      // desc → 移除排序
+      sortKeys.splice(idx, 1)
+    }
+  }
+  currentPage.value = 1
   loadRequirements()
+}
+
+// 单元格事件
+const isEditableProp = (prop) => {
+  return ['title', 'status', 'priority'].includes(prop) || (prop && prop.startsWith('cf_'))
+}
+
+const cellClassName = ({ row, column }) => {
+  if (selectedCell.rowId === row.id && selectedCell.prop === column.property) {
+    return 'selected-cell'
+  }
+  return ''
+}
+
+const onCellClick = (row, column, cell) => {
+  const prop = column.property
+  if (!isEditableProp(prop)) return
+  // 通过 DOM 直接切换选中状态，避免 Vue 响应式延迟
+  document.querySelectorAll('.el-table .selected-cell').forEach(el => {
+    el.classList.remove('selected-cell')
+  })
+  if (cell) cell.classList.add('selected-cell')
+  selectedCell.rowId = row.id
+  selectedCell.prop = prop
+}
+
+// 右键复制单元格内容
+function onCellContextMenu(row, column, cell, event) {
+  event?.preventDefault()
+  let val = ''
+  const prop = column.property
+  if (prop) {
+    if (prop.startsWith('cf_')) {
+      const fieldId = parseInt(prop.replace('cf_', ''), 10)
+      val = getCustomValue(row.custom_values, fieldId)
+    } else {
+      val = row[prop] || ''
+    }
+  } else {
+    // 无 prop 的列（如显示ID）：从 cell DOM 取文本
+    val = cell?.textContent?.trim() || ''
+  }
+  if (val) {
+    navigator.clipboard.writeText(val).then(() => {
+      ElMessage({ message: '已复制', type: 'success', duration: 1200 })
+    }).catch(() => {})
+  }
+}
+
+const onCellDblClick = (row, column) => {
+  const prop = column.property
+  if (!isEditableProp(prop)) return
+  cellEditField.value = prop
+  cellEditRow.value = row
+  if (prop.startsWith('cf_')) {
+    const fieldId = parseInt(prop.replace('cf_', ''), 10)
+    cellEditOrigValue = getCustomValue(row.custom_values, fieldId)
+    // 多选下拉：逗号分隔值转数组
+    if (cellEditFieldDef.value && cellEditFieldDef.value.field_type === 'multi_dropdown') {
+      cellEditValue.value = cellEditOrigValue ? cellEditOrigValue.split(',').filter(Boolean) : []
+    } else if (cellEditFieldDef.value && cellEditFieldDef.value.field_type === 'date') {
+      const parsed = parseDate(cellEditOrigValue)
+      cellEditValue.value = parsed ? parsed.format('YYYY-MM-DD') : ''
+    } else if (cellEditFieldDef.value && cellEditFieldDef.value.field_type === 'datetime') {
+      const parsed = parseDate(cellEditOrigValue)
+      cellEditValue.value = parsed ? parsed.format('YYYY-MM-DD HH:mm:ss') : ''
+    } else {
+      cellEditValue.value = cellEditOrigValue
+    }
+  } else {
+    cellEditOrigValue = row[prop]
+    cellEditValue.value = cellEditOrigValue
+  }
+  cellEditVisible.value = true
+}
+
+const saveCellEdit = async () => {
+  if (!cellEditRow.value || !cellEditField.value) return
+  const prop = cellEditField.value
+
+  if (prop.startsWith('cf_')) {
+    const fieldId = parseInt(prop.replace('cf_', ''), 10)
+    const rawNew = cellEditValue.value
+    // 多选下拉：按选项顺序排序，再转逗号分隔字符串
+    const newVal = Array.isArray(rawNew) ? sortByOptionOrder(rawNew, cellEditFieldDef.value) : rawNew
+    if (newVal === cellEditOrigValue) {
+      cellEditVisible.value = false
+      return
+    }
+    try {
+      await updateRequirement(projectId, cellEditRow.value.id, {
+        custom_values: { [fieldId]: newVal },
+      })
+      // 更新本地 custom_values 数组
+      const existing = cellEditRow.value.custom_values.find(v => v.field_id === fieldId)
+      if (existing) {
+        existing.value = newVal
+      } else {
+        cellEditRow.value.custom_values.push({ field_id: fieldId, value: newVal })
+      }
+      cellEditVisible.value = false
+    } catch { return }
+    return
+  }
+
+  const newVal = cellEditValue.value
+  if (newVal === cellEditOrigValue) {
+    cellEditVisible.value = false
+    return
+  }
+  try {
+    await updateRequirement(projectId, cellEditRow.value.id, { [prop]: newVal })
+    cellEditRow.value[prop] = newVal
+    cellEditVisible.value = false
+  } catch {
+    // 错误由拦截器处理
+  }
 }
 
 // 加载数据
 async function loadRequirements() {
-  const params = {}
-  if (sortBy.value) params.sort_by = sortBy.value
-  if (sortOrder.value) params.sort_order = sortOrder.value === 'ascending' ? 'asc' : 'desc'
-  if (filterStatus.value.length) params.status = filterStatus.value.join(',')
-  if (filterPriority.value.length) params.priority = filterPriority.value.join(',')
-  if (searchKeyword.value) params.search = searchKeyword.value
-  requirements.value = await getRequirements(projectId, params)
+  const params = {
+    page: currentPage.value,
+    page_size: pageSize.value,
+  }
+  // 多列排序：按点击顺序逗号拼接，全部交给后端 SQL 排序
+  if (sortKeys.length) {
+    params.sort_by = sortKeys.map(s => s.prop).join(',')
+    params.sort_order = sortKeys.map(s => s.order).join(',')
+    // 按池顺序传递状态/优先级的顺序，用于后端 CASE 表达式
+    if (sortKeys.some(s => s.prop === 'status') && statusPools.value.length) {
+      params.status_order = statusPools.value.map(s => statusNameToValue(s.name)).join(',')
+    }
+    if (sortKeys.some(s => s.prop === 'priority') && priorityPools.value.length) {
+      params.priority_order = priorityPools.value.map(p => priorityNameToValue(p.name)).join(',')
+    }
+  }
+  // 列筛选传递到后端（状态/优先级转回英文）
+  const activeFilters = Object.entries(columnFilters.value).filter(([, v]) => v && v.length)
+  if (activeFilters.length) {
+    const raw = Object.fromEntries(activeFilters)
+    // status/priority 的筛选值是中文标签，需要转回英文原名
+    if (raw.status) raw.status = raw.status.map(s => statusNameToValue(s))
+    if (raw.priority) raw.priority = raw.priority.map(p => priorityNameToValue(p))
+    params.column_filters = JSON.stringify(raw)
+  }
+  const res = await getRequirements(projectId, params)
+  requirements.value = res.items || res
+  total.value = res.total ?? 0
+  // 首次加载记录全量总数
+  if (!activeFilters.length) {
+    totalAll.value = total.value
+  }
+  calcTableHeight() // 数据加载后重新计算表格高度
 }
+
+// 列筛选变更时重新请求后端
+watch(columnFilters, () => {
+  currentPage.value = 1
+  loadRequirements()
+}, { deep: true })
 
 async function loadCustomFields() {
   customFields.value = await getReqCustomFields(projectId)
@@ -271,30 +1430,16 @@ async function loadProject() {
 function openCreate() {
   isEditing.value = false
   editingId.value = null
-  form.value = { title: '', priority: 'normal', status: 'todo', customValues: {} }
-  // 预填自定义字段默认值
-  const cv = {}
-  customFields.value.forEach(cf => {
-    if (cf.field_type === 'number') cv[cf.id] = undefined
-    else cv[cf.id] = ''
-  })
-  form.value.customValues = cv
-  dialogVisible.value = true
-}
-
-async function openEdit(req) {
-  isEditing.value = true
-  editingId.value = req.id
-  const cv = {}
-  customFields.value.forEach(cf => {
-    const found = req.custom_values.find(v => v.field_id === cf.id)
-    cv[cf.id] = found ? found.value : (cf.field_type === 'number' ? undefined : '')
-  })
+  // 从池中获取默认值，无默认则取第一个
+  const defaultStatus = statusPools.value.find(s => s.is_default)
+    || statusPools.value[0]
+  const defaultPriority = priorityPools.value.find(p => p.is_default)
+    || priorityPools.value[0]
   form.value = {
-    title: req.title,
-    priority: req.priority,
-    status: req.status,
-    customValues: cv,
+    title: '',
+    priority: defaultPriority ? priorityNameToValue(defaultPriority.name) : 'normal',
+    status: defaultStatus ? statusNameToValue(defaultStatus.name) : 'todo',
+    customValues: {},
   }
   dialogVisible.value = true
 }
@@ -304,25 +1449,93 @@ async function submit() {
     ElMessage.warning('请输入需求标题')
     return
   }
-  const data = {
-    title: form.value.title,
-    priority: form.value.priority,
-    status: form.value.status,
-    custom_values: form.value.customValues,
-  }
   try {
-    if (isEditing.value) {
-      await updateRequirement(projectId, editingId.value, data)
-      ElMessage.success('需求已更新')
-    } else {
-      await createRequirement(projectId, data)
-      ElMessage.success('需求已创建')
-    }
+    await createRequirement(projectId, {
+      title: form.value.title,
+      priority: form.value.priority,
+      status: form.value.status,
+    })
+    ElMessage.success('需求已创建')
     dialogVisible.value = false
+    currentPage.value = 1
     loadRequirements()
   } catch (e) {
     // error handled by interceptor
   }
+}
+
+const selectedReqs = ref([])
+const selectAllStep = ref(0) // 0=未选 1=本页全选 2=全部全选
+const batchDeleting = ref(false)
+
+// 表头复选框状态
+const headerChecked = computed(() => selectAllStep.value === 2)
+const headerIndeterminate = computed(() => {
+  if (selectAllStep.value === 2) return false
+  if (selectAllStep.value === 1) return true
+  // 部分选中时也显示横线
+  return selectedReqs.value.length > 0 && selectedReqs.value.length < total.value
+})
+
+function toggleRowSelection(row, checked) {
+  if (checked) {
+    selectedReqs.value.push(row)
+  } else {
+    selectedReqs.value = selectedReqs.value.filter(r => r.id !== row.id)
+  }
+  // 手动选择部分行时重置全选状态
+  selectAllStep.value = 0
+}
+
+async function onHeaderSelectChange() {
+  if (selectAllStep.value === 2) {
+    // 已全部选中 → 取消全选
+    selectAllStep.value = 0
+    selectedReqs.value = []
+    return
+  }
+  if (selectAllStep.value === 1) {
+    // 已选本页 → 扩展到全部
+    selectAllStep.value = 2
+    try {
+      const res = await getRequirements(projectId, {
+        page: 1, page_size: Math.max(total.value, 1),
+      })
+      selectedReqs.value = res.items || res
+    } catch {}
+    return
+  }
+  // 未选 → 全选本页
+  selectAllStep.value = 1
+  // 确保当前页所有行都被选中
+  selectedReqs.value = [...requirements.value]
+}
+const deleteProgress = ref({ current: 0, total: 0 })
+
+async function batchDeleteReq() {
+  const ids = selectedReqs.value.map(r => r.id)
+  try {
+    await ElMessageBox.confirm(
+      `确定删除已选择的 ${ids.length} 条需求？删除后不可恢复。`,
+      '批量删除',
+      { type: 'warning', confirmButtonText: '确定删除', confirmButtonClass: 'el-button--danger' }
+    )
+  } catch { return } // 取消
+  batchDeleting.value = true
+  deleteProgress.value = { current: 0, total: ids.length }
+  let success = 0
+  for (const id of ids) {
+    try {
+      await deleteRequirement(projectId, id)
+      success++
+    } catch { /* 跳过失败项 */ }
+    deleteProgress.value.current = success
+  }
+  batchDeleting.value = false
+  selectedReqs.value = []
+  ElMessage.success(`成功删除 ${success} 条需求`)
+  currentPage.value = 1
+  loadRequirements()
 }
 
 async function removeReq(req) {
@@ -330,8 +1543,162 @@ async function removeReq(req) {
     await ElMessageBox.confirm(`确定删除需求「${req.title}」？`, '确认删除', { type: 'warning' })
     await deleteRequirement(projectId, req.id)
     ElMessage.success('已删除')
+    currentPage.value = 1
     loadRequirements()
   } catch {}
+}
+
+// ── Excel 导入 ──
+const importDialogVisible = ref(false)
+const importStep = ref('upload')
+const importFile = ref(null)
+const importPreviewLoading = ref(false)
+const importPreview = ref(null)
+const importMapping = reactive({})
+const importLoading = ref(false)
+const importResult = ref(null)
+
+const importMode = ref('append')
+
+function openExcelImport(mode) {
+  importMode.value = mode || 'append'
+  importDialogVisible.value = true
+  importStep.value = 'upload'
+  importFile.value = null
+  importPreview.value = null
+  importResult.value = null
+  // 初始化映射：所有列默认忽略
+  const m = {}
+  if (importPreview.value) {
+    importPreview.value.headers.forEach(h => { m[h] = { target: '' } })
+  }
+  Object.assign(importMapping, m)
+}
+
+function resetImport() {
+  importDialogVisible.value = false
+  importStep.value = 'upload'
+  importFile.value = null
+  importPreview.value = null
+  importResult.value = null
+}
+
+function onImportFileSelected(e) {
+  const files = e.target.files || []
+  importFile.value = files[0] || null
+}
+
+async function loadImportPreview() {
+  if (!importFile.value) return
+  importPreviewLoading.value = true
+  try {
+    const res = await importRequirementsPreview(projectId, importFile.value)
+    importPreview.value = res
+    // 初始化映射：先全部忽略，然后按名称自动匹配
+    const m = {}
+    res.headers.forEach(h => { m[h] = { target: '' } })
+
+    // 基础字段名称映射
+    const baseFieldMap = {
+      '标题': 'title', '名称': 'title', '需求名称': 'title',
+      '状态': 'status',
+      '优先级': 'priority', '优先': 'priority',
+    }
+
+    // 自定义字段名称→ID 映射
+    const cfMap = {}
+    customFields.value.forEach(cf => {
+      cfMap[cf.field_name] = 'field:' + cf.id
+    })
+
+    for (const h of res.headers) {
+      const trimH = h.trim()
+      // 先匹配基础字段
+      if (baseFieldMap[trimH]) {
+        m[h].target = baseFieldMap[trimH]
+        continue
+      }
+      // 更新模式：自动匹配自定义字段
+      if (importMode.value !== 'overwrite' && cfMap[trimH]) {
+        m[h].target = cfMap[trimH]
+      }
+    }
+
+    Object.assign(importMapping, m)
+    importStep.value = 'mapping'
+  } catch {}
+  importPreviewLoading.value = false
+}
+
+function onMappingTargetChange(header) {
+  if (importMapping[header].target === 'new') {
+    importMapping[header].field_name = header
+    importMapping[header].field_type = 'text'
+    importMapping[header].field_options = ''
+  }
+}
+
+function getImportMapping() {
+  const mapping = {}
+  for (const h of importPreview.value.headers) {
+    const m = importMapping[h]
+    if (m && m.target) {
+      mapping[h] = {
+        target: m.target,
+        field_name: m.field_name || undefined,
+        field_type: m.field_type || undefined,
+        field_options: m.field_options || undefined,
+      }
+    }
+  }
+  return mapping
+}
+
+// ── 重复标题处理 ──
+const dupDialogVisible = ref(false)
+const dupDialogType = ref('choice')   // choice | abandon_only | info_only
+const dupMessage = ref('')
+const dupDuplicates = ref([])
+const dupActions = ref([])            // 后端返回的可选操作
+
+async function doImport(force = false, dupStrategy = 'cancel') {
+  if (!importFile.value || !importPreview.value) return
+  importLoading.value = true
+  importResult.value = null
+  try {
+    const mapping = getImportMapping()
+    const res = await importRequirements(
+      projectId, importFile.value, mapping, importMode.value, force, dupStrategy
+    )
+
+    // 重复检测警告
+    if (res.warning) {
+      importLoading.value = false
+      dupDialogType.value = res.dialog_type || 'choice'
+      dupMessage.value = res.message || ''
+      dupDuplicates.value = res.file_duplicates || []
+      dupActions.value = res.actions || ['cancel']
+      dupDialogVisible.value = true
+      return
+    }
+
+    // 正常导入结果
+    ElMessage.success(res.message)
+    currentPage.value = 1
+    importDialogVisible.value = false
+    resetImport()
+    loadRequirements()
+    recalcAndSaveWidths()
+  } catch {}
+  importLoading.value = false
+}
+
+function onDupConfirm(action) {
+  dupDialogVisible.value = false
+  if (action === 'cancel' || action === 'ok') return  // 什么都不做
+  if (action === 'add_sequence') {
+    doImport(true, 'add_sequence')
+  }
 }
 
 // 生命周期
@@ -346,45 +1713,283 @@ const priorityNameToValue = (name) => {
   return map[name] || name
 }
 
-const sortByStatus = (a, b) => {
-  const order = statusPools.value.map(s => /* value from name */ {
-    const map = { '待处理': 'todo', '进行中': 'in_progress', '已完成': 'done', '已取消': 'cancelled' }
-    return map[s.name] || ''
-  })
-  const ai = order.indexOf(a.status)
-  const bi = order.indexOf(b.status)
-  return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
-}
-
-const sortByPriority = (a, b) => {
-  const order = priorityPools.value.map(p => {
-    const map = { '低': 'low', '普通': 'normal', '高': 'high', '紧急': 'urgent' }
-    return map[p.name] || ''
-  })
-  const ai = order.indexOf(a.priority)
-  const bi = order.indexOf(b.priority)
-  return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
-}
-
 onMounted(async () => {
   await loadProject()
   await loadCustomFields()
   await loadPools()
   await loadRequirements()
+  // 异步加载全量筛选统计数据
+  getReqFilterStats(projectId).then(stats => { filterStats.value = stats }).catch(() => {})
+  calcTableHeight()
+  // 使用 ResizeObserver 监听容器尺寸变化（覆盖浏览器缩放、侧边栏展开等场景）
+  const pageEl = document.querySelector('.requirement-page')
+  if (pageEl) {
+    resizeObserver = new ResizeObserver(() => calcTableHeight())
+    resizeObserver.observe(pageEl)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (resizeObserver) resizeObserver.disconnect()
 })
 </script>
 
 <style scoped>
-.requirement-page { max-width: 1400px; }
+.requirement-page { width: 100%; height: 100%; display: flex; flex-direction: column; min-width: 0; }
+.req-top-section { flex-shrink: 0; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
 .page-header h2 { font-size: 20px; font-weight: 600; }
 .header-actions { display: flex; gap: 8px; }
 .filter-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-.stats-row { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
-.req-table { cursor: pointer; }
+.req-table { flex: 1; min-height: 0; cursor: pointer; user-select: none; }
+.req-table .el-table__body-wrapper .el-table__body .el-table__row {
+  height: 42px !important;
+  overflow: hidden;
+}
+.req-table .el-table__body-wrapper .el-table__body .el-table__row td {
+  padding: 0 8px !important;
+  height: 42px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .req-table .el-table__row:hover { background: #f5f4fe !important; }
 .req-title-cell { font-weight: 500; color: #2c2c2a; }
-.id-cell { font-size: 12px; color: #888; font-family: monospace; }
+.id-cell { font-size: 12px; color: #888; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cf-value { font-size: 12px; color: #555; }
+.cf-text-cell {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pool-tag-plain {
+  background-color: #fff !important;
+  border-width: 1px;
+  border-style: solid;
+}
+.multi-dropdown-value { display: inline-flex; gap: 3px; flex-wrap: nowrap; overflow: hidden; max-width: 100%; vertical-align: middle; }
+.batch-progress-overlay {
+  position: fixed;
+  bottom: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+}
+.batch-progress-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 24px;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+}
+.batch-progress-text {
+  font-size: 13px;
+  color: #555;
+  white-space: nowrap;
+}
+.multi-dropdown-value .multi-tag { margin: 0; }
+.option-label { display: inline-flex; align-items: center; gap: 6px; }
+.option-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .text-muted { color: #bbb; }
+.pagination-sticky {
+  position: fixed;
+  bottom: 0;
+  left: 76px;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 32px;
+  background: #fff;
+  border-top: 1px solid #ebeef5;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
+}
+.filter-total-tip {
+  font-size: 12px;
+  color: #909399;
+  margin-right: auto;
+}
+
+.sortable-header { cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; }
+.sort-indicator { display: inline-flex; align-items: center; gap: 1px; position: relative; }
+.sort-icon { font-size: 13px; color: #bbb; }
+.sort-icon.active { color: #534ab7; }
+.sort-rank { font-size: 10px; font-weight: 600; color: #534ab7; position: absolute; bottom: -4px; right: -8px; }
+:deep(.el-table .selected-cell) { background-color: #e8e6fb !important; }
+.cell-edit-dialog .el-dialog__title { font-size: 15px; max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
+.cell-edit-form .el-form-item { margin-bottom: 0; }
+.cell-edit-form .el-input-number { width: 100%; }
+.cell-edit-form .el-input-number .el-input__inner { text-align: left; }
+.import-upload-area { display: flex; flex-direction: column; align-items: center; padding: 24px; border: 2px dashed #dcdfe6; border-radius: 8px; }
+.import-mapping-row { display: flex; align-items: center; margin-bottom: 8px; }
+.import-mapping-label { min-width: 100px; font-size: 13px; font-weight: 500; color: #2c2c2a; }
+.import-new-field { display: inline-flex; gap: 6px; margin-left: 8px; }
+
+/* 列宽拖动滑块：加宽触发区域 + 两列之间可视化 grip 指示 */
+:deep(.el-table__column-resize-handle) {
+  width: 10px !important;
+  cursor: col-resize;
+  z-index: 3;
+}
+:deep(.el-table__header-wrapper .el-table__header th) {
+  position: relative;
+}
+:deep(.el-table__header-wrapper .el-table__header th:not(:last-child):hover)::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 5px;
+  height: 26px;
+  background: #b0b8c4;
+  border-radius: 3px;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* ── 列筛选 ── */
+.th-with-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+.filter-icon {
+  font-size: 14px;
+  color: #bbb;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s;
+  line-height: 1;
+}
+.filter-icon:hover {
+  color: #606266;
+}
+.filter-icon.active {
+  color: #409eff;
+}
+.filter-options-list {
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.filter-option-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+.filter-option-row:hover {
+  background: #f5f7fa;
+}
+.filter-opt-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-opt-count {
+  color: #aaa;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.filter-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1px solid #eee;
+  padding-top: 8px;
+}
+.filter-action-btns {
+  display: flex;
+  gap: 4px;
+}
+/* ── 列筛选面板 ── */
+.filter-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+  background: transparent;
+}
+.filter-panel-wrap {
+  position: fixed;
+  z-index: 9999;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,.12);
+  width: 240px;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  font-size: 13px;
+}
+.filter-search-wrap {
+  padding: 0 10px 8px;
+  border-bottom: 1px solid #eee;
+}
+.filter-options {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 40px;
+}
+.filter-opt-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.filter-opt-row:hover {
+  background: #f5f7fa;
+}
+.filter-opt-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filter-opt-count {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: #aaa;
+  min-width: 20px;
+  text-align: right;
+}
+.dt-row { font-size: 12px; }
+.dt-toggle {
+  width: 14px;
+  font-size: 10px;
+  color: #888;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  text-align: center;
+  line-height: 1;
+}
+.filter-empty {
+  color: #999;
+  font-size: 12px;
+  text-align: center;
+  padding: 16px 0;
+}
+.filter-actions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px 0;
+  border-top: 1px solid #eee;
+}
+.filter-btn-group {
+  display: flex;
+  gap: 4px;
+}
 </style>

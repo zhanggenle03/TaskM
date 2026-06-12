@@ -7,6 +7,18 @@ import time
 import atexit
 import subprocess
 
+# ── 强制 UTF-8 模式 ──
+# pythonw.exe 启动时默认编码是 mbcs/GBK，会导致 openpyxl 读取含中文表头的
+# Excel 文件时返回含 surrogate 的字符串，进而污染 JSON 响应。
+# 这里把 stdout/stderr 显式切到 utf-8。
+# 注意：必须在 import 任何第三方库（尤其 openpyxl）之前完成。
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+try:
+    sys.stdout.reconfigure(encoding="utf-8")  # py3.7+
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 # ── 路径 ──
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)          # TaskM 根目录

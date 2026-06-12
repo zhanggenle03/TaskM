@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, ForeignKey, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -105,14 +105,15 @@ class Project(Base):
 class Requirement(Base):
     """需求表"""
     __tablename__ = "requirements"
+    __table_args__ = (
+        UniqueConstraint('project_id', 'title', name='uq_req_project_title'),
+    )
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     display_id = Column(String(50), unique=True, nullable=True)
     title = Column(String(300), nullable=False)
-    description = Column(Text, default="")
     priority = Column(String(20), default="normal")  # low/normal/high/urgent
     status = Column(String(50), default="todo")       # todo/in_progress/done/cancelled
-    due_date = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
@@ -126,7 +127,7 @@ class RequirementCustomField(Base):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     field_name = Column(String(100), nullable=False)
-    field_type = Column(String(20), nullable=False)  # text/dropdown/date/number
+    field_type = Column(String(20), nullable=False)  # text/dropdown/multi_dropdown/datetime/date/number
     field_options = Column(Text, default="")  # JSON string for dropdown options
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)

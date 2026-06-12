@@ -289,18 +289,14 @@ class CheckinOut(BaseModel):
 # ---- Requirement ----
 class RequirementCreate(BaseModel):
     title: str
-    description: str = ""
     priority: str = "normal"
     status: str = "todo"
-    due_date: Optional[date] = None
     custom_values: Optional[dict] = {}  # {field_id: value}
 
 class RequirementUpdate(BaseModel):
     title: Optional[str] = None
-    description: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
-    due_date: Optional[date] = None
     custom_values: Optional[dict] = None
 
 class RequirementCustomValueOut(BaseModel):
@@ -316,21 +312,23 @@ class RequirementOut(BaseModel):
     project_id: int
     display_id: Optional[str] = None
     title: str
-    description: str
     priority: str
     status: str
-    due_date: Optional[date]
     created_at: datetime
     updated_at: datetime
     custom_values: List[RequirementCustomValueOut] = []
     class Config:
         from_attributes = True
 
+class RequirementListResponse(BaseModel):
+    items: List[RequirementOut]
+    total: int
+
 
 # ---- Requirement Custom Field ----
 class RequirementCustomFieldCreate(BaseModel):
     field_name: str
-    field_type: str  # text/dropdown/date/number
+    field_type: str  # text/dropdown/multi_dropdown/datetime/date/number
     field_options: str = ""  # JSON for dropdown
     sort_order: int = 0
 
@@ -371,18 +369,10 @@ class ProjectProgress(BaseModel):
     value: int
     color: str
 
-class UpcomingDeadline(BaseModel):
-    id: int
-    title: str
-    due_date: date
-    priority: str
-    status: str
-
 class DashboardData(BaseModel):
     status_distribution: List[StatusDistribution] = []
     priority_distribution: List[PriorityDistribution] = []
     project_progress: List[ProjectProgress] = []
-    upcoming_deadlines: List[UpcomingDeadline] = []
     trend: List[TrendPoint] = []
 
 

@@ -1,7 +1,7 @@
 <template>
   <el-container class="app-layout">
     <!-- 主侧边栏 -->
-    <el-aside width="180px" class="sidebar">
+    <el-aside v-if="showMainSidebar" width="180px" class="sidebar">
       <div class="logo">
         <el-icon size="22" color="#534AB7"><Grid /></el-icon>
         <span>TaskM</span>
@@ -24,7 +24,10 @@
 
     <!-- 项目内小型导航栏（仅项目内部页面显示） -->
     <el-aside v-if="showProjectNav" width="76px" class="project-nav">
-      <div class="project-nav-title">导航</div>
+      <div class="project-nav-title" @click="$router.push('/projects')" style="cursor:pointer;">
+        <el-icon :size="16" style="vertical-align:-2px;margin-right:2px"><HomeFilled /></el-icon>
+        <span>首页</span>
+      </div>
       <el-menu :router="true" :default-active="projectNavActive" class="project-nav-menu">
         <el-menu-item :index="`/projects/${projectId}`" class="nav-vertical-item">
           <el-icon :size="20"><List /></el-icon>
@@ -58,6 +61,7 @@ const route = useRoute()
 // 判断是否在项目内部页面
 const projectId = computed(() => route.params.projectId)
 const showProjectNav = computed(() => !!projectId.value)
+const showMainSidebar = computed(() => !projectId.value)
 
 // 项目内导航高亮：精确匹配路由前缀
 const projectNavActive = computed(() => {
@@ -81,7 +85,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .logo { display: flex; align-items: center; gap: 10px; padding: 18px 20px; font-size: 17px; font-weight: 600; color: #3c3489; border-bottom: 1px solid #e8e8e4; }
 .side-menu { border-right: none; flex: 1; }
 .project-nav { background: #fafafa; border-right: 1px solid #e8e8e4; display: flex; flex-direction: column; overflow: hidden; }
-.project-nav-title { padding: 16px 14px 10px; font-size: 12px; font-weight: 600; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-bottom: 1px solid #e8e8e4; }
+.project-nav-title { padding: 20px 14px; font-size: 12px; font-weight: 600; color: #999; text-align: center; border-bottom: 1px solid #e8e8e4; }
 .project-nav-menu { border-right: none; background: transparent; --el-menu-item-height: auto; }
 .project-nav-menu .nav-vertical-item { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 70px; padding: 0 4px !important; gap: 4px; }
 .project-nav-menu .nav-vertical-item .el-icon { margin-right: 0 !important; }

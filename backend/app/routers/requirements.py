@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func
-from typing import List, Optional
+from sqlalchemy import func, case, nullslast, select, or_
+from typing import List, Optional, Dict
+from collections import defaultdict
 from datetime import datetime, date, timedelta
 import json
 
@@ -18,7 +19,7 @@ from ..schemas import (
     RequirementStatusPoolCreate, RequirementStatusPoolUpdate, RequirementStatusPoolOut,
     RequirementPriorityPoolCreate, RequirementPriorityPoolUpdate, RequirementPriorityPoolOut,
     StatusDistribution, PriorityDistribution, TrendPoint,
-    ProjectProgress, UpcomingDeadline, DashboardData,
+    ProjectProgress, DashboardData,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/requirements", tags=["requirements"])
@@ -130,6 +131,112 @@ def delete_custom_field(
     return {"message": "ok"}
 
 
+# ========== 筛选面板统计 ==========
+
+@router.get("/filter-stats")
+def filter_stats(
+    project_id: str,
+    column_filters: Optional[str] = None,  # JSON: {prop: [values]} 跨列联动
+    db: Session = Depends(get_db),
+):
+    """返回所有可筛选列的独立值及其出现次数（全量数据，不分页）
+    若传入 column_filters，则按其他列筛选后再统计（用于跨列联动）。
+    """
+    proj = resolve_project(db, project_id)
+    req_q = db.query(Requirement).filter(
+        Requirement.project_id == proj.id
+    )
+
+    # 应用跨列筛选（排除当前列的话由前端控制）
+    if column_filters:
+        try:
+            cf_json = json.loads(column_filters)
+        except (json.JSONDecodeError, TypeError):
+            cf_json = {}
+        for prop, values in cf_json.items():
+            if not values:
+                continue
+            if prop == "status":
+                req_q = req_q.filter(Requirement.status.in_(values))
+            elif prop == "priority":
+                req_q = req_q.filter(Requirement.priority.in_(values))
+            elif prop == "display_id":
+                req_q = req_q.filter(Requirement.display_id.in_(values))
+            elif prop == "title":
+                req_q = req_q.filter(Requirement.title.in_(values))
+            elif prop.startswith("cf_"):
+                try:
+                    fid = int(prop[3:])
+                except ValueError:
+                    continue
+                cf = db.query(RequirementCustomField).filter(
+                    RequirementCustomField.id == fid,
+                    RequirementCustomField.project_id == proj.id,
+                ).first()
+                if not cf:
+                    continue
+                if cf.field_type in ("date", "datetime"):
+                    subq = db.query(RequirementCustomValue.requirement_id).filter(
+                        RequirementCustomValue.field_id == fid
+                    )
+                    like_conds = [RequirementCustomValue.value.like(f"{v}%") for v in values if v]
+                    if like_conds:
+                        subq = subq.filter(or_(*like_conds))
+                    req_q = req_q.filter(Requirement.id.in_(subq))
+                else:
+                    subq = db.query(RequirementCustomValue.requirement_id).filter(
+                        RequirementCustomValue.field_id == fid,
+                        RequirementCustomValue.value.in_(values),
+                    )
+                    req_q = req_q.filter(Requirement.id.in_(subq))
+
+    reqs = req_q.all()
+
+    # 内置列（转换为前端中文标签）
+    STATUS_LABELS = {'todo': '待处理', 'in_progress': '进行中', 'done': '已完成', 'cancelled': '已取消'}
+    PRIORITY_LABELS = {'low': '低', 'normal': '普通', 'high': '高', 'urgent': '紧急'}
+    status_counter = {}
+    priority_counter = {}
+    display_id_counter = {}
+    title_counter = {}
+    for r in reqs:
+        status_counter[STATUS_LABELS.get(r.status, r.status)] = status_counter.get(STATUS_LABELS.get(r.status, r.status), 0) + 1
+        priority_counter[PRIORITY_LABELS.get(r.priority, r.priority)] = priority_counter.get(PRIORITY_LABELS.get(r.priority, r.priority), 0) + 1
+        if r.display_id:
+            display_id_counter[r.display_id] = display_id_counter.get(r.display_id, 0) + 1
+        if r.title:
+            title_counter[r.title] = title_counter.get(r.title, 0) + 1
+
+    def fmt(counter):
+        return [{"value": k, "count": v} for k, v in sorted(counter.items(), key=lambda x: -x[1])]
+
+    result = {
+        "status": fmt(status_counter),
+        "priority": fmt(priority_counter),
+        "display_id": fmt(display_id_counter),
+        "title": fmt(title_counter),
+    }
+
+    # 自定义字段
+    custom_fields = db.query(RequirementCustomField).filter(
+        RequirementCustomField.project_id == proj.id,
+        RequirementCustomField.is_active == True,
+    ).all()
+
+    for cf in custom_fields:
+        cv_counter = {}
+        for r in reqs:
+            cv = db.query(RequirementCustomValue).filter(
+                RequirementCustomValue.requirement_id == r.id,
+                RequirementCustomValue.field_id == cf.id,
+            ).first()
+            if cv and cv.value:
+                cv_counter[cv.value] = cv_counter.get(cv.value, 0) + 1
+        result[f"cf_{cf.id}"] = fmt(cv_counter)
+
+    return result
+
+
 # ========== 大屏数据统计 API ==========
 
 @router.get("/stats/dashboard", response_model=DashboardData)
@@ -191,24 +298,8 @@ def dashboard_stats(
                 name=sp.name, value=count, color=sp.color
             ))
 
-    # 4. 近期截止需求（未来7天内或已过期）
+    # 4. 需求趋势（按周统计创建量，最近10周）
     today = date.today()
-    week_later = today + timedelta(days=7)
-    upcoming = db.query(Requirement).filter(
-        Requirement.project_id == proj.id,
-        Requirement.due_date.isnot(None),
-        Requirement.due_date <= week_later,
-        Requirement.status.in_(["todo", "in_progress"]),
-    ).order_by(Requirement.due_date.asc()).limit(10).all()
-    upcoming_deadlines = [
-        UpcomingDeadline(
-            id=r.id, title=r.title,
-            due_date=r.due_date,
-            priority=r.priority, status=r.status,
-        ) for r in upcoming
-    ]
-
-    # 5. 需求趋势（按周统计创建量，最近10周）
     trend_data = []
     for i in range(9, -1, -1):
         week_start = today - timedelta(days=today.weekday()) - timedelta(weeks=i)
@@ -227,7 +318,6 @@ def dashboard_stats(
         status_distribution=status_distribution,
         priority_distribution=priority_distribution,
         project_progress=project_progress,
-        upcoming_deadlines=upcoming_deadlines,
         trend=trend_data,
     )
 
@@ -255,10 +345,8 @@ def _format_requirement(req: Requirement) -> RequirementOut:
         project_id=req.project_id,
         display_id=req.display_id,
         title=req.title,
-        description=req.description,
         priority=req.priority,
         status=req.status,
-        due_date=req.due_date,
         created_at=req.created_at,
         updated_at=req.updated_at,
         custom_values=vals,
@@ -520,14 +608,19 @@ def delete_priority_pool(
 
 # ========== 需求 CRUD ==========
 
-@router.get("", response_model=List[RequirementOut])
+@router.get("")
 def list_requirements(
     project_id: str,
     status: Optional[str] = None,
     priority: Optional[str] = None,
     search: Optional[str] = None,
-    sort_by: str = "updated_at",
-    sort_order: str = "desc",
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = None,
+    status_order: Optional[str] = None,
+    priority_order: Optional[str] = None,
+    column_filters: Optional[str] = None,  # JSON: {prop: [values]}
+    page: int = 1,
+    page_size: int = 50,
     db: Session = Depends(get_db),
 ):
     proj = resolve_project(db, project_id)
@@ -546,26 +639,126 @@ def list_requirements(
     if search:
         like = f"%{search}%"
         q = q.filter(
-            Requirement.title.like(like) | Requirement.description.like(like)
+            Requirement.title.like(like)
         )
 
-    # 排序
+    # 列筛选（column_filters JSON）
+    if column_filters:
+        try:
+            cf_json = json.loads(column_filters)
+        except (json.JSONDecodeError, TypeError):
+            cf_json = {}
+        for prop, values in cf_json.items():
+            if not values:
+                continue
+            if prop == "status":
+                q = q.filter(Requirement.status.in_(values))
+            elif prop == "priority":
+                q = q.filter(Requirement.priority.in_(values))
+            elif prop == "display_id":
+                q = q.filter(Requirement.display_id.in_(values))
+            elif prop == "title":
+                q = q.filter(Requirement.title.in_(values))
+            elif prop.startswith("cf_"):
+                try:
+                    fid = int(prop[3:])
+                except ValueError:
+                    continue
+                # 检查字段类型
+                cf = db.query(RequirementCustomField).filter(
+                    RequirementCustomField.id == fid,
+                    RequirementCustomField.project_id == proj.id,
+                ).first()
+                if not cf:
+                    continue
+                if cf.field_type in ("date", "datetime"):
+                    # 日期列：前缀匹配 (LIKE)
+                    subq = db.query(RequirementCustomValue.requirement_id).filter(
+                        RequirementCustomValue.field_id == fid
+                    )
+                    # 使用 LIKE 前缀匹配每个筛选值
+                    like_conds = []
+                    for v in values:
+                        like_conds.append(RequirementCustomValue.value.like(f"{v}%"))
+                    if like_conds:
+                        subq = subq.filter(or_(*like_conds))
+                    q = q.filter(Requirement.id.in_(subq))
+                else:
+                    # 非日期列：精确匹配
+                    subq = db.query(RequirementCustomValue.requirement_id).filter(
+                        RequirementCustomValue.field_id == fid,
+                        RequirementCustomValue.value.in_(values),
+                    )
+                    q = q.filter(Requirement.id.in_(subq))
+
+    # 多列排序：接收逗号分隔的 sort_by 和 sort_order
+    # 如 sort_by=priority,status&sort_order=asc,desc → 先按优先级升序，再按状态降序
     sort_map = {
         "updated_at": Requirement.updated_at,
         "created_at": Requirement.created_at,
         "title": Requirement.title,
         "priority": Requirement.priority,
         "status": Requirement.status,
-        "due_date": Requirement.due_date,
     }
-    sort_col = sort_map.get(sort_by, Requirement.updated_at)
-    order_fn = sort_col.desc() if sort_order == "desc" else sort_col.asc()
-    # due_date: nulls last
-    if sort_by == "due_date":
-        from sqlalchemy import nullslast
-        order_fn = nullslast(order_fn)
 
-    results = q.order_by(order_fn).all()
+    # 解析 status_order / priority_order 为值→索引映射（用于 CASE 表达式）
+    status_idx = {}
+    if status_order:
+        for i, v in enumerate(status_order.split(",")):
+            status_idx[v.strip()] = i
+    priority_idx = {}
+    if priority_order:
+        for i, v in enumerate(priority_order.split(",")):
+            priority_idx[v.strip()] = i
+
+    order_clauses = []
+    if sort_by and sort_order:
+        sort_by_list = [s.strip() for s in sort_by.split(",") if s.strip()]
+        sort_order_list = [s.strip() for s in sort_order.split(",") if s.strip()]
+
+        for i, col_name in enumerate(sort_by_list):
+            order_dir = sort_order_list[i] if i < len(sort_order_list) else "asc"
+
+            # 自定义字段排序：使用关联子查询取字段值
+            if col_name.startswith("cf_"):
+                try:
+                    field_id = int(col_name.replace("cf_", ""))
+                except ValueError:
+                    continue
+                cv_subq = (
+                    select(RequirementCustomValue.value)
+                    .where(
+                        RequirementCustomValue.requirement_id == Requirement.id,
+                        RequirementCustomValue.field_id == field_id,
+                    )
+                    .correlate(Requirement)
+                    .scalar_subquery()
+                )
+                order_clauses.append(cv_subq.desc() if order_dir == "desc" else cv_subq.asc())
+                continue
+
+            col = sort_map.get(col_name)
+            if col is None:
+                continue
+
+            # 对 status 和 priority 使用 CASE 表达式实现池顺序排序
+            if col_name == "status" and status_idx:
+                col = case(status_idx, value=Requirement.status)
+            elif col_name == "priority" and priority_idx:
+                col = case(priority_idx, value=Requirement.priority)
+            order_clauses.append(col.desc() if order_dir == "desc" else col.asc())
+
+    # 无活跃排序时默认按更新时间降序
+    if not order_clauses:
+        order_clauses.append(Requirement.updated_at.desc())
+
+    # 总记录数（分页用）
+    total = q.count()
+
+    # 分页
+    page = max(1, page)
+    page_size = min(max(1, page_size), 9999)
+    results = q.order_by(*order_clauses).offset((page - 1) * page_size).limit(page_size).all()
 
     # 组装 custom_values 为嵌套结构
     out = []
@@ -583,15 +776,14 @@ def list_requirements(
             project_id=r.project_id,
             display_id=r.display_id,
             title=r.title,
-            description=r.description,
             priority=r.priority,
             status=r.status,
-            due_date=r.due_date,
             created_at=r.created_at,
             updated_at=r.updated_at,
             custom_values=vals,
         ))
-    return out
+    return {"items": out, "total": total}
+
 
 
 @router.post("", response_model=RequirementOut)
@@ -605,10 +797,8 @@ def create_requirement(
         project_id=proj.id,
         display_id=generate_requirement_display_id(db, proj),
         title=data.title,
-        description=data.description,
         priority=data.priority,
         status=data.status,
-        due_date=data.due_date,
     )
     db.add(req)
     db.flush()  # 获取 req.id
@@ -671,14 +861,10 @@ def update_requirement(
 
     if data.title is not None:
         req.title = data.title
-    if data.description is not None:
-        req.description = data.description
     if data.priority is not None:
         req.priority = data.priority
     if data.status is not None:
         req.status = data.status
-    if data.due_date is not None:
-        req.due_date = data.due_date
 
     # 更新自定义字段值
     if data.custom_values is not None:
@@ -728,3 +914,657 @@ def delete_requirement(
     db.commit()
     touch_project(db, proj.id)
     return {"message": "ok"}
+
+
+# ── Excel 导入 ─────────────────────────────────────────
+import openpyxl
+from io import BytesIO
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+from fastapi import UploadFile, File, Form
+
+# ──────── 通用 Excel 解析 ────────
+def _cell_str(v) -> str:
+    """将 Excel 单元格值安全转为字符串，修复 lone surrogate"""
+    if v is None:
+        return ""
+    s = str(v).strip()
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        s = s.encode("utf-8", errors="surrogatepass").decode("utf-8", errors="replace").strip()
+    return s
+
+
+def _parse_excel(content: bytes, filename: str = "") -> tuple:
+    """
+    解析 Excel 内容，返回 (headers, all_rows)。
+    headers — 第一行各列文本
+    all_rows — 从第二行开始的所有数据行（每行与 headers 等长，空串填充）
+    """
+    is_xls = filename.lower().endswith(".xls") and not filename.lower().endswith(".xlsx")
+
+    if is_xls:
+        # .xls 优先用 xlrd，失败时 fallback 到 openpyxl
+        try:
+            return _parse_xls(content)
+        except HTTPException:
+            raise
+        except Exception as e_xls:
+            try:
+                return _parse_xlsx(content)
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(400, f"无法解析 .xls 文件: {e_xls}")
+    else:
+        # .xlsx 优先用 openpyxl，失败时 fallback 到 xlrd
+        try:
+            return _parse_xlsx(content)
+        except HTTPException:
+            raise
+        except Exception as e_xlsx:
+            try:
+                return _parse_xls(content)
+            except HTTPException:
+                raise
+            except Exception:
+                raise HTTPException(400, f"无法解析 .xlsx 文件: {e_xlsx}")
+
+
+def _parse_xlsx(content: bytes) -> tuple:
+    """用 openpyxl 解析 .xlsx 内容"""
+    wb = openpyxl.load_workbook(BytesIO(content), data_only=True)
+    ws = wb.active
+    if ws is None:
+        wb.close()
+        raise HTTPException(400, "Excel 文件没有工作表")
+
+    # 扫描所有有数据的单元格，自行探测行列范围
+    # 不依赖 ws.max_column/max_row，因为部分 WPS/非标准 Excel 文件的
+    # dimension 可能返回错误值，导致 iter_rows 丢列或空迭代。
+    cell_data = {}  # (row, col) -> value
+    max_row, max_col = 0, 0
+    for (r, c), cell in ws._cells.items():
+        if cell.value is not None:
+            cell_data[(r, c)] = cell.value
+            max_row = max(max_row, r)
+            max_col = max(max_col, c)
+
+    if max_row == 0:
+        wb.close()
+        raise HTTPException(400, "Excel 文件没有数据")
+
+    if max_col == 0:
+        wb.close()
+        raise HTTPException(400, "Excel 文件没有检测到列")
+
+    # 第一行作表头
+    headers = [_cell_str(cell_data.get((1, col))) for col in range(1, max_col + 1)]
+
+    all_rows = []
+    for r in range(2, max_row + 1):
+        row_vals = [_cell_str(cell_data.get((r, col))) for col in range(1, max_col + 1)]
+        all_rows.append(row_vals)
+
+    wb.close()
+    return headers, all_rows
+
+
+def _parse_xls(content: bytes) -> tuple:
+    """用 xlrd 解析 .xls 内容（旧版 Excel 格式）"""
+    import xlrd
+    wb = xlrd.open_workbook(file_contents=content)
+    ws = wb.sheet_by_index(0)
+    if ws.nrows == 0:
+        raise HTTPException(400, "Excel 文件为空")
+
+    first = [str(ws.cell_value(0, c)).strip() for c in range(ws.ncols)]
+    all_rows = []
+    for r in range(1, ws.nrows):
+        row_vals = [str(ws.cell_value(r, c)).strip() if ws.cell_type(r, c) != xlrd.XL_CELL_EMPTY else "" for c in range(ws.ncols)]
+        all_rows.append(row_vals)
+    return first, all_rows
+
+
+class ExcelPreviewOut(BaseModel):
+    headers: List[str]
+    rows: List[List[str]]
+    total_rows: int
+
+
+@router.post("/import/preview")
+async def import_preview(
+    project_id: str,
+    file: UploadFile = File(...),
+):
+    """上传 Excel 文件，预览表头和前几行数据"""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "上传的文件为空")
+
+    filename = file.filename or ""
+    try:
+        headers, all_rows = _parse_excel(content, filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"无法解析 Excel 文件: {e}")
+
+    preview_rows = all_rows[:5]
+    return ExcelPreviewOut(
+        headers=headers,
+        rows=preview_rows,
+        total_rows=len(all_rows),
+    )
+
+
+class ColumnMapping(BaseModel):
+    target: str  # "title" | "status" | "priority" | "field:{id}" | "new"
+    field_name: Optional[str] = None
+    field_type: Optional[str] = None
+    field_options: Optional[str] = None
+
+
+def _find_title_col(excel_headers, mapping_dict):
+    """从 mapping_dict 中找到标题列的索引"""
+    for h, m_obj in mapping_dict.items():
+        if m_obj.target == "title" and h in excel_headers:
+            return excel_headers.index(h)
+    return None
+
+
+def _detect_file_duplicates(all_rows, title_col):
+    """检测文件内重复标题，返回 [(title, [row_numbers])]"""
+    title_groups = defaultdict(list)
+    for idx, row_vals in enumerate(all_rows):
+        if not any(row_vals):
+            continue
+        val = (row_vals[title_col] or "").strip() if title_col < len(row_vals) else ""
+        if val:
+            title_groups[val].append(idx + 2)  # +2 因为 Excel 行号（表头占1）
+    return [(t, r) for t, r in title_groups.items() if len(r) > 1]
+
+
+def _dedup_rows_add_sequence(all_rows, title_col):
+    """添加序号策略：重复标题加 _1 _2 后缀，全部保留"""
+    counter = defaultdict(int)
+    result = []
+    for row_vals in all_rows:
+        title = (row_vals[title_col] or "").strip() if title_col < len(row_vals) else ""
+        if title:
+            counter[title] += 1
+            if counter[title] > 1:
+                new_title = f"{title}_{counter[title] - 1}"
+                row_vals[title_col] = new_title
+        result.append(row_vals)
+    return result
+
+
+@router.post("/import")
+async def import_requirements(
+    project_id: str,
+    file: UploadFile = File(...),
+    mapping: str = Form(...),  # JSON: {"Excel列名": ColumnMapping}
+    mode: str = Form("append"),  # append | overwrite | update
+    force: bool = Form(False),  # True = 跳过重复检测
+    dup_strategy: str = Form("cancel"),  # cancel | add_sequence
+    db: Session = Depends(get_db),
+):
+    """根据列映射导入 Excel 数据到需求
+    mode: append=直接新增, overwrite=清空后重新导入, update=标题匹配更新/新增
+    """
+    import json
+    mapping_dict: Dict[str, ColumnMapping] = {}
+    try:
+        raw = json.loads(mapping)
+        for k, v in raw.items():
+            mapping_dict[k] = ColumnMapping(**v)
+    except Exception as e:
+        raise HTTPException(400, f"映射格式错误: {e}")
+
+    if not mapping_dict:
+        raise HTTPException(400, "未配置任何列映射")
+
+    proj = resolve_project(db, project_id)
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "上传的文件为空")
+
+    filename = file.filename or ""
+    try:
+        excel_headers, all_rows = _parse_excel(content, filename)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"无法解析 Excel 文件: {e}")
+
+    # ── 重复检测与冲突处理 ──
+    if not force:
+        title_col = _find_title_col(excel_headers, mapping_dict)
+        dup_result = None  # {message, dialog_type, actions, file_duplicates}
+
+        if title_col is not None:
+            file_dups = _detect_file_duplicates(all_rows, title_col)
+
+            if mode == 'overwrite' and file_dups:
+                # overwrite: 文件内重复 → 二选一
+                dup_result = {
+                    "file_duplicates": [{"title": t, "rows": r} for t, r in file_dups],
+                    "dialog_type": "choice",
+                    "actions": ["cancel", "add_sequence"],
+                    "message": f"文件内发现 {len(file_dups)} 组重复标题",
+                }
+
+            elif mode == 'update' and file_dups:
+                # update: 检查重复标题是否在 DB 中有对应
+                dup_titles = [t for t, _ in file_dups]
+                db_existing = set(
+                    r[0] for r in db.query(Requirement.title).filter(
+                        Requirement.project_id == proj.id,
+                        Requirement.title.in_(dup_titles),
+                    ).all()
+                )
+                db_conflict_dups = [(t, r) for t, r in file_dups if t in db_existing]
+                no_conflict_dups = [(t, r) for t, r in file_dups if t not in db_existing]
+
+                if db_conflict_dups:
+                    # 有冲突的重复 → 不可处理
+                    if no_conflict_dups:
+                        dup_result = {
+                            "file_duplicates": [{"title": t, "rows": r} for t, r in file_dups],
+                            "dialog_type": "abandon_only",
+                            "actions": ["cancel"],
+                            "message": (
+                                f"以下重复标题已存在于数据库，无法匹配更新："
+                                + "、".join(t for t, _ in db_conflict_dups)
+                                + "。请取消导入并调整文件。"
+                            ),
+                        }
+                    else:
+                        dup_result = {
+                            "file_duplicates": [{"title": t, "rows": r} for t, r in file_dups],
+                            "dialog_type": "abandon_only",
+                            "actions": ["cancel"],
+                            "message": "重复标题已存在于数据库，无法匹配更新，请取消导入并调整文件。",
+                        }
+                elif no_conflict_dups:
+                    # 纯重复，DB 中无对应 → 二选一
+                    dup_result = {
+                        "file_duplicates": [{"title": t, "rows": r} for t, r in no_conflict_dups],
+                        "dialog_type": "choice",
+                        "actions": ["cancel", "add_sequence"],
+                        "message": f"文件内发现 {len(no_conflict_dups)} 组重复标题（数据库中无对应）",
+                    }
+
+            elif mode == 'append' and file_dups:
+                # append: 检测冲突+非冲突
+                dup_titles = [t for t, _ in file_dups]
+                db_existing = set(
+                    r[0] for r in db.query(Requirement.title).filter(
+                        Requirement.project_id == proj.id,
+                        Requirement.title.in_(dup_titles),
+                    ).all()
+                )
+                db_conflict_dups = [(t, r) for t, r in file_dups if t in db_existing]
+                no_conflict_dups = [(t, r) for t, r in file_dups if t not in db_existing]
+
+                if db_conflict_dups and not no_conflict_dups:
+                    # 全冲突 → 提示信息
+                    dup_result = {
+                        "file_duplicates": [{"title": t, "rows": r} for t, r in db_conflict_dups],
+                        "dialog_type": "info_only",
+                        "actions": ["ok"],
+                        "message": f"重复标题「{'、'.join(t for t, _ in db_conflict_dups)}」已存在于数据库，已跳过，无需额外处理。",
+                    }
+                elif no_conflict_dups:
+                    parts = []
+                    if db_conflict_dups:
+                        parts.append(f"「{'、'.join(t for t, _ in db_conflict_dups)}」→ 已存在于DB，已跳过")
+                    # 纯重复部分需要用户选择
+                    dup_result = {
+                        "file_duplicates": [{"title": t, "rows": r} for t, r in no_conflict_dups],
+                        "dialog_type": "choice",
+                        "actions": ["cancel", "add_sequence"],
+                        "message": "文件内发现重复标题" + ("，" + "；".join(parts) if parts else ""),
+                    }
+
+        if dup_result:
+            return dup_result
+
+    # ── 按策略去重 ──
+    if dup_strategy == "add_sequence":
+        title_col = _find_title_col(excel_headers, mapping_dict)
+        if title_col is not None:
+            all_rows = _dedup_rows_add_sequence(all_rows, title_col)
+
+    # ── 覆盖模式：先清空所有已有数据，再重新创建 ──
+    if mode == 'overwrite':
+        db.query(RequirementCustomValue).filter(
+            RequirementCustomValue.requirement_id.in_(
+                db.query(Requirement.id).filter(Requirement.project_id == proj.id)
+            )
+        ).delete(synchronize_session=False)
+        db.query(Requirement).filter(Requirement.project_id == proj.id).delete(synchronize_session=False)
+        db.query(RequirementCustomField).filter(
+            RequirementCustomField.project_id == proj.id
+        ).delete(synchronize_session=False)
+        db.query(RequirementStatusPool).filter(
+            RequirementStatusPool.project_id == proj.id
+        ).delete(synchronize_session=False)
+        db.query(RequirementPriorityPool).filter(
+            RequirementPriorityPool.project_id == proj.id
+        ).delete(synchronize_session=False)
+        db.flush()
+
+    # 解析映射并创建新字段
+    field_id_cache: Dict[str, Optional[int]] = {}
+
+    def resolve_field_target(excel_col: str) -> Optional[int]:
+        if excel_col not in mapping_dict:
+            return None
+        m = mapping_dict[excel_col]
+        if m.target.startswith("field:"):
+            try:
+                return int(m.target.split(":")[1])
+            except (ValueError, IndexError):
+                return None
+        if m.target != "new":
+            return None
+        cf = RequirementCustomField(
+            project_id=proj.id,
+            field_name=m.field_name or excel_col,
+            field_type=m.field_type or "text",
+            field_options=m.field_options or "",
+            sort_order=999,
+        )
+        db.add(cf)
+        db.flush()
+        return cf.id
+
+    for h in excel_headers:
+        if h in mapping_dict:
+            field_id_cache[h] = resolve_field_target(h)
+        else:
+            field_id_cache[h] = None
+
+    # 枚举值规范化：中文/英文混合输入都能识别
+    status_name_to_value = {"待处理": "todo", "进行中": "in_progress", "已完成": "done", "已取消": "cancelled"}
+    status_value_set = {"todo", "in_progress", "done", "cancelled"}
+    priority_name_to_value = {"低": "low", "普通": "normal", "高": "high", "紧急": "urgent"}
+    priority_value_set = {"low", "normal", "high", "urgent"}
+
+    def _normalize_status(v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            return "todo"
+        if v in status_value_set:
+            return v
+        if v in status_name_to_value:
+            return status_name_to_value[v]
+        # 检查是否在状态池中（含刚同步添加的）
+        in_pool = db.query(RequirementStatusPool).filter(
+            RequirementStatusPool.project_id == proj.id,
+            RequirementStatusPool.name == v,
+            RequirementStatusPool.is_active == True,
+        ).first()
+        if in_pool:
+            return v
+        return "todo"
+
+    def _normalize_priority(v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            return "normal"
+        if v in priority_value_set:
+            return v
+        if v in priority_name_to_value:
+            return priority_name_to_value[v]
+        # 检查是否在优先级池中（含刚同步添加的）
+        in_pool = db.query(RequirementPriorityPool).filter(
+            RequirementPriorityPool.project_id == proj.id,
+            RequirementPriorityPool.name == v,
+            RequirementPriorityPool.is_active == True,
+        ).first()
+        if in_pool:
+            return v
+        return "normal"
+
+    # ── 同步池数据：将导入值自动添加到状态池/优先级池/下拉选项 ──
+    def _sync_import_pools():
+
+        # 查找 Excel 中哪一列映射到了 status
+        status_col = None
+        priority_col = None
+        drop_field_ids = set()
+        for h, m in mapping_dict.items():
+            if m.target == 'status':
+                status_col = h
+            elif m.target == 'priority':
+                priority_col = h
+            elif m.target.startswith('field:'):
+                try:
+                    fid = int(m.target.split(':')[1])
+                except (ValueError, IndexError):
+                    continue
+                if fid in drop_field_ids:
+                    continue
+                cf = db.query(RequirementCustomField).filter(
+                    RequirementCustomField.id == fid,
+                    RequirementCustomField.project_id == proj.id,
+                ).first()
+                if cf and cf.field_type in ('dropdown', 'multi_dropdown'):
+                    drop_field_ids.add(fid)
+        # 此外，field_id_cache 中新建（new）的字段也可能是 dropdown
+        for h, fid in field_id_cache.items():
+            if fid is None:
+                continue
+            if fid in drop_field_ids:
+                continue
+            if h not in mapping_dict:
+                continue
+            if mapping_dict[h].target != 'new':
+                continue
+            cf = db.query(RequirementCustomField).filter(
+                RequirementCustomField.id == fid,
+                RequirementCustomField.project_id == proj.id,
+            ).first()
+            if cf and cf.field_type in ('dropdown', 'multi_dropdown'):
+                drop_field_ids.add(fid)
+
+        # 收集唯一值
+        status_vals = set()
+        priority_vals = set()
+        drop_vals = {}  # field_id -> set of values
+        for row_vals in all_rows:
+            for i, h in enumerate(excel_headers):
+                val = row_vals[i].strip() if i < len(row_vals) else ''
+                if not val:
+                    continue
+                if h == status_col:
+                    status_vals.add(val)
+                elif h == priority_col:
+                    priority_vals.add(val)
+                elif h in mapping_dict:
+                    mt = mapping_dict[h].target
+                    fid = None
+                    if mt.startswith('field:'):
+                        try:
+                            fid = int(mt.split(':')[1])
+                        except (ValueError, IndexError):
+                            continue
+                    elif mt == 'new':
+                        # 新建字段：从 field_id_cache 取 id
+                        fid = field_id_cache.get(h)
+                    if fid is not None and fid in drop_field_ids:
+                        if fid not in drop_vals:
+                            drop_vals[fid] = set()
+                        for part in val.split(','):
+                            p = part.strip()
+                            if p:
+                                drop_vals[fid].add(p)
+
+        # 同步状态池
+        existing_statuses = {
+            r.name for r in db.query(RequirementStatusPool).filter(
+                RequirementStatusPool.project_id == proj.id
+            ).all()
+        }
+        for v in sorted(status_vals):
+            if v not in existing_statuses and v not in status_value_set:
+                sp = RequirementStatusPool(
+                    project_id=proj.id, name=v, color='#5F5E5A', sort_order=999
+                )
+                db.add(sp)
+
+        # 同步优先级池
+        existing_priorities = {
+            r.name for r in db.query(RequirementPriorityPool).filter(
+                RequirementPriorityPool.project_id == proj.id
+            ).all()
+        }
+        for v in sorted(priority_vals):
+            if v not in existing_priorities and v not in priority_value_set:
+                pp = RequirementPriorityPool(
+                    project_id=proj.id, name=v, color='#5F5E5A', sort_order=999
+                )
+                db.add(pp)
+
+        # 同步下拉/多选自定义字段的选项
+        for fid, val_set in drop_vals.items():
+            cf = db.query(RequirementCustomField).filter(
+                RequirementCustomField.id == fid,
+                RequirementCustomField.project_id == proj.id,
+            ).first()
+            if not cf:
+                continue
+            try:
+                opts = json.loads(cf.field_options) if cf.field_options else []
+            except (json.JSONDecodeError, TypeError):
+                opts = []
+            existing_labels = {o.get('label', '') for o in opts}
+            added = []
+            for v in sorted(val_set):
+                if v not in existing_labels:
+                    opts.append({'label': v, 'color': '#5F5E5A'})
+                    added.append(v)
+            if added:
+                cf.field_options = json.dumps(opts, ensure_ascii=False)
+                db.add(cf)
+
+    _sync_import_pools()
+    db.flush()
+
+    # ── 根据模式处理已有数据 ──
+    updated = 0
+    existing_titles = set()  # append 模式用于检测 DB 冲突
+    if mode == 'update':
+        # 更新模式：预加载所有已有需求的标题→id映射
+        existing = {
+            r.title: r for r in db.query(Requirement).filter(
+                Requirement.project_id == proj.id
+            ).all()
+        }
+    elif mode == 'append':
+        # 追加模式：只加载标题用于冲突检测
+        existing_titles = set(
+            r[0] for r in db.query(Requirement.title).filter(
+                Requirement.project_id == proj.id
+            ).all()
+        )
+
+    created = 0
+    skipped_empty_title = 0
+    skipped_db_collision = 0
+    for row_vals in all_rows:
+        if not any(row_vals):
+            continue
+
+        data = {}
+        custom_vals = {}
+
+        for i, h in enumerate(excel_headers):
+            val = row_vals[i] if i < len(row_vals) else ""
+            if h not in mapping_dict:
+                continue
+            m = mapping_dict[h]
+
+            if m.target in ("title", "status", "priority"):
+                data[m.target] = val
+            elif field_id_cache[h] is not None:
+                custom_vals[str(field_id_cache[h])] = val
+
+        # 标题必填：空标题整行跳过
+        raw_title = (data.get("title") or "").strip()
+        if not raw_title:
+            skipped_empty_title += 1
+            continue
+
+        # 追加模式：冲突标题跳过
+        if mode == 'append' and raw_title in existing_titles:
+            skipped_db_collision += 1
+            continue
+
+        if mode == 'update' and raw_title in existing:
+            # 更新已有需求
+            req = existing[raw_title]
+            if data.get('priority'):
+                req.priority = _normalize_priority(data.get('priority'))
+            if data.get('status'):
+                req.status = _normalize_status(data.get('status'))
+            db.add(req)
+            db.flush()
+
+            # 更新自定义字段值
+            for fid_str, val in custom_vals.items():
+                if not val:
+                    continue
+                existing_cv = db.query(RequirementCustomValue).filter(
+                    RequirementCustomValue.requirement_id == req.id,
+                    RequirementCustomValue.field_id == int(fid_str),
+                ).first()
+                if existing_cv:
+                    existing_cv.value = val
+                    db.add(existing_cv)
+                else:
+                    db.add(RequirementCustomValue(
+                        requirement_id=req.id,
+                        field_id=int(fid_str),
+                        value=val,
+                    ))
+            updated += 1
+        else:
+            # 新增需求
+            req = Requirement(
+                project_id=proj.id,
+                display_id=generate_requirement_display_id(db, proj),
+                title=raw_title,
+                priority=_normalize_priority(data.get('priority')),
+                status=_normalize_status(data.get('status')),
+            )
+            db.add(req)
+            db.flush()
+
+            for fid_str, val in custom_vals.items():
+                if val:
+                    cv = RequirementCustomValue(
+                        requirement_id=req.id,
+                        field_id=int(fid_str),
+                        value=val,
+                    )
+                    db.add(cv)
+            created += 1
+
+    db.commit()
+    touch_project(db, proj.id)
+    msg_parts = []
+    if created:
+        msg_parts.append(f"新增 {created} 条")
+    if updated:
+        msg_parts.append(f"更新 {updated} 条")
+    msg = "成功导入，" + "，".join(msg_parts) if msg_parts else "无数据变更"
+    if skipped_empty_title:
+        msg += f"，跳过 {skipped_empty_title} 条无标题空行"
+    if skipped_db_collision:
+        msg += f"，跳过 {skipped_db_collision} 条（数据库中已存在）"
+    return {"created": created, "updated": updated, "skipped_empty": skipped_empty_title, "skipped_db_collision": skipped_db_collision, "message": msg}

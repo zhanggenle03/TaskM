@@ -26,7 +26,7 @@ if errorlevel 1 (
 
 :: Start backend
 echo Starting backend...
-start "" /b "%PYTHONW%" backend\run.py
+start "" /b "%PYTHONW%" -X utf8 backend\run.py
 
 :: Start frontend (VBS hidden window)
 echo Starting frontend...

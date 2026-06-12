@@ -43,7 +43,7 @@
             <div style="flex:1;min-width:0">
               <div class="item-name" :class="{ 'inactive-text': !f.is_active }">{{ f.field_name }}</div>
               <div style="font-size:12px;color:#888">
-                {{ f.builtin ? '内置字段' : fieldTypeLabel(f.field_type) }}{{ !f.builtin && f.field_type === 'dropdown' && f.field_options ? ' · ' + f.field_options.replace(/\n/g, ' / ') : '' }}
+                {{ f.builtin ? '内置字段' : fieldTypeLabel(f.field_type) }}{{ !f.builtin && (f.field_type === 'dropdown' || f.field_type === 'multi_dropdown') && f.field_options ? ' · ' + formatOptionsPreview(f.field_options) : '' }}
               </div>
             </div>
             <el-tag v-if="f.builtin" size="small" type="info" effect="plain">内置</el-tag>
@@ -164,13 +164,24 @@
         <el-form-item label="字段类型" required>
           <el-select v-model="fieldForm.field_type" style="width:100%">
             <el-option label="文本" value="text" />
-            <el-option label="下拉选项" value="dropdown" />
+            <el-option label="单选" value="dropdown" />
+            <el-option label="多选" value="multi_dropdown" />
+            <el-option label="时间" value="datetime" />
             <el-option label="日期" value="date" />
             <el-option label="数字" value="number" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="fieldForm.field_type === 'dropdown'" label="选项">
-          <el-input v-model="fieldForm.field_options" type="textarea" :rows="3" placeholder="每行一个选项" />
+        <el-form-item v-if="fieldForm.field_type === 'dropdown' || fieldForm.field_type === 'multi_dropdown'" label="选项">
+          <div class="option-list">
+            <div v-for="(opt, i) in optionRows" :key="i" class="option-row">
+              <el-input v-model="opt.label" placeholder="选项名称" size="small" style="width: 160px" />
+              <el-color-picker v-model="opt.color" size="small" />
+              <el-button size="small" text type="danger" @click="optionRows.splice(i, 1)"><el-icon><Delete /></el-icon></el-button>
+            </div>
+            <el-button size="small" type="primary" plain @click="optionRows.push({label: '', color: DEFAULT_OPTION_COLOR()})">
+              <el-icon><Plus /></el-icon> 添加选项
+            </el-button>
+          </div>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -262,7 +273,37 @@ const fieldForm = ref({
   field_options: '',
 })
 
-const fieldTypeLabel = (t) => ({ text: '文本', dropdown: '下拉选项', date: '日期', number: '数字' }[t] || t)
+const optionRows = ref([])
+const DEFAULT_OPTION_COLOR = () => '#909399'
+
+// 解析 field_options 到 optionRows：JSON 格式或旧文本格式
+function parseOptionsToRows(raw) {
+  if (!raw) return []
+  if (raw.startsWith('[')) {
+    try {
+      return JSON.parse(raw)
+    } catch { return [] }
+  }
+  // 旧格式：每行一个选项，无颜色
+  return raw.split('\n').filter(Boolean).map(label => ({ label: label.trim(), color: '#909399' }))
+}
+
+// 序列化 optionRows 到 JSON
+function serializeOptionsToJson(rows) {
+  const valid = rows.filter(r => r.label.trim())
+  return JSON.stringify(valid.map(r => ({ label: r.label.trim(), color: r.color })))
+}
+
+// 格式化选项预览（卡片显示用）：从 JSON 或文本提取标签，用 / 分隔
+function formatOptionsPreview(opts) {
+  if (!opts) return ''
+  if (opts.startsWith('[')) {
+    try { return JSON.parse(opts).map(o => o.label).join(' / ') } catch { return '' }
+  }
+  return opts.split('\n').filter(Boolean).join(' / ')
+}
+
+const fieldTypeLabel = (t) => ({ text: '文本', dropdown: '单选', multi_dropdown: '多选', datetime: '时间', date: '日期', number: '数字' }[t] || t)
 
 // 基础字段定义
 const builtInFields = [
@@ -280,12 +321,14 @@ const displayFields = computed(() => [
 function openAddField() {
   editingField.value = null
   fieldForm.value = { field_name: '', field_type: 'text', field_options: '' }
+  optionRows.value = []
   fieldDialogVisible.value = true
 }
 
 function editField(f) {
   editingField.value = f
   fieldForm.value = { field_name: f.field_name, field_type: f.field_type, field_options: f.field_options }
+  optionRows.value = parseOptionsToRows(f.field_options)
   fieldDialogVisible.value = true
 }
 
@@ -293,6 +336,10 @@ async function submitField() {
   if (!fieldForm.value.field_name.trim()) {
     ElMessage.warning('请输入字段名称')
     return
+  }
+  // 下拉/多选：序列化选项
+  if (fieldForm.value.field_type === 'dropdown' || fieldForm.value.field_type === 'multi_dropdown') {
+    fieldForm.value.field_options = serializeOptionsToJson(optionRows.value)
   }
   fieldLoading.value = true
   try {
@@ -532,4 +579,6 @@ async function onPriorityDrop(i) {
 .drag-handle:active { cursor: grabbing; }
 .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
 .item-name { font-size: 14px; font-weight: 500; min-width: 80px; }
+.option-list { display: flex; flex-direction: column; gap: 6px; }
+.option-row { display: flex; align-items: center; gap: 8px; }
 </style>

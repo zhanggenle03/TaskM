@@ -103,6 +103,7 @@ export const exportTaskDoc = (projectId, taskId, params) =>
 
 // --- Requirements ---
 export const getRequirements = (projectId, params) => http.get(`/projects/${projectId}/requirements`, { params })
+export const getReqFilterStats = (projectId, params) => http.get(`/projects/${projectId}/requirements/filter-stats`, { params })
 export const createRequirement = (projectId, data) => http.post(`/projects/${projectId}/requirements`, data)
 export const getRequirement = (projectId, reqId) => http.get(`/projects/${projectId}/requirements/${reqId}`)
 export const updateRequirement = (projectId, reqId, data) => http.put(`/projects/${projectId}/requirements/${reqId}`, data)
@@ -128,3 +129,25 @@ export const getReqPriorityPools = (projectId, params) => http.get(`/projects/${
 export const createReqPriorityPool = (projectId, data) => http.post(`/projects/${projectId}/requirements/priority-pools`, data)
 export const updateReqPriorityPool = (projectId, id, data) => http.put(`/projects/${projectId}/requirements/priority-pools/${id}`, data)
 export const deleteReqPriorityPool = (projectId, id, config) => http.delete(`/projects/${projectId}/requirements/priority-pools/${id}`, config)
+
+export const importRequirementsPreview = (projectId, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http.post(`/projects/${projectId}/requirements/import/preview`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  })
+}
+
+export const importRequirements = (projectId, file, mapping, mode = 'append', force = false, dupStrategy = 'cancel') => {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('mapping', JSON.stringify(mapping))
+  fd.append('mode', mode)
+  fd.append('force', String(force))
+  fd.append('dup_strategy', dupStrategy)
+  return http.post(`/projects/${projectId}/requirements/import`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+}

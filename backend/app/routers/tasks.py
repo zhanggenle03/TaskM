@@ -169,6 +169,20 @@ def create_task(project_id: str, data: TaskCreate, db: Session = Depends(get_db)
     if default_status and task.status_id is None:
         task.status_id = default_status.id
 
+    # 创建初始状态沟通记录，使状态链完整
+    if task.status_id:
+        status_pool = db.query(StatusPool).filter(StatusPool.id == task.status_id).first()
+        status_name = status_pool.name if status_pool else ''
+        comm = Communication(
+            task_id=task.id,
+            content=f"创建任务，初始状态：{status_name}",
+            comm_at=datetime.now(),
+            comm_type=_get_comm_type_name(db, proj.id),
+            old_status_id=None,
+            new_status_id=task.status_id
+        )
+        db.add(comm)
+
     # 生成任务显示ID
     task.display_id = generate_task_display_id(db, proj)
 

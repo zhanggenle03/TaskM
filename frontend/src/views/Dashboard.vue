@@ -40,33 +40,9 @@
       </div>
     </div>
 
-    <!-- 第二行：近期截止 + 需求趋势 -->
+    <!-- 第二行：需求趋势 -->
     <div class="chart-row">
-      <div class="chart-card chart-card-half" @click="goToRequirements('all')">
-        <div class="chart-title">近期截止需求</div>
-        <div v-if="dashboardData.upcoming_deadlines?.length" class="deadline-list">
-          <div
-            v-for="item in dashboardData.upcoming_deadlines"
-            :key="item.id"
-            class="deadline-item"
-            @click.stop="goToRequirements('status', item.status)"
-          >
-            <div class="deadline-left">
-              <span class="deadline-title">{{ item.title }}</span>
-              <span class="deadline-priority" :class="'pri-' + item.priority">
-                {{ priorityLabel(item.priority) }}
-              </span>
-            </div>
-            <div class="deadline-right">
-              <el-tag :type="deadlineTag(item.due_date)" size="small">
-                {{ item.due_date }}
-              </el-tag>
-            </div>
-          </div>
-        </div>
-        <el-empty v-else description="近期无截止需求" :image-size="50" />
-      </div>
-      <div class="chart-card chart-card-half">
+      <div class="chart-card chart-card-full">
         <div class="chart-title">需求趋势（近10周）</div>
         <v-chart v-if="trendData.length" :option="trendLineOption" autoresize class="chart-box" />
         <el-empty v-else description="暂无数据" :image-size="60" />
@@ -86,10 +62,6 @@
       <div class="stat-item" @click="goToRequirements('status', 'done')">
         <div class="stat-value" style="color: #67c23a">{{ doneCount }}</div>
         <div class="stat-label">已完成需求</div>
-      </div>
-      <div class="stat-item" @click="goToRequirements('status', 'todo,in_progress')">
-        <div class="stat-value" style="color: #f56c6c">{{ overdueCount }}</div>
-        <div class="stat-label">已逾期需求</div>
       </div>
     </div>
   </div>
@@ -127,9 +99,6 @@ const progressCount = computed(() => {
 const doneCount = computed(() => {
   const item = dashboardData.value.status_distribution?.find(d => d.name === '已完成')
   return item?.value || 0
-})
-const overdueCount = computed(() => {
-  return dashboardData.value.upcoming_deadlines?.filter(d => dayjs(d.due_date).isBefore(dayjs(), 'day')).length || 0
 })
 
 // 图表数据
@@ -220,13 +189,6 @@ const trendLineOption = computed(() => ({
   }]
 }))
 
-// 辅助函数
-const priorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', urgent: '紧急' }[p] || p)
-const deadlineTag = (d) => {
-  if (!d) return 'info'
-  return dayjs(d).isBefore(dayjs(), 'day') ? 'danger' : (dayjs(d).diff(dayjs(), 'day') <= 3 ? 'warning' : '')
-}
-
 // 导航
 function goToRequirements(filter, value) {
   const query = {}
@@ -280,21 +242,23 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.dashboard-page { max-width: 1400px; }
+.dashboard-page { width: 100%; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
 .page-header h2 { font-size: 20px; font-weight: 600; }
-.header-actions { display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .update-time { font-size: 12px; color: #999; }
-.chart-row { display: flex; gap: 16px; margin-bottom: 16px; }
+.chart-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 16px; }
 .chart-card {
-  flex: 1; background: #fff; border: 1px solid #e8e8e4;
+  background: #fff; border: 1px solid #e8e8e4;
   border-radius: 10px; padding: 16px; cursor: pointer;
-  transition: box-shadow 0.2s; min-height: 280px;
+  transition: box-shadow 0.2s; min-height: 260px;
+  display: flex; flex-direction: column;
 }
 .chart-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
-.chart-card-half { flex: 1; }
-.chart-title { font-size: 14px; font-weight: 600; color: #555; margin-bottom: 12px; }
-.chart-box { width: 100%; height: 220px; }
+.chart-card-half { }
+.chart-card-full { grid-column: 1 / -1; }
+.chart-title { font-size: 14px; font-weight: 600; color: #555; margin-bottom: 12px; flex-shrink: 0; }
+.chart-box { width: 100%; flex: 1; min-height: 200px; }
 .deadline-list { display: flex; flex-direction: column; gap: 8px; }
 .deadline-item {
   display: flex; justify-content: space-between; align-items: center;
@@ -309,9 +273,9 @@ onBeforeUnmount(() => {
 .deadline-priority.pri-high { background: #fdf6ec; color: #e6a23c; }
 .deadline-priority.pri-normal { background: #f0f5ff; color: #409eff; }
 .deadline-right { flex-shrink: 0; }
-.stat-cards { display: flex; gap: 16px; margin-top: 8px; }
+.stat-cards { display: flex; gap: 16px; margin-top: 8px; flex-wrap: wrap; }
 .stat-item {
-  flex: 1; background: #fff; border: 1px solid #e8e8e4;
+  flex: 1; min-width: 160px; background: #fff; border: 1px solid #e8e8e4;
   border-radius: 10px; padding: 20px; text-align: center;
   cursor: pointer; transition: box-shadow 0.2s;
 }
