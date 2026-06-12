@@ -167,6 +167,56 @@ def _set_heading_style(doc, level, font_name=FONT_FAMILY_HEADING, size=HEADING1_
     spacing.set(qn('w:lineRule'), 'auto')
 
 
+def _setup_numbering(doc):
+    """
+    在文档中建立多级自动编号定义。
+    一级：1、2、3、...（用于段落标题）
+    二级：1.1、1.2、2.1、...（用于每条沟通记录）
+    返回 numId，供 _apply_numbering 使用。
+    """
+    numbering_part = doc.part.numbering_part
+    numbering = numbering_part.element
+    for n in numbering.findall(qn('w:num')):
+        if n.get(qn('w:numId')) == '99':
+            return 99
+    def _ml(ilvl, fmt, text, start=1):
+        lvl = OxmlElement('w:lvl')
+        lvl.set(qn('w:ilvl'), str(ilvl))
+        for tag, val in [('start', str(start)), ('numFmt', fmt), ('lvlText', text)]:
+            el = OxmlElement(f'w:{tag}')
+            el.set(qn('w:val'), val)
+            lvl.append(el)
+        jc = OxmlElement('w:lvlJc')
+        jc.set(qn('w:val'), 'left')
+        lvl.append(jc)
+        return lvl
+    ab = OxmlElement('w:abstractNum')
+    ab.set(qn('w:abstractNumId'), '99')
+    ab.append(_ml(0, 'decimal', '%1、'))
+    ab.append(_ml(1, 'decimal', '%1.%2、'))
+    numbering.append(ab)
+    num = OxmlElement('w:num')
+    num.set(qn('w:numId'), '99')
+    ref = OxmlElement('w:abstractNumId')
+    ref.set(qn('w:val'), '99')
+    num.append(ref)
+    numbering.append(num)
+    return 99
+
+
+def _apply_numbering(paragraph, num_id, ilvl):
+    """给已添加的段落应用自动编号"""
+    pPr = paragraph._element.get_or_add_pPr()
+    numPr = OxmlElement('w:numPr')
+    ilvl_el = OxmlElement('w:ilvl')
+    ilvl_el.set(qn('w:val'), str(ilvl))
+    numId_el = OxmlElement('w:numId')
+    numId_el.set(qn('w:val'), str(num_id))
+    numPr.append(ilvl_el)
+    numPr.append(numId_el)
+    pPr.append(numPr)
+
+
 def build_export_data(
     db: Session,
     project_id: str,
@@ -286,9 +336,10 @@ def build_export_data(
     }
 
 
-def _add_task_info_table(doc: Document, task_attrs: dict, selected_fields: List[str]):
+def _add_task_info_table(doc: Document, task_attrs: dict, selected_fields: List[str], num_id: int = 99):
     """添加任务基本信息（表格）"""
-    doc.add_heading('一、任务基本信息', level=1)
+    h = doc.add_heading('任务基本信息', level=1)
+    _apply_numbering(h, num_id, 0)
 
     field_order = ['title', 'display_id', 'status', 'priority', 'due_date',
                    'description', 'contacts', 'tags', 'created_at', 'updated_at']
@@ -367,6 +418,9 @@ def generate_export_package(
     # ======================== 生成 DOCX ========================
     doc = Document()
 
+    # 建立自动编号定义（doc.add_heading 之前调用）
+    num_id = _setup_numbering(doc)
+
     # 设置默认样式
     style = doc.styles['Normal']
     style.font.name = FONT_FAMILY
@@ -402,18 +456,20 @@ def generate_export_package(
     doc.add_page_break()
 
     # ---- 正文：任务基本信息 ----
-    _add_task_info_table(doc, task_attrs, selected_fields)
+    _add_task_info_table(doc, task_attrs, selected_fields, num_id)
     doc.add_page_break()
 
     # ---- 正文：沟通记录 ----
-    doc.add_heading('二、沟通记录', level=1)
+    h1 = doc.add_heading('沟通记录', level=1)
+    _apply_numbering(h1, num_id, 0)
     _new_paragraph(doc, f'共 {len(communications)} 条记录，按时间先后顺序排列。', size=SMALL_SIZE)
 
     for idx, comm in enumerate(communications):
         record_num = idx + 1
         comm_time = comm['comm_at'].strftime('%Y-%m-%d %H:%M') if comm['comm_at'] else '未知时间'
 
-        doc.add_heading(f'（{record_num}）{comm_time} 记录', level=2)
+        h2 = doc.add_heading(f'{comm_time} 记录', level=2)
+        _apply_numbering(h2, num_id, 1)
 
         # 元信息：时间 · 类型 · 对接人
         meta_parts = [f'沟通时间：{comm_time}']
