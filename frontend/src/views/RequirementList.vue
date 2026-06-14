@@ -44,7 +44,8 @@
     </div>
 
     <!-- 需求明细表（仅数据区滚动） -->
-    <div v-if="requirements.length" class="req-table-wrap" style="flex:1;min-height:0;padding-bottom:56px">
+    <div v-loading="loading" element-loading-text="加载中…" class="req-table-wrap" style="flex:1;min-height:0;padding-bottom:56px">
+      <template v-if="requirements.length">
       <el-table
         ref="tableRef"
         :key="tableKey"
@@ -303,8 +304,9 @@
           @size-change="loadRequirements"
         />
       </div>
+    </template>
     </div>
-    <el-empty v-else description="暂无需求" />
+    <el-empty v-if="!loading && !requirements.length" description="暂无需求" />
 
     <!-- 批量操作悬浮进度条 -->
     <div v-if="batchDeleting" class="batch-progress-overlay">
@@ -600,6 +602,7 @@ const projectId = route.params.projectId
 
 // 状态
 const requirements = ref([])
+const loading = ref(false)
 const customFields = ref([])
 const statusPools = ref([])
 const priorityPools = ref([])
@@ -1367,39 +1370,44 @@ const saveCellEdit = async () => {
 
 // 加载数据
 async function loadRequirements() {
-  const params = {
-    page: currentPage.value,
-    page_size: pageSize.value,
-  }
-  // 多列排序：按点击顺序逗号拼接，全部交给后端 SQL 排序
-  if (sortKeys.length) {
-    params.sort_by = sortKeys.map(s => s.prop).join(',')
-    params.sort_order = sortKeys.map(s => s.order).join(',')
-    // 按池顺序传递状态/优先级的顺序，用于后端 CASE 表达式
-    if (sortKeys.some(s => s.prop === 'status') && statusPools.value.length) {
-      params.status_order = statusPools.value.map(s => statusNameToValue(s.name)).join(',')
+  loading.value = true
+  try {
+    const params = {
+      page: currentPage.value,
+      page_size: pageSize.value,
     }
-    if (sortKeys.some(s => s.prop === 'priority') && priorityPools.value.length) {
-      params.priority_order = priorityPools.value.map(p => priorityNameToValue(p.name)).join(',')
+    // 多列排序：按点击顺序逗号拼接，全部交给后端 SQL 排序
+    if (sortKeys.length) {
+      params.sort_by = sortKeys.map(s => s.prop).join(',')
+      params.sort_order = sortKeys.map(s => s.order).join(',')
+      // 按池顺序传递状态/优先级的顺序，用于后端 CASE 表达式
+      if (sortKeys.some(s => s.prop === 'status') && statusPools.value.length) {
+        params.status_order = statusPools.value.map(s => statusNameToValue(s.name)).join(',')
+      }
+      if (sortKeys.some(s => s.prop === 'priority') && priorityPools.value.length) {
+        params.priority_order = priorityPools.value.map(p => priorityNameToValue(p.name)).join(',')
+      }
     }
+    // 列筛选传递到后端（状态/优先级转回英文）
+    const activeFilters = Object.entries(columnFilters.value).filter(([, v]) => v && v.length)
+    if (activeFilters.length) {
+      const raw = Object.fromEntries(activeFilters)
+      // status/priority 的筛选值是中文标签，需要转回英文原名
+      if (raw.status) raw.status = raw.status.map(s => statusNameToValue(s))
+      if (raw.priority) raw.priority = raw.priority.map(p => priorityNameToValue(p))
+      params.column_filters = JSON.stringify(raw)
+    }
+    const res = await getRequirements(projectId, params)
+    requirements.value = res.items || res
+    total.value = res.total ?? 0
+    // 首次加载记录全量总数
+    if (!activeFilters.length) {
+      totalAll.value = total.value
+    }
+    calcTableHeight() // 数据加载后重新计算表格高度
+  } finally {
+    loading.value = false
   }
-  // 列筛选传递到后端（状态/优先级转回英文）
-  const activeFilters = Object.entries(columnFilters.value).filter(([, v]) => v && v.length)
-  if (activeFilters.length) {
-    const raw = Object.fromEntries(activeFilters)
-    // status/priority 的筛选值是中文标签，需要转回英文原名
-    if (raw.status) raw.status = raw.status.map(s => statusNameToValue(s))
-    if (raw.priority) raw.priority = raw.priority.map(p => priorityNameToValue(p))
-    params.column_filters = JSON.stringify(raw)
-  }
-  const res = await getRequirements(projectId, params)
-  requirements.value = res.items || res
-  total.value = res.total ?? 0
-  // 首次加载记录全量总数
-  if (!activeFilters.length) {
-    totalAll.value = total.value
-  }
-  calcTableHeight() // 数据加载后重新计算表格高度
 }
 
 // 列筛选变更时重新请求后端
@@ -1714,9 +1722,12 @@ const priorityNameToValue = (name) => {
 }
 
 onMounted(async () => {
-  await loadProject()
-  await loadCustomFields()
-  await loadPools()
+  // 并行加载独立数据
+  await Promise.all([
+    loadProject(),
+    loadCustomFields(),
+    loadPools(),
+  ])
   await loadRequirements()
   // 异步加载全量筛选统计数据
   getReqFilterStats(projectId).then(stats => { filterStats.value = stats }).catch(() => {})
