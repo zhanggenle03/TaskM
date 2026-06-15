@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from typing import List, Optional
-from ..database import get_db, Project, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project
+from ..database import get_db, Project, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -263,6 +263,12 @@ def update_project(project_id: str, data: ProjectUpdate, db: Session = Depends(g
 @router.delete("/{project_id}")
 def delete_project(project_id: str, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
+    # 清理工作记录（checkin）的关联数据
+    db.query(CheckinProject).filter(CheckinProject.project_id == proj.id).delete(synchronize_session=False)
+    db.query(CheckinTask).filter(CheckinTask.task_id.in_(
+        db.query(Task.id).filter(Task.project_id == proj.id)
+    )).delete(synchronize_session=False)
+
     # 先查出所有关联沟通记录信息（用于后续清理磁盘文件）
     comm_rows = db.query(Communication.id, Task.display_id).join(
         Task, Communication.task_id == Task.id
@@ -272,6 +278,11 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     # DB 删除后，删磁盘上的附件文件
     for comm_id, task_display_id in comm_rows:
         cleanup_comm_files(proj.display_id, task_display_id, comm_id)
+    # 删除项目级上传目录
+    proj_upload_dir = os.path.join(UPLOAD_DIR, proj.display_id)
+    if os.path.isdir(proj_upload_dir):
+        import shutil
+        shutil.rmtree(proj_upload_dir)
     return {"ok": True}
 
 

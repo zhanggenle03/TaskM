@@ -16,9 +16,6 @@
         <el-select v-model="sortBy" style="width:120px" @change="onSortChange" placeholder="排序方式">
           <el-option v-for="opt in sortOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
         </el-select>
-        <el-button @click="removeProject">
-          <el-icon><Delete /></el-icon> 删除项目
-        </el-button>
         <el-button @click="$router.push(`/projects/${projectId}/settings`)">
           <el-icon><Setting /></el-icon> 设置
         </el-button>
@@ -137,7 +134,7 @@ import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import {
-  getTasks, createTask, updateTask, deleteTask, getStatuses, getProjects, deleteProject,
+  getTasks, createTask, updateTask, deleteTask, getStatuses, getProjects,
   getTags,
 } from '../api'
 
@@ -296,13 +293,6 @@ const removeTask = async (t) => {
   await deleteTask(projectId, t.display_id)
   ElMessage.success('已删除')
   await loadTasks()
-}
-
-const removeProject = async () => {
-  await ElMessageBox.confirm(`确定删除项目「${project.value?.name}」及其所有任务？`, '警告', { type: 'warning' })
-  await deleteProject(projectId)
-  ElMessage.success('项目已删除')
-  router.push('/projects')
 }
 </script>
 

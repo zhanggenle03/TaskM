@@ -79,7 +79,7 @@
           />
         </template>
       </el-table-column>
-      <el-table-column label="显示ID" :width="mergedColWidth('显示ID', 160)" align="center">
+      <el-table-column prop="display_id" label="显示ID" :width="mergedColWidth('display_id', columnWidths.display_id || 160)" align="center">
         <template #header>
           <span class="th-with-filter">
             <span style="flex:1">显示ID</span>
@@ -117,7 +117,7 @@
           <span class="req-title-cell">{{ row.title }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" :width="mergedColWidth('status', 90)" align="center">
+      <el-table-column prop="status" :width="mergedColWidth('status', columnWidths.status ?? 80)" align="center">
         <template #header>
           <span class="th-with-filter">
             <span class="sortable-header" @click.stop="toggleSort('status')" style="flex:1">
@@ -146,7 +146,7 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="priority" :width="mergedColWidth('priority', 80)" align="center">
+      <el-table-column prop="priority" :width="mergedColWidth('priority', columnWidths.priority ?? 80)" align="center">
         <template #header>
           <span class="th-with-filter">
             <span class="sortable-header" @click.stop="toggleSort('priority')" style="flex:1">
@@ -624,14 +624,14 @@ function calcTableHeight() {
     if (page && topSection) {
       const pageRect = page.getBoundingClientRect()
       const topRect = topSection.getBoundingClientRect()
-      tableMaxHeight.value = pageRect.bottom - topRect.bottom - 68 // 68 = pagination(50) + padding(18)
+      tableMaxHeight.value = pageRect.bottom - topRect.bottom - 56 // 56 = pagination(~40) + padding(~16)
     }
   })
 }
 // 多列排序状态：使用有序数组保持点击顺序，sortKeys[0]=主排序
 const sortKeys = reactive([])
 
-// 表格 key：自定义字段变化时强制重绘
+// 表格 key：自定义字段变化时强制重绘（不含列宽，避免破坏拖拽状态）
 const tableKey = computed(() => {
   return 'req-table-' + customFields.value.map(cf => cf.id).join(',')
 })
@@ -712,7 +712,8 @@ function calcWidths(rows, fields) {
   return widths
 }
 
-/** 基于当前数据重算列宽并持久化到 localStorage */
+/** 基于当前数据重算列宽并持久化 */
+/** 基于当前数据重算列宽并持久化（导入操作后触发，会覆盖用户拖拽值） */
 function recalcAndSaveWidths() {
   const newWidths = calcWidths(requirements.value, customFields.value)
   savedWidths.value = { ...newWidths }
@@ -1057,10 +1058,10 @@ function filterClear() {
   closeFilter()
 }
 
-// 手动调整列宽持久化
+// 手动调整列宽持久化（后端 + localStorage 双重持久化）
 const STORAGE_KEY = 'taskm_req_col_widths'
 
-function loadSavedWidths() {
+function loadWidthsFromLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     return raw ? JSON.parse(raw) : {}
@@ -1073,11 +1074,41 @@ function saveWidths(widths) {
   } catch {}
 }
 
-const savedWidths = ref(loadSavedWidths())
+// 同步初始化：localStorage 持久化，刷新不丢失
+// 用户拖拽的宽度优先级最高，仅在导入后重算时清除
+const savedWidths = ref(loadWidthsFromLocal())
 
-// 合并计算宽度：优先取手动保存的宽度，没有则用自动计算值
+// 自动持久化：savedWidths 任何变化都同步到 localStorage
+watch(savedWidths, (val) => {
+  if (Object.keys(val).length) {
+    saveWidths(val)
+  }
+}, { deep: true })
+
+// 旧版 key 映射（显示ID 列原无 prop，存的是中文 label）
+const COL_KEY_LEGACY = { 'display_id': '显示ID',  '显示ID': 'display_id' }
+
+// 各列表头最小宽度（保证列名在同一行显示）
+const HEADER_MIN_WIDTHS = {
+  status: labelMinWidth('状态'),
+  priority: labelMinWidth('优先级'),
+  display_id: labelMinWidth('显示ID', false),
+  title: labelMinWidth('标题'),
+}
+
+// 合并计算宽度：用户拖拽值 > 自动计算值 > 硬编码兜底
 const mergedColWidth = (colKey, autoWidth) => {
-  return savedWidths.value[colKey] || autoWidth
+  // 兼容旧 key：先查新 key，再查旧 key
+  const userW = savedWidths.value[colKey] ?? savedWidths.value[COL_KEY_LEGACY[colKey]]
+  
+  // 用户调整值最高优先，完全不受最小宽度限制
+  if (userW !== undefined) return Math.max(userW, 20)
+  
+  // 没有用户值时，用自动计算 + 表头最小宽度保证可读性
+  const calcW = columnWidths.value[colKey]
+  const auto = calcW ?? autoWidth
+  const minW = HEADER_MIN_WIDTHS[colKey] || 80
+  return Math.max(auto, minW)
 }
 
 function onColumnResize(newWidth, _, column) {
@@ -1722,6 +1753,12 @@ const priorityNameToValue = (name) => {
 }
 
 onMounted(async () => {
+  // 再次从 localStorage 加载列宽（确保 setup 阶段的同步初始化和 onMounted 时的一致）
+  const localWidths = loadWidthsFromLocal()
+  if (Object.keys(localWidths).length) {
+    savedWidths.value = localWidths
+  }
+
   // 并行加载独立数据
   await Promise.all([
     loadProject(),
@@ -1846,6 +1883,7 @@ onBeforeUnmount(() => {
 }
 :deep(.el-table__header-wrapper .el-table__header th) {
   position: relative;
+  white-space: nowrap;
 }
 :deep(.el-table__header-wrapper .el-table__header th:not(:last-child):hover)::after {
   content: '';
