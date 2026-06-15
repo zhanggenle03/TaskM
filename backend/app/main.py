@@ -1,7 +1,8 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .database import Base, engine
+from fastapi.staticfiles import StaticFiles
+from .database import Base, engine, UPLOAD_DIR
 
 from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements
 
@@ -45,6 +46,11 @@ app.include_router(process.router)
 app.include_router(project_contacts.router)
 app.include_router(export_router.router)
 app.include_router(requirements.router)
+
+# 挂载上传目录为静态文件（供富文本图片等访问）
+import os
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/")

@@ -1,16 +1,16 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case, nullslast, select, or_
 from typing import List, Optional, Dict
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-import json
+import json, os, uuid
 
 from ..database import (
     get_db, Project, Requirement, RequirementCustomField, RequirementCustomValue,
     RequirementStatusPool, RequirementPriorityPool,
     Task, StatusPool, touch_project, resolve_project,
-    generate_requirement_display_id,
+    generate_requirement_display_id, UPLOAD_DIR,
 )
 from ..schemas import (
     RequirementCreate, RequirementUpdate, RequirementOut,
@@ -345,6 +345,7 @@ def _format_requirement(req: Requirement) -> RequirementOut:
         project_id=req.project_id,
         display_id=req.display_id,
         title=req.title,
+        description=req.description or "",
         priority=req.priority,
         status=req.status,
         created_at=req.created_at,
@@ -826,6 +827,69 @@ def create_requirement(
     return _get_requirement_with_values(db, req.id)
 
 
+# ---- 富文本图片上传 ----
+
+@router.post("/{requirement_id}/images")
+def upload_requirement_image(
+    project_id: str,
+    requirement_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """上传富文本编辑器中的图片，返回可访问的 URL"""
+    proj = resolve_project(db, project_id)
+    req = db.query(Requirement).filter(
+        Requirement.id == requirement_id,
+        Requirement.project_id == proj.id
+    ).first()
+    if not req:
+        raise HTTPException(404, "需求不存在")
+
+    # 按项目显示ID/需求显示ID 分目录存储
+    req_display_id = req.display_id or f"req_{req.id}"
+    img_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "images")
+    os.makedirs(img_dir, exist_ok=True)
+
+    # 生成唯一文件名
+    ext = os.path.splitext(file.filename)[1] if file.filename else ".png"
+    filename = f"{uuid.uuid4().hex}{ext}"
+    filepath = os.path.join(img_dir, filename)
+
+    content = file.file.read()
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    # 返回可访问的 URL（相对 /uploads）
+    url = f"/uploads/{proj.display_id}/requirements/{req_display_id}/images/{filename}"
+    return {"url": url, "errno": 0}
+
+
+@router.delete("/{requirement_id}/images/{filename}")
+def delete_requirement_image(
+    project_id: str,
+    requirement_id: int,
+    filename: str,
+    db: Session = Depends(get_db),
+):
+    """删除富文本编辑器中的图片文件"""
+    proj = resolve_project(db, project_id)
+    req = db.query(Requirement).filter(
+        Requirement.id == requirement_id,
+        Requirement.project_id == proj.id
+    ).first()
+    if not req:
+        raise HTTPException(404, "需求不存在")
+
+    req_display_id = req.display_id or f"req_{req.id}"
+    img_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "images")
+    filepath = os.path.join(img_dir, filename)
+
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    return {"ok": True}
+
+
 @router.get("/{requirement_id}", response_model=RequirementOut)
 def get_requirement(
     project_id: str,
@@ -861,6 +925,8 @@ def update_requirement(
 
     if data.title is not None:
         req.title = data.title
+    if data.description is not None:
+        req.description = data.description
     if data.priority is not None:
         req.priority = data.priority
     if data.status is not None:

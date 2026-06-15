@@ -112,6 +112,7 @@ class Requirement(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
     display_id = Column(String(50), unique=True, nullable=True)
     title = Column(String(300), nullable=False)
+    description = Column(Text, default="")
     priority = Column(String(20), default="normal")  # low/normal/high/urgent
     status = Column(String(50), default="todo")       # todo/in_progress/done/cancelled
     created_at = Column(DateTime, default=datetime.now)

@@ -91,7 +91,7 @@
           </span>
         </template>
         <template #default="{ row }">
-          <span class="id-cell">{{ row.display_id || '—' }}</span>
+          <router-link :to="`/projects/${projectId}/requirements/${row.id}`" class="id-link">{{ row.display_id || '—' }}</router-link>
         </template>
       </el-table-column>
       <el-table-column prop="title" :width="mergedColWidth('title', columnWidths.title || 240)" show-overflow-tooltip>
@@ -720,7 +720,12 @@ function recalcAndSaveWidths() {
   saveWidths(newWidths)
 }
 
-const columnWidths = computed(() => calcWidths(requirements.value, customFields.value))
+const columnWidths = ref({})
+
+// 基于当前数据计算列宽（仅在无筛选的全量加载时重算）
+function computeColumnWidths() {
+  columnWidths.value = calcWidths(requirements.value, customFields.value)
+}
 
 // ── 列筛选 ──
 const columnFilters = ref({})  // { prop: string[] }
@@ -1766,6 +1771,8 @@ onMounted(async () => {
     loadPools(),
   ])
   await loadRequirements()
+  // 首次全量加载时计算列宽（筛选不触发重算）
+  computeColumnWidths()
   // 异步加载全量筛选统计数据
   getReqFilterStats(projectId).then(stats => { filterStats.value = stats }).catch(() => {})
   calcTableHeight()
@@ -1804,6 +1811,8 @@ onBeforeUnmount(() => {
 .req-table .el-table__row:hover { background: #f5f4fe !important; }
 .req-title-cell { font-weight: 500; color: #2c2c2a; }
 .id-cell { font-size: 12px; color: #888; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.id-link { font-size: 12px; font-family: monospace; color: #534ab7; text-decoration: none; cursor: pointer; }
+.id-link:hover { color: #7b6fd6; text-decoration: underline; }
 .cf-value { font-size: 12px; color: #555; }
 .cf-text-cell {
   white-space: nowrap;

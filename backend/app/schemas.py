@@ -289,12 +289,14 @@ class CheckinOut(BaseModel):
 # ---- Requirement ----
 class RequirementCreate(BaseModel):
     title: str
+    description: Optional[str] = ""
     priority: str = "normal"
     status: str = "todo"
     custom_values: Optional[dict] = {}  # {field_id: value}
 
 class RequirementUpdate(BaseModel):
     title: Optional[str] = None
+    description: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
     custom_values: Optional[dict] = None
@@ -312,6 +314,7 @@ class RequirementOut(BaseModel):
     project_id: int
     display_id: Optional[str] = None
     title: str
+    description: Optional[str] = ""
     priority: str
     status: str
     created_at: datetime

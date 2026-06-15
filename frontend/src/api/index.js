@@ -108,6 +108,7 @@ export const createRequirement = (projectId, data) => http.post(`/projects/${pro
 export const getRequirement = (projectId, reqId) => http.get(`/projects/${projectId}/requirements/${reqId}`)
 export const updateRequirement = (projectId, reqId, data) => http.put(`/projects/${projectId}/requirements/${reqId}`, data)
 export const deleteRequirement = (projectId, reqId) => http.delete(`/projects/${projectId}/requirements/${reqId}`)
+export const deleteRequirementImage = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/images/${encodeURIComponent(filename)}`)
 
 // --- Requirement Custom Fields ---
 export const getReqCustomFields = (projectId, params) => http.get(`/projects/${projectId}/requirements/fields`, { params })
