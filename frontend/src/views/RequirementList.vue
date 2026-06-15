@@ -1059,7 +1059,7 @@ function filterClear() {
 }
 
 // 手动调整列宽持久化（后端 + localStorage 双重持久化）
-const STORAGE_KEY = 'taskm_req_col_widths'
+const STORAGE_KEY = `taskm_req_col_widths_${projectId}`
 
 function loadWidthsFromLocal() {
   try {
