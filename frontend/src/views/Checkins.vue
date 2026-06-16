@@ -19,54 +19,83 @@
     </div>
 
     <div class="calendar-layout">
-      <!-- 日历 -->
-      <div class="cal-panel" :class="{ 'batch-mode': batchMode, 'delete-batch-mode': deleteBatchMode }">
-        <div class="cal-nav">
-          <el-button size="small" text @click="prevMonth"><el-icon><ArrowLeft /></el-icon></el-button>
-          <span class="cal-month-title">{{ calYear }}年{{ calMonth }}月</span>
-          <el-button size="small" text @click="nextMonth"><el-icon><ArrowRight /></el-icon></el-button>
-          <el-button size="small" text style="margin-left:8px" @click="goToday">今天</el-button>
-        </div>
-        <div class="cal-weekdays">
-          <div v-for="w in weekDays" :key="w" class="cal-weekday">{{ w }}</div>
-        </div>
-        <div class="cal-grid">
-          <div
-            v-for="(day, i) in calendarDays"
-            :key="i"
-            class="cal-cell"
-            :class="{
-              'other-month': !day.isCurrent,
-              today: day.isToday,
-              active: !batchMode && !deleteBatchMode && day.date === selectedDate,
-              'has-checkin': checkinsByDate[day.date],
-              'batch-selected': batchMode && batchDates.includes(day.date),
-              'batch-disabled': !day.isCurrent || (batchMode && checkinsByDate[day.date]),
-              'delete-selected': deleteBatchMode && deleteDates.includes(day.date),
-              'delete-disabled': !day.isCurrent || (deleteBatchMode && !checkinsByDate[day.date]),
-            }"
-            @click="onCellClick(day)"
-          >
-            <span class="cal-cell-num">{{ day.num }}</span>
-            <span v-if="checkinsByDate[day.date] && !batchMode && !deleteBatchMode" class="cal-cell-dot"></span>
-            <span v-if="batchMode && checkinsByDate[day.date]" class="cal-cell-checked">已签</span>
-            <span v-if="deleteBatchMode && checkinsByDate[day.date]" class="cal-cell-has-data">已签</span>
+      <div class="cal-left">
+        <!-- 日历 -->
+        <div class="cal-panel" :class="{ 'batch-mode': batchMode, 'delete-batch-mode': deleteBatchMode }">
+          <div class="cal-nav">
+            <el-button size="small" text @click="prevMonth"><el-icon><ArrowLeft /></el-icon></el-button>
+            <span class="cal-month-title">{{ calYear }}年{{ calMonth }}月</span>
+            <el-button size="small" text @click="nextMonth"><el-icon><ArrowRight /></el-icon></el-button>
+            <el-button size="small" text style="margin-left:8px" @click="goToday">今天</el-button>
+            <el-button size="small" text style="margin-left:auto" @click="showHolidaySettings = true">
+              <el-icon><Setting /></el-icon>
+            </el-button>
+          </div>
+          <div class="cal-weekdays">
+            <div v-for="w in weekDays" :key="w" class="cal-weekday">{{ w }}</div>
+          </div>
+          <div class="cal-grid">
+            <div
+              v-for="(day, i) in calendarDays"
+              :key="i"
+              class="cal-cell"
+              :class="{
+                'cal-cell-empty': day.empty,
+                today: day.isToday,
+                active: !batchMode && !deleteBatchMode && day.date === selectedDate,
+                'has-checkin': checkinsByDate[day.date],
+                'batch-selected': batchMode && batchDates.includes(day.date),
+                'batch-disabled': (batchMode && checkinsByDate[day.date]),
+                'delete-selected': deleteBatchMode && deleteDates.includes(day.date),
+                'delete-disabled': (deleteBatchMode && !checkinsByDate[day.date]),
+              }"
+              @click="onCellClick(day)"
+            >
+              <template v-if="!day.empty">
+                <span class="cal-cell-num">{{ day.num }}</span>
+                <span v-if="day.holiday && day.holiday.badge" class="cal-cell-badge" :class="'cb-' + day.holiday.badgeType">{{ day.holiday.badge }}</span>
+                <span v-if="day.status === 'attendance' && !batchMode && !deleteBatchMode" class="cal-cell-dot"></span>
+                <span v-if="day.status === 'overtime' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-overtime">加</span>
+                <span v-if="day.status === 'leave' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-leave">请</span>
+                <span v-if="batchMode && checkinsByDate[day.date]" class="cal-cell-checked">已签</span>
+                <span v-if="deleteBatchMode && checkinsByDate[day.date]" class="cal-cell-has-data">已签</span>
+              </template>
+            </div>
+          </div>
+
+          <!-- 批量签到底部栏 -->
+          <div v-if="batchMode" class="batch-bar">
+            <span>已选 {{ batchDates.length }} 天</span>
+            <el-button size="small" type="primary" :disabled="!batchDates.length" @click="openBatchDialog">
+              确定签到
+            </el-button>
+          </div>
+
+          <!-- 批量删除底部栏 -->
+          <div v-if="deleteBatchMode" class="delete-batch-bar">
+            <span>已选 <strong>{{ deleteDates.length }}</strong> 天</span>
+            <el-button size="small" type="danger" :disabled="!deleteDates.length" @click="confirmBatchDelete">
+              <el-icon><Delete /></el-icon> 删除选中
+            </el-button>
           </div>
         </div>
 
-        <!-- 批量签到底部栏 -->
-        <div v-if="batchMode" class="batch-bar">
-          <span>已选 {{ batchDates.length }} 天</span>
-          <el-button size="small" type="primary" :disabled="!batchDates.length" @click="openBatchDialog">
-            确定签到
-          </el-button>
+        <!-- 月份出勤统计卡片 -->
+        <div class="cal-stats-card">
+          <div class="cal-stats-title">{{ calYear }}年{{ calMonth }}月出勤{{ monthStats.isCurrent ? '（截至今日）' : '' }}</div>
+          <div class="cal-stats-row">
+            <span class="cal-stats-item">上班 <strong>{{ monthStats.workDays }}</strong> 天</span>
+            <span class="cal-stats-divider"></span>
+            <span class="cal-stats-item">请假 <strong>{{ monthStats.leaveDays }}</strong> 天</span>
+          </div>
+          <div class="cal-stats-overtime">其中加班 <strong>{{ monthStats.overtimeDays }}</strong> 天</div>
         </div>
 
-        <!-- 批量删除底部栏 -->
-        <div v-if="deleteBatchMode" class="delete-batch-bar">
-          <span>已选 <strong>{{ deleteDates.length }}</strong> 天</span>
-          <el-button size="small" type="danger" :disabled="!deleteDates.length" @click="confirmBatchDelete">
-            <el-icon><Delete /></el-icon> 删除选中
+        <!-- 工具 -->
+        <div class="cal-tools-card">
+          <div class="cal-tools-title">工具</div>
+          <el-button text class="cal-tools-btn" @click="showCalcDlg = true">
+            <el-icon><DataAnalysis /></el-icon> 出勤计算器
           </el-button>
         </div>
       </div>
@@ -176,12 +205,165 @@
         <el-button type="primary" :loading="batchLoading" @click="submitBatch">确定（{{ batchDates.length }} 天）</el-button>
       </template>
     </el-dialog>
+
+    <!-- 出勤计算器 -->
+    <el-dialog v-model="showCalcDlg" title="出勤计算器" width="680px" top="5vh">
+      <div class="calc-range">
+        <span style="font-size:13px;color:#888;margin-right:8px">统计范围</span>
+        <el-date-picker
+          v-model="calcRange"
+          type="daterange"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          value-format="YYYY-MM-DD"
+          style="width:320px"
+          :disabled-date="disabledCalcDate"
+          @change="onCalcRangeChange"
+        />
+        <el-button size="small" type="primary" style="margin-left:8px" @click="runCalc">计算</el-button>
+      </div>
+
+      <template v-if="calcResult">
+        <!-- 总统计 -->
+        <div class="calc-summary">
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#534ab7">{{ calcResult.total.workDays }}</span>
+            <span class="calc-summary-label">上班</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#e67e22">{{ calcResult.total.leaveDays }}</span>
+            <span class="calc-summary-label">请假</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#d48806">{{ calcResult.total.overtimeDays }}</span>
+            <span class="calc-summary-label">加班</span>
+          </div>
+        </div>
+        <div v-if="calcResult.total.estimatedDays > 0" class="calc-estimated-note">
+          其中 <strong>{{ calcResult.total.estimatedDays }}</strong> 天为未来日期默认预估
+        </div>
+
+        <!-- 按月详情 -->
+        <div v-if="calcResult.monthly.length" class="calc-section">
+          <div class="calc-section-title">按月统计</div>
+          <div class="calc-month-grid">
+            <div v-for="m in calcResult.monthly" :key="m.month" class="calc-month-card">
+              <div class="calc-month-name">
+                {{ m.month }}
+                <span v-if="m.estimatedDays" class="calc-estimated-tag">预估 {{ m.estimatedDays }} 天</span>
+              </div>
+              <div class="calc-month-row">上班 <strong style="color:#534ab7">{{ m.workDays }}</strong> 天</div>
+              <div class="calc-month-row">请假 <strong style="color:#e67e22">{{ m.leaveDays }}</strong> 天</div>
+              <div class="calc-month-row">加班 <strong style="color:#d48806">{{ m.overtimeDays }}</strong> 天</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 按项目统计 -->
+        <div v-if="calcResult.byProject.length" class="calc-section">
+          <div class="calc-section-title">按项目统计</div>
+          <div class="calc-proj-grid">
+            <div v-for="p in calcResult.byProject" :key="p.projectId" class="calc-proj-card">
+              <span class="calc-proj-name">{{ p.projectName }}</span>
+              <span class="calc-proj-days"><strong>{{ p.days }}</strong> 天</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 多项目签到提醒 -->
+        <div v-if="calcResult.multiProjectDays?.length" class="calc-section">
+          <div class="calc-section-title calc-section-title-warn">
+            <el-icon style="margin-right:4px"><WarningFilled /></el-icon> 多项目签到提醒
+          </div>
+          <div class="calc-warn-grid">
+            <div v-for="item in calcResult.multiProjectDays" :key="item.date" class="calc-warn-item">
+              <div class="calc-warn-top">
+                <span class="calc-warn-date">{{ item.dateLabel }}</span>
+                <span class="calc-warn-weekday">周{{ item.weekday }}</span>
+              </div>
+              <div class="calc-warn-projs">
+                <span v-for="(name, idx) in item.projectNames" :key="idx" class="calc-warn-proj">{{ name }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <el-empty description="选择日期范围后点击「计算」" :image-size="50" style="padding:30px 0" />
+      </template>
+    </el-dialog>
+
+    <!-- 日历设置 -->
+    <el-dialog v-model="showHolidaySettings" title="日历设置" width="580px" top="5vh" @opened="initHolidaySettings">
+
+      <div class="hs-tabs">
+        <span class="hs-tab" :class="{ active: hsActiveTab === 'general' }" @click="hsActiveTab = 'general'">通用</span>
+        <span class="hs-tab" :class="{ active: hsActiveTab === 'holiday' }" @click="hsActiveTab = 'holiday'">节假日</span>
+      </div>
+
+      <template v-if="hsActiveTab === 'general'">
+        <!-- 通用设置 -->
+        <div class="hs-entry">
+          <span class="hs-entry-label">入职日期</span>
+          <el-date-picker v-model="entryDateVal" type="date" placeholder="不设置则显示全部" value-format="YYYY-MM-DD" style="width:150px" @change="onEntryDateChange" />
+          <el-button v-if="entryDateVal" size="small" text @click="clearEntryDate">清除</el-button>
+        </div>
+      </template>
+
+      <template v-if="hsActiveTab === 'holiday'">
+        <!-- 日历 -->
+        <div class="hs-header">
+          <div class="hs-nav">
+            <el-button size="small" text @click="hsPrev"><el-icon><ArrowLeft /></el-icon></el-button>
+            <span class="hs-month">{{ hsYear }}年{{ hsMonth }}月</span>
+            <el-button size="small" text @click="hsNext"><el-icon><ArrowRight /></el-icon></el-button>
+          </div>
+          <div class="hs-legend">
+            <span class="hs-tag hs-tag-normal">工作日</span>
+            <span class="hs-tag hs-tag-holiday">法定假</span>
+            <span class="hs-tag hs-tag-workday">调休班</span>
+            <span class="hs-tag hs-tag-off">休息日</span>
+            <span class="hs-override-hint">⬤ 已手动设置</span>
+          </div>
+        </div>
+        <div class="hs-weekdays">
+          <div v-for="w in weekDays" :key="w" class="hs-weekday">{{ w }}</div>
+        </div>
+        <div class="hs-grid">
+          <div
+            v-for="(cell, i) in hsDays"
+            :key="i"
+            class="hs-cell"
+            :class="{
+              'hs-cell-empty': cell.empty,
+              'hs-cell-override': cell.overridden,
+            }"
+            @click="cycleHoliday(cell)"
+          >
+            <template v-if="!cell.empty">
+              <span class="hs-num">{{ cell.day }}</span>
+              <span class="hs-tag-sm" :class="'hs-ts-' + cell.effective">{{ hsTypeLabel(cell.effective) }}</span>
+              <span v-if="cell.overridden" class="hs-override-dot"></span>
+            </template>
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <span class="hs-auto-save">自动保存 · 关闭后实时更新</span>
+        <el-button v-if="hsActiveTab === 'holiday'" size="small" @click="hsResetMonth">重置本月</el-button>
+        <el-button type="primary" @click="showHolidaySettings = false">完成</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { DataAnalysis, WarningFilled, Setting } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import utc from 'dayjs/plugin/utc'
@@ -190,6 +372,7 @@ dayjs.locale('zh-cn')
 import {
   getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
 } from '../api'
+import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate } from '../utils/holiday'
 
 const projects = ref([])
 const allCheckins = ref([])
@@ -214,8 +397,130 @@ const deleteDates = ref([])
 
 const calYear = ref(dayjs().year())
 const calMonth = ref(dayjs().month() + 1)
-const weekDays = ['日', '一', '二', '三', '四', '五', '六']
+const weekDays = ['一', '二', '三', '四', '五', '六', '日']
 const todayStr = dayjs().format('YYYY-MM-DD')
+
+// 节假日数据
+const holidayVersion = ref(0)
+const loadHolidayForYear = async (year) => {
+  await loadHolidayData(year)
+  // 也预加载前后一年，方便月份切换
+  await Promise.all([loadHolidayData(year - 1), loadHolidayData(year + 1)].filter(Boolean))
+  holidayVersion.value++
+}
+
+// 出勤计算器
+const showCalcDlg = ref(false)
+const calcRange = ref(null)
+const calcResult = ref(null)
+
+const onCalcRangeChange = () => { calcResult.value = null }
+const disabledCalcDate = (date) => {
+  const entryDateStr = getEntryDate()
+  return entryDateStr ? dayjs(date).isBefore(dayjs(entryDateStr)) : false
+}
+const runCalc = () => {
+  if (!calcRange.value || !calcRange.value[0] || !calcRange.value[1]) {
+    ElMessage.warning('请选择日期范围')
+    return
+  }
+  const [startStr, endStr] = calcRange.value
+  const start = dayjs(startStr)
+  const end = dayjs(endStr)
+  if (end.isBefore(start)) { ElMessage.warning('结束日期不能早于开始日期'); return }
+
+  const byMonth = {}
+  const byProject = {}
+  const multiProjectDays = [] // 多项目签到的日期列表
+  let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0
+  const today = dayjs().startOf('day')
+
+  for (let d = start; d.isBefore(end) || d.isSame(end); d = d.add(1, 'day')) {
+    const dateStr = d.format('YYYY-MM-DD')
+    const weekday = d.day()
+    const extra = getDayExtraInfo(dateStr)
+    const dayCheckins = checkinsByDate.value[dateStr] || []
+    const hasCheckin = dayCheckins.length > 0
+    const isFuture = d.isAfter(today)
+    const monthKey = d.format('YYYY年M月')
+    const entryDateStr = getEntryDate()
+    const beforeEntry = entryDateStr && dateStr < entryDateStr
+
+    if (beforeEntry) continue
+
+    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, leaveDays: 0, overtimeDays: 0, estimatedDays: 0 }
+
+    if (hasCheckin) {
+      totalWork++
+      byMonth[monthKey].workDays++
+
+      // 按项目统计：每个签到记录的项目
+      const dayProjects = new Set()
+      for (const chk of dayCheckins) {
+        for (const p of chk.projects || []) {
+          if (!byProject[p.id]) byProject[p.id] = { projectName: p.name, days: 0 }
+          byProject[p.id].days++
+          dayProjects.add(p.id)
+        }
+      }
+      // 检查当天是否涉及多个项目
+      if (dayProjects.size >= 2) {
+        const projectNames = []
+        for (const chk of dayCheckins) {
+          for (const p of chk.projects || []) {
+            if (!projectNames.includes(p.name)) projectNames.push(p.name)
+          }
+        }
+        multiProjectDays.push({
+          date: dateStr,
+          dateLabel: d.format('M月D日'),
+          weekday: ['日','一','二','三','四','五','六'][weekday],
+          projectCount: dayProjects.size,
+          projectNames,
+        })
+      }
+    } else if (isFuture) {
+      // 未来日期：默认工作日已上班
+      // 判断当日有效类型
+      let effIsRest
+      if (extra.override === 'off') effIsRest = true
+      else if (extra.override === 'normal') effIsRest = false
+      else if (extra.badgeType === 'workday') effIsRest = false
+      else if (extra.badgeType === 'holiday') effIsRest = true
+      else if (weekday === 0 || weekday === 6) effIsRest = true
+      else effIsRest = false
+
+      if (!effIsRest) {
+        totalWork++
+        totalEstimated++
+        byMonth[monthKey].workDays++
+        byMonth[monthKey].estimatedDays++
+      }
+    }
+
+    // 请假与加班统计
+    let effIsRest
+    if (extra.override === 'off') effIsRest = true
+    else if (extra.override === 'normal') effIsRest = false
+    else if (extra.badgeType === 'workday') effIsRest = false
+    else if (extra.badgeType === 'holiday') effIsRest = true
+    else if (weekday === 0 || weekday === 6) effIsRest = true
+    else effIsRest = false
+
+    if (effIsRest) {
+      if (hasCheckin) { totalOvertime++; byMonth[monthKey].overtimeDays++ }
+    } else {
+      if (!hasCheckin && !isFuture) { totalLeave++; byMonth[monthKey].leaveDays++ }
+    }
+  }
+
+  calcResult.value = {
+    total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated },
+    monthly: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })),
+    byProject: Object.values(byProject).sort((a, b) => b.days - a.days),
+    multiProjectDays,
+  }
+}
 
 // 当日更新状态指示 — 基于当前签到日期
 const todayUpdateStatus = ref({ project_ids: [], task_ids: [] })
@@ -246,26 +551,105 @@ const checkinsByDate = computed(() => {
 })
 
 const calendarDays = computed(() => {
+  // eslint-disable-next-line no-unused-expressions
+  holidayVersion.value // 依赖版本号，数据加载后重新计算
+  const entryDateStr = getEntryDate() // 入职日期
   const firstDay = dayjs(`${calYear.value}-${calMonth.value}-01`)
   const daysInMonth = firstDay.daysInMonth()
-  const startWeekday = firstDay.day()
+  const startWeekday = (firstDay.day() + 6) % 7 // 周一为第一列
   const cells = []
-  const prevMonth = firstDay.subtract(1, 'month')
-  const prevDays = prevMonth.daysInMonth()
-  for (let i = startWeekday - 1; i >= 0; i--) {
-    const d = prevDays - i
-    cells.push({ num: d, date: prevMonth.date(d).format('YYYY-MM-DD'), isCurrent: false, isToday: false })
+  // 月初空白占位
+  for (let i = 0; i < startWeekday; i++) {
+    cells.push({ empty: true, isCurrent: false, isToday: false })
   }
+  // 当月日期
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = firstDay.date(d).format('YYYY-MM-DD')
-    cells.push({ num: d, date: dateStr, isCurrent: true, isToday: dateStr === todayStr })
+    const beforeEntry = entryDateStr && dateStr < entryDateStr
+    const weekday = dayjs(dateStr).day()
+    const extra = getDayExtraInfo(dateStr)
+    const hasCheckin = !!checkinsByDate.value[dateStr]
+    const isFuture = dayjs(dateStr).isAfter(dayjs().startOf('day'))
+
+    // 判断当日有效类型（覆盖优先于默认）
+    let effectiveIsRest
+    if (extra.override === 'off') effectiveIsRest = true
+    else if (extra.override === 'normal') effectiveIsRest = false
+    else if (extra.badgeType === 'workday') effectiveIsRest = false
+    else if (extra.badgeType === 'holiday') effectiveIsRest = true
+    else if (weekday === 0 || weekday === 6) effectiveIsRest = true
+    else effectiveIsRest = false
+
+    let statusType = null
+    if (!isFuture && !beforeEntry) {
+      if (effectiveIsRest) {
+        if (hasCheckin) statusType = 'overtime'
+      } else {
+        statusType = hasCheckin ? 'attendance' : 'leave'
+      }
+    }
+
+    cells.push({
+      num: d,
+      date: dateStr,
+      isCurrent: true,
+      isToday: dateStr === todayStr,
+      holiday: extra,
+      status: statusType,
+    })
   }
-  const nextMonth = firstDay.add(1, 'month')
+  // 月末空白占位
   const remaining = 42 - cells.length
-  for (let d = 1; d <= remaining; d++) {
-    cells.push({ num: d, date: nextMonth.date(d).format('YYYY-MM-DD'), isCurrent: false, isToday: false })
+  for (let i = 0; i < remaining; i++) {
+    cells.push({ empty: true, isCurrent: false, isToday: false })
   }
   return cells
+})
+
+// 月份出勤统计
+const monthStats = computed(() => {
+  // eslint-disable-next-line no-unused-expressions
+  holidayVersion.value // 依赖版本号，自定义覆盖更新后重新计算
+  const year = calYear.value
+  const month = calMonth.value
+  const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth()
+  const today = dayjs()
+  const isCurrent = year === today.year() && month === today.month() + 1
+  const lastDay = isCurrent ? today.date() : daysInMonth
+
+  let workDays = 0   // 有签到记录的总天数（含加班）
+  let leaveDays = 0   // 应上班但没签到
+  let overtimeDays = 0
+
+  for (let d = 1; d <= lastDay; d++) {
+    const dateStr = dayjs(`${year}-${month}-${d}`).format('YYYY-MM-DD')
+    const weekday = dayjs(dateStr).day()
+    const extra = getDayExtraInfo(dateStr)
+    const hasCheckin = !!checkinsByDate.value[dateStr]
+    const entryDateStr = getEntryDate()
+    const beforeEntry = entryDateStr && dateStr < entryDateStr
+
+    if (beforeEntry) continue // 入职前不统计
+
+    // 判断当日有效类型（覆盖优先于默认）
+    let effectiveIsRest
+    if (extra.override === 'off') effectiveIsRest = true
+    else if (extra.override === 'normal') effectiveIsRest = false
+    else if (extra.badgeType === 'workday') effectiveIsRest = false
+    else if (extra.badgeType === 'holiday') effectiveIsRest = true
+    else if (weekday === 0 || weekday === 6) effectiveIsRest = true
+    else effectiveIsRest = false
+
+    if (hasCheckin) workDays++
+
+    if (effectiveIsRest) {
+      if (hasCheckin) overtimeDays++
+    } else {
+      if (!hasCheckin) leaveDays++
+    }
+  }
+
+  return { workDays, leaveDays, overtimeDays, total: lastDay, isCurrent }
 })
 
 const load = async () => {
@@ -274,14 +658,105 @@ const load = async () => {
   allCheckins.value = c
   selectedDate.value = todayStr
   loadStatusForDate(todayStr)
+  loadHolidayForYear(calYear.value)
 }
 onMounted(load)
 
 const formatDateFull = (d) => dayjs(d).format('YYYY年M月D日 dddd')
 
-const prevMonth = () => { if (calMonth.value === 1) { calYear.value--; calMonth.value = 12 } else calMonth.value-- }
-const nextMonth = () => { if (calMonth.value === 12) { calYear.value++; calMonth.value = 1 } else calMonth.value++ }
-const goToday = () => { calYear.value = dayjs().year(); calMonth.value = dayjs().month() + 1; selectedDate.value = todayStr }
+const prevMonth = () => { if (calMonth.value === 1) { calYear.value--; calMonth.value = 12 } else calMonth.value--; loadHolidayForYear(calYear.value) }
+const nextMonth = () => { if (calMonth.value === 12) { calYear.value++; calMonth.value = 1 } else calMonth.value++; loadHolidayForYear(calYear.value) }
+const goToday = () => { calYear.value = dayjs().year(); calMonth.value = dayjs().month() + 1; selectedDate.value = todayStr; loadHolidayForYear(calYear.value) }
+
+// 日历设置
+const showHolidaySettings = ref(false)
+const hsActiveTab = ref('general')
+const hsYear = ref(dayjs().year())
+const hsMonth = ref(dayjs().month() + 1)
+const entryDateVal = ref(getEntryDate())
+
+const initHolidaySettings = () => { hsYear.value = calYear.value; hsMonth.value = calMonth.value; entryDateVal.value = getEntryDate(); hsActiveTab.value = 'general' }
+const onEntryDateChange = (val) => { setEntryDate(val || null); holidayVersion.value++ }
+const clearEntryDate = () => { entryDateVal.value = null; setEntryDate(null); holidayVersion.value++ }
+
+// 供日历和计算器使用的计算属性
+const entryDate = computed(() => getEntryDate())
+const hsPrev = () => { if (hsMonth.value === 1) { hsYear.value--; hsMonth.value = 12 } else hsMonth.value-- }
+const hsNext = () => { if (hsMonth.value === 12) { hsYear.value++; hsMonth.value = 1 } else hsMonth.value++ }
+
+const hsDays = computed(() => {
+  // eslint-disable-next-line no-unused-expressions
+  holidayVersion.value // 依赖版本号，覆盖数据更新后重新计算
+  const firstDay = dayjs(`${hsYear.value}-${hsMonth.value}-01`)
+  const daysInMonth = firstDay.daysInMonth()
+  const startWeekday = (firstDay.day() + 6) % 7
+  const cells = []
+  for (let i = 0; i < startWeekday; i++) cells.push({ empty: true })
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = firstDay.date(d).format('YYYY-MM-DD')
+    const defaultInfo = (() => {
+      const mmdd = dateStr.slice(5)
+      const year = dateStr.slice(0, 4)
+      const data = (() => { try { return JSON.parse(localStorage.getItem(`taskm_holiday_${year}`) || 'null')?.data } catch { return null } })()
+      return data?.[mmdd]
+    })()
+    const override = getHolidayOverride(dateStr)
+    // 计算生效状态
+    let effective
+    if (override) {
+      effective = override
+    } else if (defaultInfo) {
+      effective = defaultInfo.holiday ? 'holiday' : 'workday'
+    } else {
+      effective = (dayjs(dateStr).day() === 0 || dayjs(dateStr).day() === 6) ? 'off' : 'normal'
+    }
+    cells.push({
+      day: d,
+      dateStr,
+      default: defaultInfo,
+      override,
+      effective,
+      overridden: !!override,
+    })
+  }
+  const remaining = 42 - cells.length
+  for (let i = 0; i < remaining; i++) cells.push({ empty: true })
+  return cells
+})
+
+const cycleHoliday = (cell) => {
+  if (cell.empty) return
+  const order = ['normal', 'holiday', 'workday', 'off']
+  const idx = order.indexOf(cell.effective)
+  const next = order[(idx + 1) % order.length]
+  // 如果下个状态和默认状态相同，清除覆盖
+  const isDefault = (() => {
+    if (!cell.default) return false
+    if (next === 'holiday') return cell.default.holiday
+    if (next === 'workday') return !cell.default.holiday
+    return false
+  })()
+  if (isDefault) {
+    setHolidayOverride(cell.dateStr, null)
+  } else {
+    setHolidayOverride(cell.dateStr, next)
+  }
+  holidayVersion.value++ // 触发日历重算
+}
+
+const hsTypeLabel = (type) => {
+  const map = { normal: '工作日', holiday: '法定假', workday: '调休班', off: '休息日' }
+  return map[type] || ''
+}
+
+const hsResetMonth = () => {
+  const prefix = `${hsYear.value}-${String(hsMonth.value).padStart(2, '0')}`
+  const all = getAllOverrides()
+  for (const key of Object.keys(all)) {
+    if (key.startsWith(prefix)) setHolidayOverride(key, null)
+  }
+  holidayVersion.value++
+}
 
 // ---- 单次签到 ----
 const resetCheckinForm = () => {
@@ -384,6 +859,7 @@ const toggleBatchMode = () => {
   if (!batchMode.value) batchDates.value = []
 }
 const onCellClick = (day) => {
+  if (day.empty) return
   if (batchMode.value) {
     // 批量签到模式：已有签到的日期不可选
     if (!day.isCurrent || checkinsByDate[day.date]) return
@@ -455,7 +931,8 @@ const submitBatch = async () => {
 
 .calendar-layout { display: flex; gap: 24px; align-items: flex-start; }
 
-.cal-panel { width: 420px; flex-shrink: 0; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 18px; position: relative; }
+.cal-left { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
+.cal-panel { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 18px; position: relative; }
 .cal-panel.batch-mode { border-color: #e6a23c; }
 .cal-panel.delete-batch-mode { border-color: #f56c6c; }
 .cal-nav { display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
@@ -465,7 +942,7 @@ const submitBatch = async () => {
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
 .cal-cell { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; font-size: 13px; transition: background .1s; gap: 2px; }
 .cal-cell:hover { background: #f5f4fe; }
-.cal-cell.other-month { color: #ccc; cursor: default; }
+.cal-cell-empty { visibility: hidden; pointer-events: none; }
 .cal-cell.batch-disabled { opacity: 0.3; cursor: default; }
 .cal-cell.delete-disabled { opacity: 0.3; cursor: default; }
 .cal-cell.today .cal-cell-num { color: #534ab7; font-weight: 700; }
@@ -475,9 +952,28 @@ const submitBatch = async () => {
 .cal-cell.delete-selected { background: #fef0f0; border: 1px solid #f56c6c; }
 .cal-cell.delete-selected .cal-cell-num { font-weight: 600; color: #f56c6c; }
 .cal-cell-dot { width: 5px; height: 5px; border-radius: 50%; background: #534ab7; position: absolute; bottom: 6px; }
+.cal-cell-label { position: absolute; bottom: 3px; font-size: 9px; font-weight: 600; line-height: 1; }
+.cal-cell-overtime { color: #d48806; }
+.cal-cell-leave { color: #e67e22; }
+.cal-cell-badge { position: absolute; top: 1px; right: 2px; font-size: 9px; font-weight: 600; line-height: 1.2; border-radius: 3px; padding: 0 3px; max-width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cal-cell-badge.cb-holiday { color: #e74c3c; background: #fde8e8; }
+.cal-cell-badge.cb-workday { color: #d48806; background: #fff7e6; }
+.cal-cell-badge.cb-festival { color: #8b5cf6; background: #f3eefe; }
+.cal-cell-badge.cb-off { color: #999; background: #f0f0f0; }
 .cal-cell-checked { font-size: 10px; color: #999; position: absolute; bottom: 4px; }
 .cal-cell-has-data { font-size: 10px; color: #f56c6c; position: absolute; bottom: 4px; }
 .cal-cell-num { line-height: 1; }
+
+.cal-stats-card { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 16px 18px; }
+.cal-stats-title { font-size: 12px; color: #888; margin-bottom: 6px; }
+.cal-stats-row { display: flex; align-items: center; gap: 12px; }
+.cal-stats-item { font-size: 13px; color: #333; }
+.cal-stats-item strong { font-size: 18px; color: #534ab7; }
+.cal-stats-leave { font-size: 13px; color: #e67e22; }
+.cal-stats-leave strong { font-size: 18px; color: #e67e22; }
+.cal-stats-divider { width: 1px; height: 20px; background: #e0e0e0; }
+.cal-stats-overtime { font-size: 12px; color: #d48806; margin-top: 4px; }
+.cal-stats-overtime strong { font-size: 14px; }
 
 .batch-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; margin-top: 10px; border-top: 1px solid #eee; font-size: 13px; color: #e6a23c; }
 
@@ -500,5 +996,72 @@ const submitBatch = async () => {
 .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; vertical-align: middle; }
 .dot-green { background: #52c41a; }
 .dot-gray { background: #d9d9d9; }
+
+/* 工具卡片 */
+.cal-tools-card { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; }
+.cal-tools-title { font-size: 12px; color: #888; margin-bottom: 10px; }
+.cal-tools-btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; background: #f5f4fe; color: #534ab7; }
+.cal-tools-btn:hover { background: #eeedfe; }
+
+/* 出勤计算器 */
+.calc-range { display: flex; align-items: center; margin-bottom: 20px; }
+.calc-summary { display: flex; justify-content: space-around; padding: 16px 0; background: #f9f9fb; border-radius: 10px; margin-bottom: 20px; }
+.calc-summary-item { text-align: center; }
+.calc-summary-num { display: block; font-size: 28px; font-weight: 700; line-height: 1.2; }
+.calc-summary-label { font-size: 13px; color: #888; margin-top: 2px; display: block; }
+.calc-section { margin-top: 16px; }
+.calc-section-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #333; }
+.calc-month-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.calc-month-card { background: #f9f9fb; border-radius: 8px; padding: 12px; }
+.calc-month-name { font-size: 13px; font-weight: 600; color: #534ab7; margin-bottom: 8px; }
+.calc-month-row { font-size: 12px; color: #666; line-height: 1.8; }
+.calc-proj-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.calc-proj-card { display: flex; align-items: center; gap: 8px; background: #f0f0f5; border-radius: 8px; padding: 8px 14px; }
+.calc-proj-name { font-size: 13px; color: #333; }
+.calc-proj-days { font-size: 13px; color: #534ab7; }
+.calc-proj-days strong { font-size: 16px; }
+.calc-estimated-note { text-align: center; font-size: 12px; color: #999; margin-top: -12px; margin-bottom: 8px; }
+.calc-estimated-note strong { color: #534ab7; }
+.calc-estimated-tag { display: inline-block; font-size: 10px; font-weight: 400; color: #fff; background: #534ab7; border-radius: 3px; padding: 0 5px; margin-left: 4px; vertical-align: middle; }
+.calc-section-title-warn { display: flex; align-items: center; color: #e67e22; }
+.calc-warn-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.calc-warn-item { background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 6px; padding: 8px 10px; font-size: 12px; min-width: 140px; }
+.calc-warn-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.calc-warn-date { font-weight: 600; color: #d48806; }
+.calc-warn-weekday { color: #999; font-size: 11px; }
+.calc-warn-projs { display: flex; flex-wrap: wrap; gap: 4px; }
+.calc-warn-proj { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #eeedfe; color: #534ab7; }
+
+/* 日历设置 */
+.hs-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid #e8e8e4; }
+.hs-tab { padding: 6px 20px; font-size: 13px; cursor: pointer; color: #888; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .15s; }
+.hs-tab:hover { color: #534ab7; }
+.hs-tab.active { color: #534ab7; border-bottom-color: #534ab7; font-weight: 600; }
+.hs-entry { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
+.hs-entry-label { font-size: 13px; color: #888; white-space: nowrap; }
+.hs-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.hs-nav { display: flex; align-items: center; }
+.hs-month { font-size: 15px; font-weight: 600; min-width: 120px; text-align: center; }
+.hs-legend { display: flex; align-items: center; gap: 6px; }
+.hs-tag { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 3px; }
+.hs-tag-normal { background: #e8f5e9; color: #2e7d32; }
+.hs-tag-holiday { background: #fde8e8; color: #e74c3c; }
+.hs-tag-workday { background: #fff7e6; color: #d48806; }
+.hs-tag-off { background: #f0f0f0; color: #999; }
+.hs-override-hint { font-size: 11px; color: #bbb; margin-left: 2px; }
+.hs-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; margin-bottom: 6px; }
+.hs-weekday { font-size: 11px; color: #888; padding: 2px 0; }
+.hs-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.hs-cell { position: relative; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 6px; cursor: pointer; font-size: 13px; background: #fafafa; transition: background .1s; gap: 1px; }
+.hs-cell:hover { background: #f0f0f5; }
+.hs-cell-empty { visibility: hidden; }
+.hs-num { line-height: 1; font-weight: 500; }
+.hs-tag-sm { font-size: 9px; line-height: 1.2; border-radius: 2px; padding: 0 3px; }
+.hs-ts-normal { color: #2e7d32; background: #e8f5e9; }
+.hs-ts-holiday { color: #e74c3c; background: #fde8e8; }
+.hs-ts-workday { color: #d48806; background: #fff7e6; }
+.hs-ts-off { color: #999; background: #f0f0f0; }
+.hs-override-dot { width: 4px; height: 4px; border-radius: 50%; background: #534ab7; position: absolute; top: 2px; right: 2px; }
+.hs-auto-save { font-size: 12px; color: #bbb; }
 
 </style>

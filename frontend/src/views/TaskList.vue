@@ -36,21 +36,21 @@
         :style="activeStatus !== s.id ? { borderColor: s.color, color: s.color } : {}"
         @click="setFilter(s.id)"
         round
-      >{{ s.name }}</el-button>
+      >{{ s.name }}<span style="font-size:11px;opacity:0.7;margin-left:3px">({{ s.id === null ? allTaskCount : (statusCount[s.id] || 0) }})</span></el-button>
     </div>
 
     <!-- 标签筛选 -->
     <div class="filter-bar" style="margin-top:8px" v-if="tags.length">
       <span class="filter-label">标签筛选：</span>
       <el-button
-        v-for="t in tags.filter(t => usedTagIds.has(t.id))"
+        v-for="t in tags"
         :key="t.id"
         size="small"
         round
         :type="activeTagIds.includes(t.id) ? 'primary' : ''"
         :style="activeTagIds.includes(t.id) ? { background: t.color, borderColor: t.color } : { borderColor: t.color, color: t.color }"
         @click="toggleTagFilter(t.id)"
-      >{{ t.name }}</el-button>
+      >{{ t.name }}<span style="font-size:11px;opacity:0.7;margin-left:3px">({{ tagCount[t.id] || 0 }})</span></el-button>
     </div>
 
     <!-- 任务列表 -->
@@ -163,8 +163,11 @@ const form = ref({ title: '', description: '', status_id: null, priority: 'norma
 const defaultStatusId = ref(null)
 // 项目内所有任务的当前状态和标签（用于决定是否显示已停用筛选项）
 const usedStatusIds = ref(new Set())
-const usedTagIds = ref(new Set())
-
+// 标签对应任务计数
+const tagCount = ref({})
+// 状态对应任务计数
+const statusCount = ref({})
+const allTaskCount = ref(0)
 const load = async () => {
   const [all, s, tg] = await Promise.all([
     getProjects(),
@@ -176,7 +179,6 @@ const load = async () => {
   tags.value = tg
   defaultStatusId.value = s.find(st => st.is_default)?.id ?? null
   usedStatusIds.value = new Set()
-  usedTagIds.value = new Set()
   await loadTasks()
 }
 const loadTasks = async () => {
@@ -188,7 +190,20 @@ const loadTasks = async () => {
   // 刷新后重新计算当前使用的状态/标签ID（覆盖筛选后可见的已停用项）
   const allTasks = await getTasks(projectId, {})
   usedStatusIds.value = new Set(allTasks.map(t => t.status_id).filter(Boolean))
-  usedTagIds.value = new Set(allTasks.flatMap(t => t.tags?.map(tag => tag.id) || []))
+  allTaskCount.value = allTasks.length
+  // 计算每个标签的任务计数
+  const tagCounts = {}
+  const statusCounts = {}
+  allTasks.forEach(t => {
+    (t.tags || []).forEach(tag => {
+      tagCounts[tag.id] = (tagCounts[tag.id] || 0) + 1
+    })
+    if (t.status_id) {
+      statusCounts[t.status_id] = (statusCounts[t.status_id] || 0) + 1
+    }
+  })
+  tagCount.value = tagCounts
+  statusCount.value = statusCounts
 }
 
 const setFilter = (statusId) => {
