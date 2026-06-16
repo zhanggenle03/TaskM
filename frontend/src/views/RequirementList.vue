@@ -585,7 +585,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, shallowRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -601,7 +601,7 @@ const router = useRouter()
 const projectId = route.params.projectId
 
 // 状态
-const requirements = ref([])
+const requirements = shallowRef([])
 const loading = ref(false)
 const customFields = ref([])
 const statusPools = ref([])
@@ -1758,25 +1758,24 @@ const priorityNameToValue = (name) => {
 }
 
 onMounted(async () => {
-  // 再次从 localStorage 加载列宽（确保 setup 阶段的同步初始化和 onMounted 时的一致）
+  // 再次从 localStorage 加载列宽
   const localWidths = loadWidthsFromLocal()
   if (Object.keys(localWidths).length) {
     savedWidths.value = localWidths
   }
 
-  // 并行加载独立数据
+  // 所有数据并行加载
   await Promise.all([
     loadProject(),
     loadCustomFields(),
     loadPools(),
+    loadRequirements(),
   ])
-  await loadRequirements()
-  // 首次全量加载时计算列宽（筛选不触发重算）
+  // 首次全量加载时计算列宽
   computeColumnWidths()
   // 异步加载全量筛选统计数据
   getReqFilterStats(projectId).then(stats => { filterStats.value = stats }).catch(() => {})
-  calcTableHeight()
-  // 使用 ResizeObserver 监听容器尺寸变化（覆盖浏览器缩放、侧边栏展开等场景）
+  // 使用 ResizeObserver 监听容器尺寸变化
   const pageEl = document.querySelector('.requirement-page')
   if (pageEl) {
     resizeObserver = new ResizeObserver(() => calcTableHeight())

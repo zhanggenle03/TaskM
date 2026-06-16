@@ -64,18 +64,6 @@
         <!-- 富文本编辑器 -->
         <div class="section-title">
           <el-icon><EditPen /></el-icon> 详细描述
-          <span style="flex:1" />
-          <template v-if="isEditing">
-            <span style="font-size:12px;color:#999;margin-right:4px">引用块</span>
-            <span
-              v-for="c in bqPresets"
-              :key="c"
-              class="bq-color-dot"
-              :class="{ active: bqColor === c }"
-              :style="{ background: c }"
-              @click="setBqColor(c)"
-            />
-          </template>
         </div>
         <div class="editor-wrapper" :class="{ 'editor-readonly': !isEditing }">
           <Toolbar
@@ -182,22 +170,116 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
+import { Boot } from '@wangeditor/editor'
 import {
   getRequirement, updateRequirement, deleteRequirement, deleteRequirementImage,
   getReqCustomFields, getReqStatusPools, getReqPriorityPools,
 } from '../api/index.js'
 
+// ── 引用块颜色选择器 ──
+const BQ_PRESETS = [
+  { value: '#f8f8f8', label: '灰', border: '#ccc' },
+  { value: '#e8f4fd', label: '蓝', border: '#9fc5e8' },
+  { value: '#e8f8e8', label: '绿', border: '#9fc89f' },
+  { value: '#fef9e7', label: '黄', border: '#e6d88a' },
+  { value: '#fde8e8', label: '红', border: '#e89f9f' },
+]
+
+/** 从 DOM 节点向上查找最近的 blockquote */
+const findParentBlockquote = (startEl) => {
+  let el = startEl
+  while (el) {
+    if (el.nodeName === 'BLOCKQUOTE') return el
+    el = el.parentElement
+  }
+  return null
+}
+
+/**
+ * 在编辑器内查找当前光标所在的 blockquote DOM（多路径 fallback）
+ */
+const findCurrentBlockquote = () => {
+  try {
+    const sel = window.getSelection()
+    if (sel && sel.rangeCount > 0 && sel.anchorNode) {
+      const bq = findParentBlockquote(sel.anchorNode)
+      if (bq) return bq
+    }
+  } catch {}
+  if (editorRef.value) {
+    try {
+      const container =
+        editorRef.value.getEditableContainer?.() ||
+        document.querySelector('.w-e-text-container [data-slate-editor]') ||
+        document.querySelector('.w-e-text-container')
+      if (container) {
+        const allBq = container.querySelectorAll('blockquote')
+        if (allBq.length === 1) return allBq[0]
+        for (let i = allBq.length - 1; i >= 0; i--) {
+          if (allBq[i].getAttribute('data-bq-active') === 'true') return allBq[i]
+        }
+      }
+    } catch {}
+  }
+  return null
+}
+
+/** 最后一次鼠标点击落入的 blockquote DOM */
+let lastTouchedBlockquote = null
+
+// ── 引用颜色选择器菜单 ──
+
+class BqColorMenu {
+  constructor() {
+    this.title = '引用颜色'
+    this.iconSvg = '<svg viewBox="0 0 1024 1024"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64zm0 820c-205.4 0-372-166.6-372-372s166.6-372 372-372 372 166.6 372 372-166.6 372-372 372z"/></svg>'
+    this.tag = 'select'
+    this.width = 48
+  }
+  getOptions() { return BQ_PRESETS.map(c => ({ value: c.value, text: c.label })) }
+  getValue() { return '' }
+  isActive() { return false }
+  isDisabled() { return false }
+  exec(editor, color) {
+    // 定位目标 blockquote DOM 元素
+    let bqEl = findCurrentBlockquote()
+    if (!bqEl) bqEl = lastTouchedBlockquote
+    if (!bqEl || bqEl.nodeName !== 'BLOCKQUOTE') {
+      console.warn('[BqColor] 未找到目标引用块，请先将光标放入引用块内再选择颜色')
+      return
+    }
+
+    // 只设置 data-bq-color 属性；视觉颜色由 CSS 属性选择器驱动
+    bqEl.setAttribute('data-bq-color', color)
+
+    hasUnsaved.value = true
+  }
+}
+
+// 用 try/catch 保护 registerMenu：首次注册成功，后续组件复用时不因
+// "Duplicated key" 异常导致整个 setup() 崩溃（watch/ref 等全部无法初始化）
+try {
+  Boot.registerMenu({
+    key: 'bqColorSelect',
+    factory() { return new BqColorMenu() }
+  })
+} catch (e) {
+  // 预期：第二次注册时抛 "Duplicated key" — 忽略即可，无需重新注册
+  if (e.message && !e.message.includes('Duplicated key')) throw e
+}
+
 const route = useRoute()
 const router = useRouter()
-const projectId = route.params.projectId
+// 响应式 projectId，确保路由切换时正确更新（修复第二次进入详情页时内容不加载的问题）
+const projectId = computed(() => route.params.projectId)
 
-const loading = ref(true)
+const loading = ref(false)
 const req = ref(null)
 const customFields = ref([])
 const statusPools = ref([])
@@ -215,8 +297,6 @@ let exitResolve = null  // 退出编辑的 Promise resolve
 const editorRef = shallowRef()
 const isEditing = ref(false)
 const hasUnsaved = ref(false)
-const bqPresets = ['#f8f8f8', '#e8f4fd', '#e8f8e8', '#fef9e7', '#fde8e8']
-const bqColor = ref('#f8f8f8')
 
 const toolbarConfig = {
   toolbarKeys: [
@@ -226,7 +306,7 @@ const toolbarConfig = {
     '|',
     'color', 'bgColor',
     '|',
-    'bulletedList', 'numberedList', 'blockquote',
+    'bulletedList', 'numberedList', 'blockquote', 'bqColorSelect',
     '|',
     'divider',
     '|',
@@ -243,12 +323,58 @@ const onEditorCreated = (editor) => {
     if (!isEditing.value) editor.blur()
   })
   editor.blur()
-  // 初始化引用块颜色
-  nextTick(() => setBqColor(bqColor.value))
+
+  // 延迟绑定 DOM 事件，追踪当前交互的 blockquote
+  setTimeout(() => {
+    try {
+      const container = editor.getEditableContainer?.() ||
+        document.querySelector('.w-e-text-container [data-slate-editor]') ||
+        document.querySelector('.w-e-text-container')
+      if (container) {
+        // mousedown：用户点击编辑区时立即记录目标 blockquote（此时选区还在）
+        container.addEventListener('mousedown', handleEditorMouseDown)
+        // selectionchange：光标移动后更新
+        document.addEventListener('selectionchange', handleSelectionChange)
+      }
+    } catch {}
+  }, 300)
+  // 恢复引用块颜色：立刻执行，无需等 300ms（Editor DOM 已就绪），避免先闪灰色再变色的延迟感
+  restoreBqColors()
 }
 
-const onEditorChange = () => {
-  if (isEditing.value) hasUnsaved.value = true
+/** mousedown 时记录点击位置所在的 blockquote */
+const handleEditorMouseDown = (e) => {
+  const bq = findParentBlockquote(e.target)
+  if (bq) {
+    lastTouchedBlockquote = bq
+    bq.setAttribute('data-bq-active', 'true')
+    // 清除其他 blockquote 的 active 标记
+    const allBq = bq.parentElement?.querySelectorAll('blockquote')
+    if (allBq) { for (const el of allBq) { if (el !== bq) el.removeAttribute('data-bq-active') } }
+  } else {
+    lastTouchedBlockquote = null
+  }
+}
+
+/** selectionchange 时同步更新 lastTouchedBlockquote */
+const handleSelectionChange = () => {
+  try {
+    const sel = window.getSelection()
+    if (!sel || !sel.anchorNode) return
+    const bq = findParentBlockquote(sel.anchorNode)
+    if (bq) {
+      lastTouchedBlockquote = bq
+      bq.setAttribute('data-bq-active', 'true')
+      const allBq = bq.parentElement?.querySelectorAll('blockquote')
+      if (allBq) { for (const el of allBq) { if (el !== bq) el.removeAttribute('data-bq-active') } }
+    }
+  } catch {}
+}
+
+const onEditorChange = (editor) => {
+  if (isEditing.value) {
+    hasUnsaved.value = true
+  }
 }
 
 const editorConfig = {
@@ -268,7 +394,7 @@ const editorConfig = {
         const fd = new FormData()
         fd.append('file', file)
         try {
-          const r = await (await fetch(`/api/projects/${projectId}/requirements/${req.value.id}/images`, { method: 'POST', body: fd })).json()
+          const r = await (await fetch(`/api/projects/${projectId.value}/requirements/${req.value.id}/images`, { method: 'POST', body: fd })).json()
           if (r.url) insertFn(r.url)
         } catch { ElMessage.error('图片上传失败') }
       },
@@ -294,6 +420,8 @@ const exitEdit = async () => {
       // 不保存：重置内容为上次保存的版本
       descDraft.value = req.value.description || ''
       hasUnsaved.value = false
+      // 恢复引用块颜色（重设 HTML 触发 Slate 反序列化会剥离内联样式）
+      setTimeout(() => restoreBqColors(), 400)
     }
   }
   doExitEdit()
@@ -304,57 +432,45 @@ const onExitChoice = (choice) => {
   exitResolve?.(choice)
 }
 
-const setBqColor = (color) => {
-  bqColor.value = color
-  const wrapper = document.querySelector('.editor-wrapper')
-  if (wrapper) {
-    wrapper.style.setProperty('--bq-bg', color)
-    wrapper.style.setProperty('--bq-border', darken(color, 0.15))
-    wrapper.style.setProperty('--bq-text', isLight(color) ? '#555' : '#eee')
-  }
-}
-
-// 简易颜色工具
-const isLight = (hex) => {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return (r * 299 + g * 587 + b * 114) / 1000 > 160
-}
-const darken = (hex, amount) => {
-  const clamp = (v) => Math.max(0, Math.min(255, v))
-  const r = clamp(parseInt(hex.slice(1, 3), 16) * (1 - amount))
-  const g = clamp(parseInt(hex.slice(3, 5), 16) * (1 - amount))
-  const b = clamp(parseInt(hex.slice(5, 7), 16) * (1 - amount))
-  return `#${Math.round(r).toString(16).padStart(2, '0')}${Math.round(g).toString(16).padStart(2, '0')}${Math.round(b).toString(16).padStart(2, '0')}`
-}
-
 const doExitEdit = () => {
   isEditing.value = false
   editorRef.value?.blur()
 }
 
 onBeforeUnmount(() => {
-  if (editorRef.value) editorRef.value.destroy()
+  if (editorRef.value) {
+    // 清理事件监听器
+    try {
+      const container = editorRef.value.getEditableContainer?.() ||
+        document.querySelector('.w-e-text-container [data-slate-editor]') ||
+        document.querySelector('.w-e-text-container')
+      if (container) container.removeEventListener('mousedown', handleEditorMouseDown)
+    } catch {}
+    document.removeEventListener('selectionchange', handleSelectionChange)
+    editorRef.value.destroy()
+  }
+  lastTouchedBlockquote = null
 })
 
 // ── 数据加载 ──
 const load = async (id) => {
-  if (!id) id = Number(route.params.requirementId)
   loading.value = true
   req.value = null
   try {
+    const rId = id || Number(route.params.requirementId)
     const [reqRes, cfs, sp, pp] = await Promise.all([
-      getRequirement(projectId, id),
-      getReqCustomFields(projectId, { show_inactive: false }),
-      getReqStatusPools(projectId, { show_inactive: true }),
-      getReqPriorityPools(projectId, { show_inactive: true }),
+      getRequirement(projectId.value, rId),
+      getReqCustomFields(projectId.value, { show_inactive: false }),
+      getReqStatusPools(projectId.value, { show_inactive: true }),
+      getReqPriorityPools(projectId.value, { show_inactive: true }),
     ])
-    req.value = reqRes
     customFields.value = cfs || []
     statusPools.value = sp || []
     priorityPools.value = pp || []
-    descDraft.value = reqRes.description || ''
+    const desc = reqRes.description || ''
+    // 先设 descDraft，再设 req，确保编辑器创建时 v-model 已是目标内容
+    descDraft.value = desc
+    req.value = reqRes
     // 记录原始图片文件名
     origImgFilenames.clear()
     for (const fn of extractImgFilenames(reqRes.description)) {
@@ -367,9 +483,18 @@ const load = async (id) => {
   }
 }
 
+// 唯一入口：监听路由参数，immediate 覆盖首次加载 + 后续同组件跳转
+watch(() => route.params.requirementId, (newId) => {
+  if (newId) load(Number(newId))
+}, { immediate: true })
+
+// 防御性兜底：如果 watcher immediate 未触发（第二次进入同路由时可能发生），
+// 在 onMounted 中补加载。通过 req/loading 状态避免重复请求。
 onMounted(() => {
-  const id = Number(route.params.requirementId)
-  if (id) load(id)
+  const rId = Number(route.params.requirementId)
+  if (rId && !req.value && !loading.value) {
+    load(rId)
+  }
 })
 
 // ── 标题编辑 ──
@@ -381,7 +506,7 @@ const doSaveTitle = async () => {
   const t = editTitleVal.value?.trim()
   if (!t) return
   try {
-    await updateRequirement(projectId, req.value.id, { title: t })
+    await updateRequirement(projectId.value, req.value.id, { title: t })
     req.value.title = t
     editTitleDialog.value = false
     ElMessage.success('标题已更新')
@@ -391,19 +516,134 @@ const doSaveTitle = async () => {
 }
 
 // ── 描述保存 ──
+
+/**
+ * 保存前注入引用块颜色（data-bq-color 属性 → CSS 属性选择器驱动颜色）。
+ *
+ * 从编辑器 DOM 读取 data-bq-color，按文本锚点匹配写入待保存 HTML 的对应 blockquote。
+ */
+const injectBqColorsToHtml = (html) => {
+  if (!editorRef.value) return html
+
+  // 1. 获取实时编辑器容器中的所有 blockquote
+  let liveContainer
+  try {
+    liveContainer =
+      editorRef.value.getEditableContainer?.() ||
+      document.querySelector('.w-e-text-container [data-slate-editor]') ||
+      document.querySelector('.w-e-text-container')
+  } catch { return html }
+  if (!liveContainer) return html
+
+  const allLiveBqs = Array.from(liveContainer.querySelectorAll('blockquote'))
+  if (!allLiveBqs.length) return html
+
+  // 2. 收集有色 blockquote：{ text, color }
+  const coloredItems = []
+  for (const bq of allLiveBqs) {
+    const color = bq.getAttribute('data-bq-color')
+    if (!color) continue
+    const text = (bq.textContent || '').replace(/\s+/g, ' ').trim()
+    coloredItems.push({ text, color })
+  }
+  if (!coloredItems.length) return html
+
+  // 3. 将待保存 HTML 解析为临时 DOM
+  const tmpDiv = document.createElement('div')
+  tmpDiv.innerHTML = html
+  const parsedBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
+  if (!parsedBqs.length) return html
+
+  // 4. 按文本内容锚点匹配，写入 data-bq-color
+  for (const item of coloredItems) {
+    let target = null
+    for (const bq of parsedBqs) {
+      if (bq.hasAttribute('data-bq-matched')) continue
+      const bqText = (bq.textContent || '').replace(/\s+/g, ' ').trim()
+      if (bqText === item.text) { target = bq; break }
+    }
+    if (!target) {
+      for (const bq of parsedBqs) {
+        if (bq.hasAttribute('data-bq-matched')) continue
+        const bqText = (bq.textContent || '').replace(/\s+/g, ' ').trim()
+        if (item.text && bqText && (bqText.includes(item.text) || item.text.includes(bqText))) {
+          target = bq; break
+        }
+      }
+    }
+    if (target) {
+      target.setAttribute('data-bq-matched', '1')
+      target.setAttribute('data-bq-color', item.color)
+    }
+  }
+
+  // 5. 清理临时标记
+  for (const bq of parsedBqs) bq.removeAttribute('data-bq-matched')
+
+  return tmpDiv.innerHTML
+}
+
+/**
+ * 从已保存 HTML 中提取 data-bq-color 并恢复到编辑器 DOM。
+ * 页面加载/内容重置后调用。CSS 属性选择器会处理视觉渲染。
+ */
+const restoreBqColors = () => {
+  if (!editorRef.value || !req.value?.description) return
+
+  // 1. 解析已保存 HTML，提取 data-bq-color
+  const tmpDiv = document.createElement('div')
+  tmpDiv.innerHTML = req.value.description
+  const rawBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
+  const colorMap = []
+  for (const bq of rawBqs) {
+    const color = bq.getAttribute('data-bq-color')
+    if (!color) continue
+    const text = (bq.textContent || '').replace(/\s+/g, ' ').trim()
+    colorMap.push({ text, color })
+  }
+  if (!colorMap.length) return
+
+  // 2. 在编辑器 DOM 中查找匹配的 blockquote，设置 data-bq-color
+  const container =
+    editorRef.value.getEditableContainer?.() ||
+    document.querySelector('.w-e-text-container [data-slate-editor]') ||
+    document.querySelector('.w-e-text-container')
+  if (!container) return
+
+  const editorBqs = container.querySelectorAll('blockquote')
+  const used = new Set()
+
+  for (const item of colorMap) {
+    for (const bq of editorBqs) {
+      if (used.has(bq)) continue
+      const bqText = (bq.textContent || '').replace(/\s+/g, ' ').trim()
+      if (bqText === item.text ||
+          (item.text && bqText && (bqText.includes(item.text) || item.text.includes(bqText)))) {
+        bq.setAttribute('data-bq-color', item.color)
+        used.add(bq)
+        break
+      }
+    }
+  }
+}
+
 const doSaveDesc = async () => {
   if (!req.value) return
   saveStatus.value = 'saving'
   try {
-    await updateRequirement(projectId, req.value.id, { description: descDraft.value })
-    req.value.description = descDraft.value
+    // 将 DOM 中的引用块颜色注入到 HTML 字符串中再保存
+    const finalHtml = injectBqColorsToHtml(descDraft.value)
+    await updateRequirement(projectId.value, req.value.id, { description: finalHtml })
+    req.value.description = finalHtml
+    // 不再更新 descDraft，避免触发 WangEditor 重新渲染导致
+    // 内联样式（引用块颜色）被 Slate 反序列化时剥离
     hasUnsaved.value = false
 
     // 清理已删除的图片文件
     const newFilenames = new Set(extractImgFilenames(descDraft.value))
     for (const fn of origImgFilenames) {
       if (!newFilenames.has(fn)) {
-        deleteRequirementImage(projectId, req.value.id, fn).catch(() => {})
+        deleteRequirementImage(projectId.value, req.value.id, fn).catch(() => {})
       }
     }
     origImgFilenames.clear()
@@ -420,7 +660,7 @@ const doSaveDesc = async () => {
 // ── 右侧栏快速编辑 ──
 const quickUpdateStatus = async (val) => {
   try {
-    await updateRequirement(projectId, req.value.id, { status: val })
+    await updateRequirement(projectId.value, req.value.id, { status: val })
     ElMessage.success('状态已更新')
   } catch {
     ElMessage.error('状态更新失败')
@@ -429,7 +669,7 @@ const quickUpdateStatus = async (val) => {
 
 const quickUpdatePriority = async (val) => {
   try {
-    await updateRequirement(projectId, req.value.id, { priority: val })
+    await updateRequirement(projectId.value, req.value.id, { priority: val })
     ElMessage.success('优先级已更新')
   } catch {
     ElMessage.error('优先级更新失败')
@@ -448,9 +688,9 @@ const removeReq = async () => {
     '警告',
     { type: 'warning' }
   )
-  await deleteRequirement(projectId, req.value.id)
+  await deleteRequirement(projectId.value, req.value.id)
   ElMessage.success('已删除')
-  router.push(`/projects/${projectId}/requirements`)
+  router.push(`/projects/${projectId.value}/requirements`)
 }
 
 // ── 工具函数 ──
@@ -498,14 +738,6 @@ const extractImgFilenames = (html) => {
   display: flex; align-items: center; gap: 6px;
   margin-bottom: 10px; margin-top: 20px; color: #444;
 }
-.bq-color-dot {
-  width: 18px; height: 18px; border-radius: 50%;
-  border: 2px solid transparent; cursor: pointer;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
-  transition: border-color 0.15s, transform 0.15s;
-}
-.bq-color-dot:hover { transform: scale(1.15); }
-.bq-color-dot.active { border-color: #534ab7; }
 
 /* 富文本编辑器外层 */
 .editor-wrapper {
@@ -528,15 +760,36 @@ const extractImgFilenames = (html) => {
 /* 正文：单倍行距，段前段后0，统一字号14px */
 .editor-body :deep(.w-e-text-container [data-slate-editor]) { padding: 0 !important; font-size: 14px; }
 .editor-body :deep(.w-e-text-container [data-slate-editor] p) { line-height: 1.6; margin: 0; }
-/* 引用块样式（背景/边框可通过颜色选择器修改） */
+/* 引用块基础样式 + 按 data-bq-color 属性分色（CSS 属性选择器驱动，无 JS 操作内联样式） */
 .editor-body :deep(.w-e-text-container [data-slate-editor] blockquote) {
   line-height: 1.6;
   margin: 0;
   padding: 8px 16px;
-  border-left: 3px solid var(--bq-border, #ccc);
-  background: var(--bq-bg, #f8f8f8);
-  color: var(--bq-text, #555);
+  border-left: 3px solid #ccc;
+  background: #f8f8f8;
+  color: #555;
 }
+.editor-body :deep(.w-e-text-container [data-slate-editor] blockquote[data-bq-color="#e8f4fd"]) {
+  background: #e8f4fd;
+  border-left-color: #9fc5e8;
+  color: #555;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] blockquote[data-bq-color="#e8f8e8"]) {
+  background: #e8f8e8;
+  border-left-color: #9fc89f;
+  color: #555;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] blockquote[data-bq-color="#fef9e7"]) {
+  background: #fef9e7;
+  border-left-color: #e6d88a;
+  color: #555;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] blockquote[data-bq-color="#fde8e8"]) {
+  background: #fde8e8;
+  border-left-color: #e89f9f;
+  color: #555;
+}
+/* 灰色引用 = 默认值，无需额外规则 */
 /* 注释/行内代码样式 */
 .editor-body :deep(.w-e-text-container [data-slate-editor] code) {
   font-size: 13px;
