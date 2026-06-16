@@ -166,6 +166,48 @@
         <el-button @click="onExitChoice('save')" type="primary">保存退出</el-button>
       </template>
     </el-dialog>
+
+    <!-- 图片预览弹窗 -->
+    <el-dialog v-model="previewDialog" width="900px" top="5vh" destroy-on-close>
+      <template #header>
+        <div class="preview-header">
+          <span class="preview-title">{{ previewTitle }}</span>
+          <span v-if="previewList.length > 1" class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
+        </div>
+      </template>
+
+      <div class="preview-img-wrap" @wheel.prevent="onImgWheel">
+        <div class="preview-img-container">
+          <img :src="previewSrc" class="preview-img" draggable="false"
+            :style="{
+              transform: `translate(${imgState.x}px, ${imgState.y}px) scale(${imgState.scale})`,
+              transformOrigin: '0 0',
+              cursor: isDragging ? 'grabbing' : imgState.scale !== 1 ? 'grab' : 'default'
+            }"
+            @mousedown="onImgMouseDown"
+            @mousemove="onImgMouseMove"
+            @mouseup="onImgMouseUp"
+            @mouseleave="onImgMouseUp"
+          />
+        </div>
+      </div>
+
+      <!-- 工具栏：切换 + 重置 -->
+      <div v-if="previewList.length > 1 || imgState.scale !== 1" class="preview-toolbar">
+        <template v-if="previewList.length > 1">
+          <el-button size="small" :disabled="previewIndex <= 0" @click="previewPrev"><el-icon><ArrowLeft /></el-icon></el-button>
+          <span class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
+          <el-button size="small" :disabled="previewIndex >= previewList.length - 1" @click="previewNext"><el-icon><ArrowRight /></el-icon></el-button>
+        </template>
+        <span v-if="previewList.length > 1 && imgState.scale !== 1" class="tb-sep"></span>
+        <el-button v-if="imgState.scale !== 1" size="small" text @click="resetImageZoom">重置</el-button>
+      </div>
+
+      <template #footer>
+        <el-button @click="previewDialog = false">关闭</el-button>
+        <el-button type="primary" @click="downloadPreview">下载</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -173,6 +215,7 @@
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
@@ -293,6 +336,16 @@ const editTitleVal = ref('')
 const exitConfirmVisible = ref(false)
 let exitResolve = null  // 退出编辑的 Promise resolve
 
+// ── 图片预览 ──
+const previewDialog = ref(false)
+const previewTitle = ref('')
+const previewSrc = ref('')
+const previewList = ref([])
+const previewIndex = ref(0)
+const imgState = ref({ x: 0, y: 0, scale: 1 })
+const isDragging = ref(false)
+let dragStart = { x: 0, y: 0 }
+
 // ── 富文本编辑器 ──
 const editorRef = shallowRef()
 const isEditing = ref(false)
@@ -318,13 +371,11 @@ const toolbarConfig = {
 
 const onEditorCreated = (editor) => {
   editorRef.value = editor
-  // 非编辑状态禁止聚焦
-  editor.on('focus', () => {
-    if (!isEditing.value) editor.blur()
-  })
-  editor.blur()
 
-  // 延迟绑定 DOM 事件，追踪当前交互的 blockquote
+  // 初始化为只读模式，保留 wangEditor 样式渲染
+  editor.disable()
+
+  // 延迟绑定 DOM 事件，追踪当前交互的 blockquote + 图片双击预览
   setTimeout(() => {
     try {
       const container = editor.getEditableContainer?.() ||
@@ -333,6 +384,8 @@ const onEditorCreated = (editor) => {
       if (container) {
         // mousedown：用户点击编辑区时立即记录目标 blockquote（此时选区还在）
         container.addEventListener('mousedown', handleEditorMouseDown)
+        // 双击图片预览（仅只读模式生效，JS 内检查 isEditing）
+        container.addEventListener('dblclick', onEditorDblClick)
         // selectionchange：光标移动后更新
         document.addEventListener('selectionchange', handleSelectionChange)
       }
@@ -403,6 +456,7 @@ const editorConfig = {
 }
 
 const enterEdit = () => {
+  editorRef.value?.enable()
   hasUnsaved.value = false
   isEditing.value = true
 }
@@ -435,6 +489,7 @@ const onExitChoice = (choice) => {
 const doExitEdit = () => {
   isEditing.value = false
   editorRef.value?.blur()
+  editorRef.value?.disable()
 }
 
 onBeforeUnmount(() => {
@@ -444,7 +499,10 @@ onBeforeUnmount(() => {
       const container = editorRef.value.getEditableContainer?.() ||
         document.querySelector('.w-e-text-container [data-slate-editor]') ||
         document.querySelector('.w-e-text-container')
-      if (container) container.removeEventListener('mousedown', handleEditorMouseDown)
+      if (container) {
+        container.removeEventListener('mousedown', handleEditorMouseDown)
+        container.removeEventListener('dblclick', onEditorDblClick)
+      }
     } catch {}
     document.removeEventListener('selectionchange', handleSelectionChange)
     editorRef.value.destroy()
@@ -706,6 +764,84 @@ const extractImgFilenames = (html) => {
   for (m of g) names.push(m[1])
   return names
 }
+
+// ── 图片双击预览 ──
+
+/** 双击编辑器内图片，打开预览弹窗（仅只读模式） */
+const onEditorDblClick = (e) => {
+  if (isEditing.value) return
+  let target = e.target
+  if (target.tagName !== 'IMG') {
+    target = target.querySelector('img')
+  }
+  if (!target || target.tagName !== 'IMG') return
+
+  const container = e.currentTarget
+  const imgs = Array.from(container.querySelectorAll('img'))
+  const idx = imgs.findIndex(img => img === target || img.src === target.src)
+  if (idx < 0) return
+
+  previewList.value = imgs.map(img => img.src)
+  previewIndex.value = idx
+  previewSrc.value = imgs[idx].src
+  previewTitle.value = imgs[idx].src.split('/').pop() || '图片'
+  imgState.value = { x: 0, y: 0, scale: 1 }
+  previewDialog.value = true
+}
+
+/** 鼠标滚轮缩放 */
+const onImgWheel = (e) => {
+  const step = e.deltaY > 0 ? -0.05 : 0.05
+  const newScale = Math.round((imgState.value.scale + step) * 100) / 100
+  imgState.value.scale = Math.max(0.2, Math.min(10, newScale))
+}
+
+/** 开始拖拽 */
+const onImgMouseDown = (e) => {
+  isDragging.value = true
+  dragStart.x = e.clientX - imgState.value.x
+  dragStart.y = e.clientY - imgState.value.y
+}
+
+/** 拖拽移动 */
+const onImgMouseMove = (e) => {
+  if (!isDragging.value) return
+  imgState.value.x = e.clientX - dragStart.x
+  imgState.value.y = e.clientY - dragStart.y
+}
+
+/** 结束拖拽 */
+const onImgMouseUp = () => { isDragging.value = false }
+
+/** 上一张 */
+const previewPrev = () => {
+  if (previewIndex.value <= 0) return
+  previewIndex.value--
+  previewSrc.value = previewList.value[previewIndex.value]
+  previewTitle.value = previewSrc.value.split('/').pop() || '图片'
+  imgState.value = { x: 0, y: 0, scale: 1 }
+}
+
+/** 下一张 */
+const previewNext = () => {
+  if (previewIndex.value >= previewList.value.length - 1) return
+  previewIndex.value++
+  previewSrc.value = previewList.value[previewIndex.value]
+  previewTitle.value = previewSrc.value.split('/').pop() || '图片'
+  imgState.value = { x: 0, y: 0, scale: 1 }
+}
+
+/** 重置缩放 */
+const resetImageZoom = () => {
+  imgState.value = { x: 0, y: 0, scale: 1 }
+}
+
+/** 下载当前图片 */
+const downloadPreview = () => {
+  if (previewSrc.value) {
+    window.open(previewSrc.value, '_blank')
+  }
+}
 </script>
 
 <style scoped>
@@ -745,7 +881,16 @@ const extractImgFilenames = (html) => {
   box-shadow: 0 2px 16px rgba(83,74,183,0.08);
   background: #fff;
 }
-.editor-readonly :deep(.w-e-text-container) { pointer-events: none; user-select: none; }
+.editor-readonly :deep(.w-e-text-container) {
+  cursor: default;
+}
+.editor-readonly :deep(.w-e-text-container [data-slate-editor] img) {
+  cursor: zoom-in;
+}
+.editor-readonly :deep(.w-e-text-container [data-slate-editor] img:hover) {
+  box-shadow: 0 0 0 2px #534ab7;
+  border-radius: 4px;
+}
 .editor-toolbar {
   border-bottom: 1px solid #e8e8e8;
   background: #fafafa;
@@ -799,6 +944,16 @@ const extractImgFilenames = (html) => {
   padding: 2px 6px;
   font-family: inherit;
 }
+
+/* ── 图片预览弹窗 ── */
+.preview-header { display: flex; align-items: center; gap: 10px; }
+.preview-title { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.preview-counter { font-size: 12px; color: #999; flex-shrink: 0; }
+.preview-img-wrap { overflow: auto; height: 70vh; background: #f5f5f5; border-radius: 4px; position: relative; user-select: none; }
+.preview-img-container { min-height: 100%; text-align: center; padding: 16px; }
+.preview-img { max-width: 100%; max-height: calc(70vh - 80px); display: inline-block; vertical-align: top; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
+.preview-toolbar .tb-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
 
 /* ── 保存状态 ── */
 .save-indicator { font-size: 12px; padding: 1px 10px; border-radius: 10px; line-height: 22px; }
