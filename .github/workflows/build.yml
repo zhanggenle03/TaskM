@@ -81,6 +81,7 @@ jobs:
             --name TaskM `
             --icon taskm.ico `
             --add-data "frontend_dist;frontend_dist" `
+            --add-data "taskm.ico;." `
             --hidden-import "uvicorn.logging" `
             --hidden-import "uvicorn.loops" `
             --hidden-import "uvicorn.loops.auto" `
@@ -88,6 +89,12 @@ jobs:
             --hidden-import "uvicorn.protocols.http.auto" `
             --hidden-import "uvicorn.lifespan.on" `
             --hidden-import "sqlalchemy.sql.default_comparator" `
+            --hidden-import "pystray" `
+            --hidden-import "pystray._win32" `
+            --hidden-import "PIL" `
+            --hidden-import "PIL.Image" `
+            --hidden-import "PIL.ImageDraw" `
+            --hidden-import "PIL.ImageFont" `
             --hidden-import "pythoncom" `
             --hidden-import "win32com" `
             --hidden-import "win32com.client" `

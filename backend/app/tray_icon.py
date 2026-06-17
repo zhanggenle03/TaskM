@@ -2,6 +2,8 @@
 TaskM 系统托盘模块
 启动后最小化到托盘，右击弹出菜单：打开浏览器 / 退出
 支持开发版和打包版
+
+依赖 pystray + Pillow（可选——缺失时托盘不工作但不影响主程序）
 """
 import os
 import sys
@@ -9,9 +11,6 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import Callable
-
-import pystray
-from PIL import Image, ImageDraw, ImageFont
 
 
 # ── 路径 ──
@@ -33,12 +32,13 @@ def _get_frontend_url() -> str:
 def _get_icon_image():
     """
     加载托盘图标
-    开发版：backend/taskm.ico
-    打包版：优先 _MEIPASS/（--add-data 自动打包），其次 exe 同目录（手动放入）
+    开发版：backend/taskm.ico；打包版：优先 _MEIPASS/，其次 exe 同目录
+    找不到则用 PIL 画占位图标
     """
+    from PIL import Image
+
     candidates = [BACKEND_DIR / "taskm.ico"]
     if getattr(sys, "frozen", False):
-        # 打包版也检查 exe 旁边（用户手动放进去的备选）
         candidates.append(Path(sys.executable).parent / "taskm.ico")
 
     for p in candidates:
@@ -46,6 +46,7 @@ def _get_icon_image():
             return Image.open(str(p))
 
     # fallback：生成 64x64 蓝色 "T" 占位图标
+    from PIL import ImageDraw, ImageFont
     size = 64
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
@@ -91,11 +92,13 @@ def _quit_app():
     shutdown_service()
 
 
-def start_tray(on_setup: Callable[[pystray.Icon], None] | None = None):
+def start_tray(on_setup: Callable | None = None):
     """
     启动系统托盘（阻塞运行，通常放子线程）
     on_setup: 图标创建完毕后的回调（可用于设置菜单等）
     """
+    import pystray
+
     img = _get_icon_image()
     menu = pystray.Menu(
         pystray.MenuItem("打开浏览器", lambda: _open_browser(), default=True),

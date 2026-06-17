@@ -53,7 +53,6 @@ if __name__ == "__main__":
     import threading
     import time
     import uvicorn
-    from app.tray_icon import start_tray, _get_frontend_url
 
     # 服务就绪后：隐藏控制台 + 启动系统托盘
     is_frozen = getattr(sys, "frozen", False)
@@ -62,13 +61,14 @@ if __name__ == "__main__":
         time.sleep(1.5)  # 等 uvicorn 完全就绪
         if is_frozen:
             _hide_console()
-        # 启动托盘（始终启动，托盘是唯一的交互入口）
+        # 启动托盘（pystray 缺失时静默跳过）
         try:
+            from app.tray_icon import start_tray
             tray_thread = threading.Thread(target=start_tray, daemon=True, name="TrayIcon")
             tray_thread.start()
             print("[TaskM] 托盘已启动", flush=True)
-        except Exception as e:
-            print(f"[TaskM] 托盘启动失败: {e}", flush=True)
+        except (ImportError, Exception) as e:
+            print(f"[TaskM] 托盘未启动（缺少 pystray/Pillow）: {e}", flush=True)
 
     threading.Thread(target=_on_startup, daemon=True).start()
 
