@@ -16,8 +16,6 @@ router = APIRouter(prefix="/process", tags=["process"])
 
 # ── 项目根目录 ──
 ROOT = Path(__file__).resolve().parents[3]
-AUTOSTART_VBS_BACKEND = ROOT / "autostart_backend.vbs"
-AUTOSTART_VBS_FULL = ROOT / "autostart_full.vbs"
 PID_FILE = ROOT / "taskm.pid"
 REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 REG_NAME = "TaskM Backend"
@@ -75,11 +73,9 @@ def _read_registry() -> str | None:
             return None
 
         vl = val.lower()
-        if "autostart_full.vbs" in vl:
+        if "autostart_full" in vl:
             return "full"
-        if "autostart_backend.vbs" in vl:
-            return "backend"
-        if "pythonw" in vl and "run.py" in vl:
+        if "autostart_backend" in vl or "run.py" in vl or ".exe" in vl:
             return "backend"
         return None
     except (ImportError, FileNotFoundError, OSError):
@@ -90,64 +86,72 @@ def _ensure_vbs_scripts():
     """确保自启动 VBS 脚本存在"""
     import shutil
 
-    run_py = str(ROOT / "backend" / "run.py")
-    frontend_dir = str(ROOT / "frontend")
+    # 打包版：VBS 写到 exe 同级；开发版：项目根目录
+    if getattr(sys, "frozen", False):
+        vbs_dir = Path(sys.executable).parent
+    else:
+        vbs_dir = ROOT
+    vbs_backend = vbs_dir / "autostart_backend.vbs"
+    vbs_full = vbs_dir / "autostart_full.vbs"
 
-    # 自动检测 pythonw 路径
-    pythonw_path = shutil.which("pythonw")
-    if not pythonw_path:
-        # 常见安装位置 fallback
-        for p in [
-            r"D:\python310\pythonw.exe",
-            r"C:\python310\pythonw.exe",
-            r"C:\Python310\pythonw.exe",
-            r"C:\Program Files\Python310\pythonw.exe",
-            r"C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python310\pythonw.exe",
-        ]:
-            expanded = os.path.expandvars(p)
-            if os.path.exists(expanded):
-                pythonw_path = expanded
-                break
-    if not pythonw_path:
-        pythonw_path = "pythonw"  # 找不到就用系统 PATH
+    if _is_standalone():
+        # ── 打包版：直接启动 TaskM.exe ──
+        exe = str(Path(sys.executable).resolve())
+        lines = ["' TaskM Standalone Auto-Start (no browser)",
+                  "Set WshShell = CreateObject(\"WScript.Shell\")",
+                  f'WshShell.Run "{exe}", 0, False',
+                  ""]
+        vbs_backend.write_text("\r\n".join(lines), encoding="utf-8")
 
-    # 检测 npx 路径
-    npx_path = shutil.which("npx.cmd") or shutil.which("npx") or "npx.cmd"
+        lines = ["' TaskM Standalone Auto-Start (with browser)",
+                  "Set WshShell = CreateObject(\"WScript.Shell\")",
+                  f'WshShell.Run "{exe}", 0, False',
+                  "WScript.Sleep 15000",
+                  'WshShell.Run "http://localhost:8000/", 1, False',
+                  ""]
+        vbs_full.write_text("\r\n".join(lines), encoding="utf-8")
+    else:
+        # ── 开发版：启动 pythonw + npx vite ──
+        run_py = str(ROOT / "backend" / "run.py")
+        frontend_dir = str(ROOT / "frontend")
 
-    # VBS 中用 "" 转义内部的双引号
-    vbs_pythonw_cmd = pythonw_path + ' "' + run_py + '"'
-    vbs_pythonw_escaped = vbs_pythonw_cmd.replace('"', '""')
-    vbs_frontend_cmd = f'cmd /c cd /d "{frontend_dir}" && "{npx_path}" vite'
-    vbs_frontend_escaped = vbs_frontend_cmd.replace('"', '""')
+        pythonw_path = shutil.which("pythonw")
+        if not pythonw_path:
+            for p in [r"D:\python310\pythonw.exe", r"C:\python310\pythonw.exe",
+                      r"C:\Python310\pythonw.exe", r"C:\Program Files\Python310\pythonw.exe",
+                      r"C:\Users\%USERNAME%\AppData\Local\Programs\Python\Python310\pythonw.exe"]:
+                expanded = os.path.expandvars(p)
+                if os.path.exists(expanded):
+                    pythonw_path = expanded
+                    break
+        if not pythonw_path:
+            pythonw_path = "pythonw"
 
-    # 始终重新生成 VBS 脚本（确保内容最新）
-    # backend 版本：启动后端+前端，不打开浏览器
-    lines = [
-        "' TaskM Auto-Start (both services, no browser)",
-        "Set WshShell = CreateObject(\"WScript.Shell\")",
-        "' Start backend",
-        'WshShell.Run "' + vbs_pythonw_escaped + '", 0, False',
-        "' Start frontend",
-        'WshShell.Run "' + vbs_frontend_escaped + '", 0, False',
-        "",
-    ]
-    AUTOSTART_VBS_BACKEND.write_text("\r\n".join(lines), encoding="utf-8")
+        npx_path = shutil.which("npx.cmd") or shutil.which("npx") or "npx.cmd"
 
-    # full 版本：启动后端+前端，然后打开浏览器
-    lines = [
-        "' TaskM Auto-Start (both services with browser)",
-        "Set WshShell = CreateObject(\"WScript.Shell\")",
-        "' Start backend",
-        'WshShell.Run "' + vbs_pythonw_escaped + '", 0, False',
-        "' Start frontend",
-        'WshShell.Run "' + vbs_frontend_escaped + '", 0, False',
-        "' Wait for services to be ready",
-        "WScript.Sleep 10000",
-        "' Open browser",
-        'WshShell.Run "http://localhost:5173/", 1, False',
-        "",
-    ]
-    AUTOSTART_VBS_FULL.write_text("\r\n".join(lines), encoding="utf-8")
+        vbs_pythonw_cmd = pythonw_path + ' "' + run_py + '"'
+        vbs_frontend_cmd = f'cmd /c cd /d "{frontend_dir}" && "{npx_path}" vite'
+
+        # backend 版本（不打开浏览器）
+        lines = ["' TaskM Dev Auto-Start (no browser)",
+                  "Set WshShell = CreateObject(\"WScript.Shell\")",
+                  'WshShell.Run "' + vbs_pythonw_cmd.replace('"', '""') + '", 0, False',
+                  'WshShell.Run "' + vbs_frontend_cmd.replace('"', '""') + '", 0, False',
+                  ""]
+        vbs_backend.write_text("\r\n".join(lines), encoding="utf-8")
+
+        # full 版本（打开浏览器）
+        lines = ["' TaskM Dev Auto-Start (with browser)",
+                  "Set WshShell = CreateObject(\"WScript.Shell\")",
+                  'WshShell.Run "' + vbs_pythonw_cmd.replace('"', '""') + '", 0, False',
+                  'WshShell.Run "' + vbs_frontend_cmd.replace('"', '""') + '", 0, False',
+                  "WScript.Sleep 10000",
+                  'WshShell.Run "http://localhost:5173/", 1, False',
+                  ""]
+        vbs_full.write_text("\r\n".join(lines), encoding="utf-8")
+
+    # 记住 VBS 路径供 _write_registry 使用
+    return vbs_backend, vbs_full
 
 
 def _write_registry(mode: str | None):
@@ -162,11 +166,11 @@ def _write_registry(mode: str | None):
         except OSError:
             pass
     else:
-        _ensure_vbs_scripts()
+        vbs_backend, vbs_full = _ensure_vbs_scripts()
         if mode == "backend":
-            cmd = 'wscript.exe "' + str(AUTOSTART_VBS_BACKEND) + '"'
+            cmd = 'wscript.exe "' + str(vbs_backend) + '"'
         else:
-            cmd = 'wscript.exe "' + str(AUTOSTART_VBS_FULL) + '"'
+            cmd = 'wscript.exe "' + str(vbs_full) + '"'
         winreg.SetValueEx(key, REG_NAME, 0, winreg.REG_SZ, cmd)
 
     winreg.CloseKey(key)
@@ -198,7 +202,7 @@ def get_status():
 @router.get("/autostart")
 def get_autostart():
     """获取当前开机自启动配置"""
-    _ensure_vbs_scripts()
+    _ensure_vbs_scripts()  # 确保 VBS 存在（返回值不关心）
     mode = _read_registry()
     return {"enabled": mode is not None, "mode": mode or "off"}
 
