@@ -3,12 +3,9 @@
 import os
 import sys
 
-# ============================================================
-# 关键：模块级显式导入，PyInstaller 据此追踪依赖，打包整个 app 包
-# ============================================================
-from app.main import app
-
-# ── 确定前端 dist 路径 ──
+# ── 确定前端 dist 路径（必须先于 from app.main import app） ──
+# main.py 在模块加载时会读取 TASKM_FRONTEND_DIST 环境变量来决定
+# 是挂载前端静态文件（生产模式）还是返回 API JSON（开发模式）。
 # PyInstaller 打包后将前端资源放在 _internal/frontend_dist/ 下
 if getattr(sys, "_MEIPASS", None):
     FRONTEND_DIST = os.path.join(sys._MEIPASS, "frontend_dist")
@@ -22,6 +19,12 @@ if os.path.isdir(FRONTEND_DIST):
     print(f"[打包入口] 前端静态资源路径: {FRONTEND_DIST}", flush=True)
 else:
     print(f"[打包入口] 警告：前端资源目录不存在 ({FRONTEND_DIST})，将仅以 API 模式运行", flush=True)
+
+# ============================================================
+# 导入 app 主模块（PyInstaller 据此静态追踪依赖）
+# 此时 TASKM_FRONTEND_DIST 已就绪，main.py 可正确读取
+# ============================================================
+from app.main import app
 
 # ── 后端工作目录（确保数据库/上传目录相对于打包后的位置） ──
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))

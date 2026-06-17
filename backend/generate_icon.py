@@ -3,7 +3,7 @@
 根据 SVG 路径生成 TaskM 应用图标（.ico 文件）
 
 SVG path 描述了一个 3×3 任务看板网格。
-策略：先在 1024×1024 高分辨率画布上精确绘制，再缩放到各 ICO 尺寸。
+使用 BMP 编码（非 PNG），确保与 PyInstaller --icon 完全兼容。
 """
 import os
 import struct
@@ -12,8 +12,6 @@ from PIL import Image, ImageDraw
 
 # ── 参数 ──
 CANVAS = 1024
-# ICO 多尺寸（Windows 支持的常用分辨率）
-# 注意：16/32/48 用于资源管理器列表，256 用于大图标/属性面板
 ICON_SIZES = [16, 32, 48, 64, 128, 256]
 
 # TaskM 品牌蓝色 (#409EFF)
@@ -44,70 +42,104 @@ def draw_hires() -> Image.Image:
     return img
 
 
-def make_ico(images: list, sizes: list) -> bytes:
+def _make_bmp_data(img: Image.Image) -> bytes:
     """
-    手工构造多分辨率 ICO 文件。
-    ICO 格式：6 字节头 + 16 字节/个的目录项 + N 个嵌入 PNG/BMP。
+    将 RGBA Image 编码为 ICO 内嵌的 BMP DIB 数据（含 XOR mask + AND mask）。
+    ICO 的 BMP 与标准 BMP 不同：
+      - 没有 BMP 文件头（直接以 DIB header 开始）
+      - height 是实际高度的两倍（XOR + AND）
+      - 行序 bottom-up
     """
-    # 所有尺寸转换为 PNG 字节
-    png_data_list = []
-    for img, (w, h) in zip(images, sizes):
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        png_data_list.append(buf.getvalue())
+    w, h = img.size
 
-    # ── 构造 ICO 文件 ──
+    # ── DIB header (BITMAPINFOHEADER, 40 bytes) ──
+    # ICO 规范：biHeight = 实际高度 × 2（XOR 掩码 + AND 掩码）
+    dib = struct.pack(
+        "<IiiHHIIiiII",
+        40,             # biSize
+        w,              # biWidth
+        h * 2,          # biHeight（ICO 的 XOR+AND 双倍高）
+        1,              # biPlanes（必须为 1）
+        32,             # biBitCount（32-bit RGBA）
+        0,              # biCompression (BI_RGB)
+        0,              # biSizeImage
+        0, 0, 0, 0,     # 可选字段
+    )
+
+    # ── XOR mask（像素数据，BGRA 格式，bottom-up） ──
+    # Pillow 像素顺序是 RGBA，BMP 需要 BGRA
+    r, g, b, a = img.split()
+    bgra = Image.merge("RGBA", (b, g, r, a))
+
+    # Bottom-up 行序
+    rows = []
+    for y in range(h - 1, -1, -1):
+        row = bgra.crop((0, y, w, y + 1)).tobytes()
+        # BMP 每行按 4 字节对齐
+        pad = (4 - len(row) % 4) % 4
+        if pad:
+            row += b"\x00" * pad
+        rows.append(row)
+    xor_data = b"".join(rows)
+
+    # ── AND mask（1-bit 透明蒙版，bottom-up） ──
+    # 对于 32-bit 图标，透明度由 alpha 通道控制，AND mask 全 0
+    and_row_size = ((w + 31) // 32) * 4
+    and_data = b"\x00" * (and_row_size * h)
+
+    return dib + xor_data + and_data
+
+
+def make_ico(images: list, sizes: list) -> bytes:
+    """构造 BMP 编码的多分辨率 ICO 文件"""
     count = len(sizes)
-    # 头部：reserved(2) + type(2=ico) + count(2)
+    # 头部
     header = struct.pack("<HHH", 0, 1, count)
 
-    # 目录项偏移：header(6) + 目录项(count*16)
-    data_offset = 6 + count * 16
+    # 编码每帧为 BMP DIB
+    bmp_blocks = []
+    for img, (w, h) in zip(images, sizes):
+        bmp_blocks.append(_make_bmp_data(img))
+
+    # 目录项
+    offset = 6 + count * 16
     directory = b""
-    png_payload = b""
     for i in range(count):
         w, h = sizes[i]
-        png = png_data_list[i]
-        # 目录项：w(1) + h(1) + palette(1) + reserved(1) + planes(2) + bpp(2) + size(4) + offset(4)
-        # w/h=0 表示 256
+        bmp = bmp_blocks[i]
         directory += struct.pack(
             "<BBBBHHII",
-            0 if w >= 256 else w,
-            0 if h >= 256 else h,
-            0,  # 调色板
-            0,  # 保留
-            1,  # 颜色平面
-            32,  # 每像素位数 (RGBA)
-            len(png),
-            data_offset,
+            0 if w >= 256 else w,  # w=0 → 256
+            0 if h >= 256 else h,  # h=0 → 256
+            0,   # 调色板颜色数
+            0,   # 保留
+            1,   # 颜色平面
+            32,  # bpp
+            len(bmp),
+            offset,
         )
-        png_payload += png
-        data_offset += len(png)
+        offset += len(bmp)
 
-    return header + directory + png_payload
+    return header + directory + b"".join(bmp_blocks)
 
 
 def main():
     backend_dir = os.path.dirname(os.path.abspath(__file__))
-    icon_path = os.path.join(backend_dir, "taskm.ico")
+    ico_path = os.path.join(backend_dir, "taskm.ico")
 
-    # 高分辨率原图
     hi = draw_hires()
-
-    # 生成各尺寸缩略图
     sizes = [(s, s) for s in ICON_SIZES]
     images = [hi.resize((s, s), Image.LANCZOS) for s in ICON_SIZES]
 
-    # 手工构建多帧 ICO
     ico_bytes = make_ico(images, sizes)
-    with open(icon_path, "wb") as f:
+    with open(ico_path, "wb") as f:
         f.write(ico_bytes)
 
-    file_size = os.path.getsize(icon_path)
-    print(f"[图标] 已生成: {icon_path} ({file_size} bytes)")
+    file_size = os.path.getsize(ico_path)
+    print(f"[图标] 已生成: {ico_path} ({file_size} bytes)")
     print(f"[图标] 包含尺寸: {ICON_SIZES}")
 
-    # 清理测试文件
+    # 清理临时文件
     for f in ("test_icon.png", "test_icon_256.png", "ico_preview.png"):
         fp = os.path.join(backend_dir, f)
         if os.path.isfile(fp):
