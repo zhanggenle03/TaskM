@@ -1,11 +1,8 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 开发模式（Vite 代理）用 /api 前缀，生产模式（同源部署）直接调用
-const API_PREFIX = import.meta.env.DEV ? '/api' : ''
-
 const http = axios.create({
-  baseURL: API_PREFIX,
+  baseURL: '/api',
   timeout: 30000
 })
 
@@ -93,7 +90,7 @@ export const uploadCommAttachment = (projectId, taskId, commId, file) => {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
 }
-export const downloadAttachment = (id) => `${API_PREFIX}/attachments/${id}/download`
+export const downloadAttachment = (id) => `/api/attachments/${id}/download`
 export const deleteAttachment = (id) => http.delete(`/attachments/${id}`)
 export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { original_filename: name })
 

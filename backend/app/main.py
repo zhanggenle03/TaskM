@@ -41,13 +41,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(projects.router)
-app.include_router(tasks.router)
-app.include_router(attachments.router)
-app.include_router(process.router)
-app.include_router(project_contacts.router)
-app.include_router(export_router.router)
-app.include_router(requirements.router)
+app.include_router(projects.router, prefix="/api")
+app.include_router(tasks.router, prefix="/api")
+app.include_router(attachments.router, prefix="/api")
+app.include_router(process.router, prefix="/api")
+app.include_router(project_contacts.router, prefix="/api")
+app.include_router(export_router.router, prefix="/api")
+app.include_router(requirements.router, prefix="/api")
 
 # 挂载上传目录为静态文件（供富文本图片等访问）
 import os
