@@ -13,7 +13,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from .database import (
     Communication, Attachment, Contact, StatusPool,
     TagPool, TaskTag, Project,
@@ -27,6 +27,7 @@ TASK_ATTR_OPTIONS = {
     'priority': '优先级', 'due_date': '截止日期', 'description': '描述',
     'created_at': '创建时间', 'updated_at': '更新时间',
     'contacts': '对接人', 'tags': '标签',
+    'linked_requirements': '关联需求',
 }
 
 PRIORITY_LABELS = {'low': '低', 'normal': '普通', 'high': '高', 'urgent': '紧急'}
@@ -217,6 +218,14 @@ def _apply_numbering(paragraph, num_id, ilvl):
     pPr.append(numPr)
 
 
+def _add_h1(doc, text, num_id, ilvl=0):
+    """添加一级标题并自动分页（前置分页符 + Heading 1 + 自动编号）"""
+    doc.add_page_break()
+    h = doc.add_heading(text, level=1)
+    _apply_numbering(h, num_id, ilvl)
+    return h
+
+
 def build_export_data(
     db: Session,
     project_id: str,
@@ -238,6 +247,17 @@ def build_export_data(
 
     project_info = db.query(Project).filter(Project.id == proj.id).first()
     status_pool = {s.id: s for s in db.query(StatusPool).filter(StatusPool.project_id == proj.id).all()}
+
+    # 查询关联需求
+    linked_requirements = []
+    for req in (task.linked_requirements or []):
+        linked_requirements.append({
+            'id': req.id,
+            'title': req.title,
+            'display_id': req.display_id,
+            'status': req.status,
+            'priority': req.priority,
+        })
 
     tag_rows = db.query(TaskTag).filter(TaskTag.task_id == task.id).all()
     tag_ids = [tr.tag_id for tr in tag_rows]
@@ -331,15 +351,24 @@ def build_export_data(
     return {
         'project_name': project_info.name if project_info else '',
         'project_display_id': proj.display_id,
+        'proj': proj,
         'task_attrs': task_attrs,
+        'linked_requirements': linked_requirements,
         'communications': comm_list,
     }
 
 
+def _sanitize_filename(name: str) -> str:
+    """清理文件名中的非法字符（Windows 不允许的字符 -> 下划线）"""
+    illegal = r'<>:"/\\|?*'
+    for ch in illegal:
+        name = name.replace(ch, '_')
+    return name.strip()
+
+
 def _add_task_info_table(doc: Document, task_attrs: dict, selected_fields: List[str], num_id: int = 99):
     """添加任务基本信息（表格）"""
-    h = doc.add_heading('任务基本信息', level=1)
-    _apply_numbering(h, num_id, 0)
+    h = _add_h1(doc, '任务基本信息', num_id, 0)
 
     field_order = ['title', 'display_id', 'status', 'priority', 'due_date',
                    'description', 'contacts', 'tags', 'created_at', 'updated_at']
@@ -355,33 +384,99 @@ def _add_task_info_table(doc: Document, task_attrs: dict, selected_fields: List[
     if not items:
         return
 
+    _apply_table_widths(doc, items)
+
+    doc.add_paragraph()
+
+
+def _apply_table_widths(doc, items, col1_twips=2448):
+    """创建两列信息表，使用 Table Grid 样式 + 精确列宽控制。
+    被任务导出和需求导出共用，确保两者表格样式 100% 一致。"""
+    section = doc.sections[0]
+    usable = section.page_width - section.left_margin - section.right_margin
+    twips = int(usable * 1440 / 914400)
+    col2_twips = twips - col1_twips
+
     table = doc.add_table(rows=len(items), cols=2)
     table.style = 'Table Grid'
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    # 表宽占满页面
-    section = doc.sections[0]
-    usable = section.page_width - section.left_margin - section.right_margin
-    twips = int(usable * 1440 / 914400)
-    tblPr = table._tbl.find(qn('w:tblPr'))
-    if tblPr is None:
-        tblPr = OxmlElement('w:tblPr')
-        table._tbl.insert(0, tblPr)
-    tblW = OxmlElement('w:tblW')
-    tblW.set(qn('w:w'), str(twips))
-    tblW.set(qn('w:type'), 'dxa')
-    tblPr.append(tblW)
-
+    # 填充内容
     for i, (label, value) in enumerate(items):
         cell_label = table.rows[i].cells[0]
-        cell_label.width = Cm(3)
         _set_cell_shading(cell_label, 'F2F2F2')
         _add_run(cell_label.paragraphs[0], label, size=BODY_SIZE, bold=True,
                  font_name=FONT_FAMILY_HEADING)
         cell_value = table.rows[i].cells[1]
         _add_run(cell_value.paragraphs[0], value, size=BODY_SIZE)
 
-    doc.add_paragraph()
+    _fix_table_layout(table, twips, col1_twips, col2_twips)
+
+    return table
+
+
+def _fix_table_layout(table, twips, col1_twips, col2_twips):
+    """修正表格的宽度属性：tblW、tblGrid、tcW，并锁定 fixed 布局。
+    在 Table Grid 样式基础上精确覆盖列宽，不破坏边框等样式继承。"""
+    tbl = table._tbl
+    tblPr = tbl.find(qn('w:tblPr'))
+
+    # 1. 修正 tblW：移除所有旧值，插入一个固定宽度（位置必须在 tblStyle 之后）
+    for existing in tblPr.findall(qn('w:tblW')):
+        tblPr.remove(existing)
+    tblW = OxmlElement('w:tblW')
+    tblW.set(qn('w:w'), str(twips))
+    tblW.set(qn('w:type'), 'dxa')
+    tblStyle = tblPr.find(qn('w:tblStyle'))
+    if tblStyle is not None:
+        tblStyle.addnext(tblW)
+    else:
+        tblPr.insert(0, tblW)
+
+    # 2. 添加 tblLayout type=fixed（确保 Word 不自动调整列宽）
+    old_layout = tblPr.find(qn('w:tblLayout'))
+    if old_layout is not None:
+        tblPr.remove(old_layout)
+    tblLayout = OxmlElement('w:tblLayout')
+    tblLayout.set(qn('w:type'), 'fixed')
+    # tblLayout 应在 tblBorders 之后
+    tblBorders = tblPr.find(qn('w:tblBorders'))
+    if tblBorders is not None:
+        tblBorders.addnext(tblLayout)
+    else:
+        tblPr.append(tblLayout)
+
+    # 3. 重建 tblGrid
+    old_grid = tbl.find(qn('w:tblGrid'))
+    if old_grid is not None:
+        tbl.remove(old_grid)
+    new_grid = OxmlElement('w:tblGrid')
+    for gw in [col1_twips, col2_twips]:
+        gc = OxmlElement('w:gridCol')
+        gc.set(qn('w:w'), str(gw))
+        new_grid.append(gc)
+    first_tr = tbl.find(qn('w:tr'))
+    if first_tr is not None:
+        tbl.insert(list(tbl).index(first_tr), new_grid)
+
+    # 4. 逐单元格锁定 tcW
+    target_widths = [col1_twips, col2_twips]
+    for row in tbl.findall(qn('w:tr')):
+        tcs = row.findall(qn('w:tc'))
+        for ci, tc in enumerate(tcs):
+            if ci >= len(target_widths):
+                break
+            tcPr = tc.find(qn('w:tcPr'))
+            if tcPr is None:
+                tcPr = OxmlElement('w:tcPr')
+                tc.insert(0, tcPr)
+            old_tcW = tcPr.find(qn('w:tcW'))
+            if old_tcW is not None:
+                tcPr.remove(old_tcW)
+            tcW = OxmlElement('w:tcW')
+            tcW.set(qn('w:w'), str(target_widths[ci]))
+            tcW.set(qn('w:type'), 'dxa')
+            tcPr.insert(0, tcW)
 
 
 def _format_size(bytes_val: int) -> str:
@@ -414,6 +509,7 @@ def generate_export_package(
     communications = data['communications']
     project_name = data['project_name']
     project_display_id = data['project_display_id']
+    proj = data['proj']
 
     # ======================== 生成 DOCX ========================
     doc = Document()
@@ -453,15 +549,46 @@ def generate_export_package(
     _new_paragraph(doc, f'导出日期：{datetime.now().strftime("%Y年%m月%d日")}', size=SMALL_SIZE,
                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
-    doc.add_page_break()
-
     # ---- 正文：任务基本信息 ----
     _add_task_info_table(doc, task_attrs, selected_fields, num_id)
-    doc.add_page_break()
+
+    # ---- 关联需求（渲染在基本信息之后、沟通记录之前） ----
+    linked_req_data = data.get('linked_requirements', [])
+    req_doc_bytes_list = []  # 保存供 ZIP 打包用
+    if 'linked_requirements' in selected_fields and linked_req_data:
+        from .routers.requirements import generate_requirement_doc_bytes
+        from .database import Requirement, RequirementCustomField, RequirementCustomValue
+
+        for req_info in linked_req_data:
+            # 查询完整 Requirement 对象（含 custom_values eager load）
+            req = db.query(Requirement).options(
+                joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
+            ).filter(
+                Requirement.id == req_info['id'],
+                Requirement.project_id == proj.id
+            ).first()
+            if not req:
+                continue
+
+            # 调用需求页的导出方法生成 DOCX
+            req_bytes = generate_requirement_doc_bytes(req, proj, db)
+            safe_title = _sanitize_filename(req.title)
+            req_filename = f'requirements/{safe_title}_需求文档.docx'
+            req_doc_bytes_list.append((safe_title, req_bytes, req_filename, req_info))
+
+        # 在 DOCX 中渲染关联需求列表（带超链接，每行一个）
+        _new_paragraph(doc, '', size=BODY_SIZE, before=80)
+        _new_paragraph(doc, '关联需求：', size=BODY_SIZE, bold=True,
+                       font_name=FONT_FAMILY_HEADING, before=60, after=20)
+        for (safe_title, _, req_filename, req) in req_doc_bytes_list:
+            display_text = f'{req["title"]}（{req.get("display_id") or ""}）'
+            if display_text.endswith('（）'):
+                display_text = req['title']
+            p = _new_paragraph(doc, '', size=BODY_SIZE, first_line_indent=480, before=20)
+            _add_hyperlink(p, display_text, req_filename, size=BODY_SIZE)
 
     # ---- 正文：沟通记录 ----
-    h1 = doc.add_heading('沟通记录', level=1)
-    _apply_numbering(h1, num_id, 0)
+    h1 = _add_h1(doc, '沟通记录', num_id, 0)
     _new_paragraph(doc, f'共 {len(communications)} 条记录，按时间先后顺序排列。', size=SMALL_SIZE)
 
     for idx, comm in enumerate(communications):
@@ -547,6 +674,11 @@ def generate_export_package(
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f'{task_attrs["title"]}_说明文档.docx', docx_bytes)
+
+        # 添加需求文档
+        if req_doc_bytes_list:
+            for _, req_bytes, req_filename, _ in req_doc_bytes_list:
+                zf.writestr(req_filename, req_bytes)
 
         att_count = 0
         for rec_idx, comm in enumerate(communications):

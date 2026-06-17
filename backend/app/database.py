@@ -210,6 +210,7 @@ class Task(Base):
     contacts = relationship("Contact", back_populates="task", cascade="all, delete-orphan")
     communications = relationship("Communication", back_populates="task", cascade="all, delete-orphan", order_by="Communication.comm_at")
     tags = relationship("TagPool", secondary="task_tags", back_populates="tasks", passive_deletes=True)
+    linked_requirements = relationship("Requirement", secondary="task_requirements")
 
 
 class ProjectContact(Base):
@@ -342,6 +343,13 @@ class TaskTag(Base):
     __tablename__ = "task_tags"
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
     tag_id = Column(Integer, ForeignKey("tag_pools.id", ondelete="CASCADE"), primary_key=True)
+
+
+class TaskRequirement(Base):
+    """任务与需求的多对多关联表"""
+    __tablename__ = "task_requirements"
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
+    requirement_id = Column(Integer, ForeignKey("requirements.id", ondelete="CASCADE"), primary_key=True)
 
 
 # ---- 显示ID生成工具函数 ----

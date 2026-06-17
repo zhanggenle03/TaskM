@@ -156,7 +156,31 @@
           </div>
         </div>
 
-        <div class="side-card">
+        <!-- 关联项：关联需求 -->
+        <div class="side-card side-card-compact">
+          <div class="side-title">
+            关联项
+            <span style="flex:1"></span>
+            <el-button size="small" text @click="showReqPicker = true"><el-icon><Plus /></el-icon></el-button>
+          </div>
+          <div v-if="task.linked_requirements?.length">
+            <div v-for="req in task.linked_requirements" :key="req.id" class="contact-item" style="gap:0">
+              <div class="contact-info" style="flex:1;min-width:0">
+                <div class="contact-name" :title="req.title" @click="goRequirement(req)" style="cursor:pointer;color:#534ab7">{{ req.title }}</div>
+                <div class="contact-role" style="display:flex;align-items:center;gap:4px;overflow:hidden;white-space:nowrap" :title="`${reqPriorityLabel(req.priority)} · ${reqStatusLabel(req.status)}`">
+                  <span class="req-tag" :style="{ background: reqPrioBg(req.priority), color: reqPrioText(req.priority) }">{{ reqPriorityLabel(req.priority) }}</span>
+                  <span class="req-tag" :style="{ background: reqStatBg(req.status), color: reqStatText(req.status) }">{{ reqStatusLabel(req.status) }}</span>
+                </div>
+              </div>
+              <el-button size="small" text type="danger" @click="unlinkReq(req)" style="padding:2px;flex-shrink:0">
+                <el-icon><Close /></el-icon>
+              </el-button>
+            </div>
+          </div>
+          <div v-else class="side-empty">暂无关联需求</div>
+        </div>
+
+        <div class="side-card side-card-compact">
           <div class="side-title">
             对接人
             <span style="flex:1"></span>
@@ -164,17 +188,16 @@
           </div>
           <div v-if="task.contacts?.length">
             <div v-for="c in task.contacts" :key="c.id" class="contact-item">
-              <div class="contact-avatar">{{ c.name[0] }}</div>
+              <div class="contact-avatar contact-avatar-sm">{{ c.name[0] }}</div>
               <div class="contact-info">
                 <div class="contact-name">{{ c.name }}</div>
                 <div class="contact-role">{{ c.role }}</div>
-                <div class="contact-detail">{{ c.contact_info }}</div>
               </div>
               <el-button size="small" text @click="editContact(c)"><el-icon><Edit /></el-icon></el-button>
               <el-button size="small" text type="danger" @click="removeContact(c)"><el-icon><Close /></el-icon></el-button>
             </div>
           </div>
-          <el-empty v-else description="暂无对接人" :image-size="40" />
+          <div v-else class="side-empty">暂无对接人</div>
         </div>
       </div>
     </div>
@@ -303,6 +326,33 @@
         <el-button @click="showAddContact = false">取消</el-button>
         <el-button type="primary" :loading="contactLoading" @click="submitContact">确定</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 关联需求选择弹窗 -->
+    <el-dialog v-model="showReqPicker" title="关联需求" width="480px" @open="loadRequirements">
+      <div v-loading="reqPickerLoading">
+        <el-input v-model="reqSearch" placeholder="搜索需求..." clearable size="small" style="margin-bottom:10px" />
+        <div v-if="filteredRequirements.length" class="req-picker-list">
+          <div
+            v-for="req in filteredRequirements"
+            :key="req.id"
+            class="req-picker-item"
+            :class="{ 'req-picker-item-disabled': task.linked_requirements?.find(r => r.id === req.id) }"
+            @click="pickReq(req)"
+          >
+            <div class="req-picker-info">
+              <div class="req-picker-title">{{ req.title }}</div>
+              <div class="req-picker-meta">
+                <span class="req-picker-badge" :style="{ background: reqPriorityColor(req.priority) }">{{ reqPriorityLabel(req.priority) }}</span>
+                <span class="req-picker-badge" :style="{ background: reqStatusColor(req.status) }">{{ reqStatusLabel(req.status) }}</span>
+                <span v-if="req.display_id" style="color:#999;font-size:11px">{{ req.display_id }}</span>
+              </div>
+            </div>
+            <el-icon v-if="task.linked_requirements?.find(r => r.id === req.id)" style="color:#67c23a"><CircleCheckFilled /></el-icon>
+          </div>
+        </div>
+        <el-empty v-else description="无可关联的需求" :image-size="40" />
+      </div>
     </el-dialog>
 
 
@@ -478,7 +528,9 @@ import {
   addContact, updateContact, deleteContact,
   addCommunication, updateCommunication, deleteCommunication,
   uploadCommAttachment, deleteAttachment, renameAttachment, downloadAttachment,
-  getProjectContacts, getTags, exportTaskDoc
+  getProjectContacts, getTags, exportTaskDoc,
+  linkRequirement, unlinkRequirement, getRequirements,
+  getReqStatusPools, getReqPriorityPools
 } from '../api'
 
 const route = useRoute()
@@ -498,6 +550,83 @@ const selectedTagIds = ref([])  // 当前任务的标签 ID 列表
 const showTagPicker = ref(false)
 const pickerSelected = ref([])  // 弹窗内临时选择的标签 ID
 const availableTags = computed(() => tags.value.filter(t => t.is_active && !pickerSelected.value.includes(t.id)))
+
+// 关联需求
+const showReqPicker = ref(false)
+const projectRequirements = ref([])
+const reqPickerLoading = ref(false)
+const reqSearch = ref('')
+const reqStatusPools = ref([])   // 需求状态池
+const reqPriorityPools = ref([]) // 需求优先级池
+const filteredRequirements = computed(() => {
+  const q = reqSearch.value.trim().toLowerCase()
+  if (!q) return projectRequirements.value
+  return projectRequirements.value.filter(r => r.title.toLowerCase().includes(q) || (r.display_id && r.display_id.toLowerCase().includes(q)))
+})
+const reqPriorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', urgent: '紧急' }[p] || p)
+const reqPriorityColor = (p) => ({ low: '#909399', normal: '#409eff', high: '#e6a23c', urgent: '#f56c6c' }[p] || '#909399')
+const reqStatusLabel = (s) => ({ todo: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }[s] || s)
+const reqStatusColor = (s) => ({ todo: '#909399', in_progress: '#409eff', done: '#67c23a', cancelled: '#f56c6c' }[s] || '#909399')
+// 从池中取颜色，fallback 到默认
+const reqPrioBg = (p) => {
+  const pool = reqPriorityPools.value.find(x => x.name === p)
+  return pool ? pool.color + '1A' : '#f0f0f0'
+}
+const reqPrioText = (p) => {
+  const pool = reqPriorityPools.value.find(x => x.name === p)
+  return pool ? pool.color : '#666'
+}
+const reqStatBg = (s) => {
+  const pool = reqStatusPools.value.find(x => x.name === s)
+  return pool ? pool.color + '1A' : '#f0f0f0'
+}
+const reqStatText = (s) => {
+  const pool = reqStatusPools.value.find(x => x.name === s)
+  return pool ? pool.color : '#666'
+}
+
+const loadRequirements = async () => {
+  reqPickerLoading.value = true
+  try {
+    const res = await getRequirements(projectId, { page: 1, page_size: 9999 })
+    projectRequirements.value = res.items || []
+  } catch (e) {
+    console.error('加载需求列表失败', e)
+    projectRequirements.value = []
+  } finally {
+    reqPickerLoading.value = false
+  }
+}
+
+const unlinkReq = async (req) => {
+  try {
+    await unlinkRequirement(projectId, taskId, req.id)
+    ElMessage.success('已取消关联')
+    await load()
+  } catch (e) {
+    ElMessage.error('取消关联失败')
+  }
+}
+
+const linkReq = async (req) => {
+  try {
+    await linkRequirement(projectId, taskId, req.id)
+    ElMessage.success('已关联需求')
+    showReqPicker.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error('关联失败')
+  }
+}
+
+const pickReq = (req) => {
+  if (task.value?.linked_requirements?.find(r => r.id === req.id)) return
+  linkReq(req)
+}
+
+const goRequirement = (req) => {
+  router.push({ name: 'requirement-detail', params: { projectId, requirementId: req.id } })
+}
 
 const showAddComm = ref(false)
 const commLoading = ref(false)
@@ -548,6 +677,7 @@ const exportFieldOptions = [
   { key: 'description', label: '描述' },
   { key: 'contacts', label: '对接人' },
   { key: 'tags', label: '标签' },
+  { key: 'linked_requirements', label: '关联需求' },
   { key: 'created_at', label: '创建时间' },
   { key: 'updated_at', label: '更新时间' },
 ]
@@ -669,6 +799,17 @@ const load = async () => {
     projectContacts.value = await getProjectContacts(projectId, { show_inactive: true })
   } catch (e) {
     console.error('加载项目对接人库失败', e)
+  }
+  // 加载需求池
+  try {
+    reqStatusPools.value = await getReqStatusPools(projectId, { show_inactive: true })
+  } catch (e) {
+    console.error('加载需求状态池失败', e)
+  }
+  try {
+    reqPriorityPools.value = await getReqPriorityPools(projectId, { show_inactive: true })
+  } catch (e) {
+    console.error('加载需求优先级池失败', e)
   }
 }
 onMounted(() => {
@@ -1049,6 +1190,7 @@ const initExportDialog = () => {
     if (t.description) defaults.push('description')
     if (t.contacts && t.contacts.length) defaults.push('contacts')
     if (t.tags && t.tags.length) defaults.push('tags')
+    if (t.linked_requirements && t.linked_requirements.length) defaults.push('linked_requirements')
     if (t.created_at) defaults.push('created_at')
     if (t.updated_at) defaults.push('updated_at')
     exportFields.value = defaults
@@ -1221,7 +1363,13 @@ const removeAtt = async (a) => {
 .side-tag-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; flex: 1; min-width: 0; }
 .side-tag-chips { display: flex; flex-wrap: wrap; gap: 3px; }
 .tag-chip-detail { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px solid; line-height: 1.5; }
-.side-title { font-size: 13px; font-weight: 500; color: #555; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; }
+.side-title { font-size: 13px; font-weight: 500; color: #555; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+
+/* 紧凑卡片 */
+.side-card-compact { padding: 10px 14px; }
+
+/* 空状态文字 */
+.side-empty { font-size: 12px; color: #bbb; text-align: center; padding: 6px 0; }
 
 /* 标签选择弹窗 */
 .tag-picker-body { max-height: 460px; }
@@ -1235,10 +1383,27 @@ const removeAtt = async (a) => {
 .tag-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .tag-picker-empty { font-size: 12px; color: #bbb; padding: 8px 0; text-align: center; }
 .tag-picker-divider { height: 1px; background: #eee; margin: 12px 0; }
-.contact-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 0; border-top: 1px solid #f0f0ee; }
+.contact-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid #f0f0ee; }
+.contact-item:first-child { border-top: none; }
 .contact-avatar { width: 32px; height: 32px; border-radius: 50%; background: #eeedfe; color: #534ab7; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
+.contact-avatar-sm { width: 26px; height: 26px; font-size: 11px; }
 .contact-info { flex: 1; min-width: 0; }
-.contact-name { font-size: 13px; font-weight: 500; }
+.contact-name { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-role { font-size: 12px; color: #888; }
 .contact-detail { font-size: 12px; color: #aaa; }
+
+/* 关联项 tag 样式 */
+.req-tag { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 4px; line-height: 16px; font-weight: 500; flex-shrink: 0; }
+
+/* 关联需求选择弹窗 */
+.req-picker-list { max-height: 400px; overflow-y: auto; }
+.req-picker-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #f0f0ee; border-radius: 6px; margin-bottom: 6px; cursor: pointer; transition: all .15s; }
+.req-picker-item:hover { border-color: #c0c0be; background: #fafafa; }
+.req-picker-item-disabled { opacity: .5; cursor: not-allowed; }
+.req-picker-item-disabled:hover { border-color: #f0f0ee; background: transparent; }
+.req-picker-info { flex: 1; min-width: 0; }
+.req-picker-title { font-size: 13px; font-weight: 500; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.req-picker-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.req-picker-badge { font-size: 11px; color: #fff; padding: 1px 6px; border-radius: 3px; }
+.req-priority-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; vertical-align: middle; margin-right: 2px; }
 </style>

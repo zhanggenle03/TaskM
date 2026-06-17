@@ -5,6 +5,7 @@ from datetime import datetime, date as date_type
 from ..database import (
     get_db, Project, Task, Contact, Communication, CommunicationContact,
     Attachment, ProjectContact, StatusPool, CommTypePool, TagPool, TaskTag,
+    TaskRequirement, Requirement,
     touch_project, derive_task_status, sync_task_status, cleanup_comm_files,
     generate_task_display_id, resolve_project, resolve_task
 )
@@ -12,7 +13,7 @@ from ..schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskDetail,
     ContactCreate, ContactUpdate, ContactOut,
     CommunicationCreate, CommunicationUpdate, CommunicationOut,
-    TagBrief,
+    TagBrief, RequirementBrief,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
@@ -202,6 +203,7 @@ def get_task(project_id: str, task_id: str, db: Session = Depends(get_db)):
     task = db.query(Task).options(
         joinedload(Task.contacts),
         joinedload(Task.tags),
+        joinedload(Task.linked_requirements),
         joinedload(Task.communications)
             .joinedload(Communication.attachments),
         joinedload(Task.communications)
@@ -347,6 +349,47 @@ def remove_contact(project_id: str, task_id: str, contact_id: int, db: Session =
         synchronize_session=False
     )
     db.delete(c)
+    db.commit()
+    touch_project(db, proj.id)
+    return {"ok": True}
+
+
+# ---------- 关联需求 ----------
+
+@router.post("/{task_id}/requirements")
+def link_requirement(project_id: str, task_id: str, data: dict, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    task = resolve_task(db, proj.id, task_id)
+    req_id = data.get("requirement_id")
+    if not req_id:
+        raise HTTPException(400, "缺少 requirement_id")
+    # 验证需求属于同一项目
+    req = db.query(Requirement).filter(Requirement.id == req_id, Requirement.project_id == proj.id).first()
+    if not req:
+        raise HTTPException(404, "需求不存在")
+    # 检查是否已关联
+    existing = db.query(TaskRequirement).filter(
+        TaskRequirement.task_id == task.id,
+        TaskRequirement.requirement_id == req_id
+    ).first()
+    if existing:
+        raise HTTPException(400, "该需求已关联到本任务")
+    db.add(TaskRequirement(task_id=task.id, requirement_id=req_id))
+    db.commit()
+    touch_project(db, proj.id)
+    return {"ok": True, "requirement": {"id": req.id, "display_id": req.display_id, "title": req.title, "priority": req.priority, "status": req.status}}
+
+@router.delete("/{task_id}/requirements/{requirement_id}")
+def unlink_requirement(project_id: str, task_id: str, requirement_id: int, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    task = resolve_task(db, proj.id, task_id)
+    tr = db.query(TaskRequirement).filter(
+        TaskRequirement.task_id == task.id,
+        TaskRequirement.requirement_id == requirement_id
+    ).first()
+    if not tr:
+        raise HTTPException(404, "关联关系不存在")
+    db.delete(tr)
     db.commit()
     touch_project(db, proj.id)
     return {"ok": True}

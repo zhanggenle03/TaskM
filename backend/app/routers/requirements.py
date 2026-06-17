@@ -1,10 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, case, nullslast, select, or_
 from typing import List, Optional, Dict
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-import json, os, uuid
+import json, os, uuid, io, urllib.parse, re
+from docx import Document
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 from ..database import (
     get_db, Project, Requirement, RequirementCustomField, RequirementCustomValue,
@@ -980,6 +985,713 @@ def delete_requirement(
     db.commit()
     touch_project(db, proj.id)
     return {"message": "ok"}
+
+
+# ── 导出 ────────────────────────────────────────────────
+
+def generate_requirement_doc_bytes(req, proj, db) -> bytes:
+    """
+    生成需求的 DOCX 文档字节（公文风格），供导出端点和任务导出共用。
+    依赖 req.custom_values 已 eager load。
+    """
+    from ..database import RequirementStatusPool, RequirementPriorityPool, UPLOAD_DIR
+    from ..export_service import (
+        _add_run, _new_paragraph, _set_run_font, _set_heading_style,
+        _setup_numbering, _apply_numbering, _set_cell_shading,
+        _apply_table_widths, _add_h1,
+        FONT_FAMILY, FONT_FAMILY_HEADING,
+        BODY_SIZE, SMALL_SIZE, HEADING1_SIZE, HEADING2_SIZE, TITLE_SIZE, SUBTITLE_SIZE,
+    )
+    from docx.shared import Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # 获取池颜色
+    status_pools = {p.name: p.color for p in db.query(RequirementStatusPool).filter(
+        RequirementStatusPool.project_id == proj.id, RequirementStatusPool.is_active == True
+    ).all()}
+    priority_pools = {p.name: p.color for p in db.query(RequirementPriorityPool).filter(
+        RequirementPriorityPool.project_id == proj.id, RequirementPriorityPool.is_active == True
+    ).all()}
+
+    doc = Document()
+
+    # 设置默认样式
+    style = doc.styles['Normal']
+    style.font.name = FONT_FAMILY
+    style.font.size = BODY_SIZE
+    style.element.rPr.rFonts.set(qn('w:eastAsia'), FONT_FAMILY)
+    pPr = style.element.get_or_add_pPr()
+    pSpacing = OxmlElement('w:spacing')
+    pSpacing.set(qn('w:line'), '360')
+    pSpacing.set(qn('w:lineRule'), 'auto')
+    pPr.append(pSpacing)
+
+    # 设置标题样式
+    _set_heading_style(doc, 1, FONT_FAMILY_HEADING, HEADING1_SIZE)
+    _set_heading_style(doc, 2, FONT_FAMILY_HEADING, HEADING2_SIZE)
+
+    # 建立自动编号
+    num_id = _setup_numbering(doc)
+
+    # ---- 封面 ----
+    for _ in range(6):
+        _new_paragraph(doc, '', size=BODY_SIZE, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+
+    _new_paragraph(doc, '需求说明文档', size=TITLE_SIZE, bold=True,
+                   font_name=FONT_FAMILY_HEADING, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                   before=200, after=100)
+    _new_paragraph(doc, req.title or '(无标题)', size=SUBTITLE_SIZE,
+                   font_name=FONT_FAMILY_HEADING, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                   before=100, after=200)
+    _new_paragraph(doc, '', size=BODY_SIZE)
+    _new_paragraph(doc, f'项目名称：{proj.name}（{proj.display_id}）', size=SMALL_SIZE,
+                   alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _new_paragraph(doc, f'导出日期：{datetime.now().strftime("%Y年%m月%d日")}', size=SMALL_SIZE,
+                   alignment=WD_ALIGN_PARAGRAPH.CENTER)
+
+    meta_items = [
+        ("需求名称", req.title or "-"),
+        ("显示ID", req.display_id or "-"),
+        ("状态", req.status or "-"),
+        ("优先级", req.priority or "-"),
+        ("创建时间", req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "-"),
+        ("更新时间", req.updated_at.strftime("%Y-%m-%d %H:%M") if req.updated_at else "-"),
+    ]
+
+    # 收集自定义字段
+    custom_items = []
+    if req.custom_values:
+        for cv in req.custom_values:
+            if cv.field and cv.value:
+                custom_items.append((cv.field.field_name, cv.value))
+
+    _add_h1(doc, '需求基本信息', num_id, 0)
+    _apply_table_widths(doc, meta_items)
+
+    if custom_items:
+        doc.add_paragraph()
+        _add_h1(doc, '自定义字段', num_id, 0)
+        _apply_table_widths(doc, custom_items)
+
+    # ---- 详细描述 ----
+    if req.description:
+        _add_h1(doc, '详细描述', num_id, 0)
+        _render_html_to_docx(doc, req.description, status_pools, priority_pools, img_base_dir=UPLOAD_DIR)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+@router.get("/{requirement_id}/export")
+def export_requirement_doc(
+    project_id: str,
+    requirement_id: int,
+    db: Session = Depends(get_db),
+):
+    """导出需求信息为 DOCX 文档（公文格式）"""
+    from ..database import Requirement, RequirementCustomField, RequirementCustomValue
+
+    proj = resolve_project(db, project_id)
+    req = db.query(Requirement).options(
+        joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
+    ).filter(
+        Requirement.id == requirement_id,
+        Requirement.project_id == proj.id
+    ).first()
+    if not req:
+        raise HTTPException(404, "需求不存在")
+
+    doc_bytes = generate_requirement_doc_bytes(req, proj, db)
+
+    filename = f'{req.title}_需求文档.docx'
+    encoded_filename = urllib.parse.quote(filename)
+
+    return Response(
+        content=doc_bytes,
+        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        headers={
+            'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}",
+            'Content-Length': str(len(doc_bytes)),
+        }
+    )
+
+
+def _css_bg_to_shd_fill(color_str: str) -> str:
+    """
+    将 CSS 背景色解析为 RGB，与白色混合变浅后返回六位十六进制颜色码。
+    用于 run 级 w:shd 底纹填充（不限于 DOCX 16 种预设高亮色）。
+    """
+    if not color_str:
+        return None
+    c = color_str.strip()
+    if c.startswith('#'):
+        c = c.lstrip('#')
+        if len(c) == 3:
+            c = ''.join(x*2 for x in c)
+        try:
+            r, g, b = int(c[0:2],16), int(c[2:4],16), int(c[4:6],16)
+        except:
+            return None
+    else:
+        m = re.match(r'rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', c)
+        if m:
+            r, g, b = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        else:
+            return None
+    # 与白色混合使其变浅（factor 越大越浅）
+    factor = 0.55
+    r = int(r + (255 - r) * factor)
+    g = int(g + (255 - g) * factor)
+    b = int(b + (255 - b) * factor)
+    return f'{r:02X}{g:02X}{b:02X}'
+
+
+# ── HTML 描述转 DOCX ────────────────────────────────────
+
+def _parse_inline_style(style_str: str) -> dict:
+    """解析 style="key1:val1;key2:val2" 为字典"""
+    result = {}
+    if not style_str:
+        return result
+    for part in style_str.split(';'):
+        part = part.strip()
+        if ':' in part:
+            k, v = part.split(':', 1)
+            result[k.strip()] = v.strip()
+    return result
+
+def _color_to_rgb(color_str: str):
+    """将 CSS 颜色转为 RGBColor，支持 #hex 和 rgb()"""
+    from docx.shared import RGBColor
+    color_str = color_str.strip()
+    if color_str.startswith('#'):
+        c = color_str.lstrip('#')
+        if len(c) == 3:
+            c = ''.join(x*2 for x in c)
+        try:
+            return RGBColor(int(c[0:2],16), int(c[2:4],16), int(c[4:6],16))
+        except:
+            return None
+    m = re.search(r'rgb\s*\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)', color_str)
+    if m:
+        return RGBColor(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return None
+
+def _darken_color(hex_color: str, factor: float = 0.6) -> str:
+    """将十六进制颜色按 factor 加深（factor < 1 则变暗）。
+    返回例如 '#b3b3b3' 的值，用于从背景色推导左侧边框色。"""
+    c = hex_color.lstrip('#')
+    if len(c) != 6:
+        return '#888888'
+    try:
+        r = int(int(c[0:2], 16) * factor)
+        g = int(int(c[2:4], 16) * factor)
+        b = int(int(c[4:6], 16) * factor)
+        return f'#{r:02x}{g:02x}{b:02x}'
+    except ValueError:
+        return '#888888'
+
+def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_pools: dict = None, img_base_dir: str = None):
+    """
+    将 WangEditor 生成的 HTML 描述渲染到 docx 文档中，
+    尽可能复刻 Web 上看到的效果。
+    支持：加粗/斜体/下划线/删除线、字体颜色/背景色、引用块、列表、
+         代码块、分割线、超链接、换行、图片。
+    """
+    from html.parser import HTMLParser
+    from docx.shared import RGBColor, Inches, Pt as PtSize
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from ..export_service import FONT_FAMILY, BODY_SIZE, SMALL_SIZE, _set_run_font, _add_hyperlink, _apply_numbering
+
+    # 建立列表编号定义（bullet + decimal）
+    numbering_part = doc.part.numbering_part
+    numbering_elem = numbering_part.element
+    # 使用独立 numId: 70=bullet, 71=decimal（避开99占用）
+    _NUM_BULLET = 70
+    _NUM_DECIMAL = 71
+
+    def _setup_list_num(num_id, fmt, text_pattern, start=1, levels=4):
+        """为列表建立抽象编号定义，返回 num_id"""
+        for n in numbering_elem.findall(qn('w:num')):
+            if n.get(qn('w:numId')) == str(num_id):
+                return num_id
+        ab_id = str(1000 + num_id)  # 抽象编号 ID 不与现有冲突
+        ab = OxmlElement('w:abstractNum')
+        ab.set(qn('w:abstractNumId'), ab_id)
+        for ilvl in range(levels):
+            lvl = OxmlElement('w:lvl')
+            lvl.set(qn('w:ilvl'), str(ilvl))
+            for tag, val in [
+                ('start', str(start)),
+                ('numFmt', fmt),
+                ('lvlText', text_pattern),
+            ]:
+                el = OxmlElement(f'w:{tag}')
+                el.set(qn('w:val'), val)
+                lvl.append(el)
+            if fmt == 'bullet':
+                # 子弹头符号设置
+                numFont = OxmlElement('w:lvlJc')
+                numFont.set(qn('w:val'), 'left')
+                lvl.append(numFont)
+                # 使用标准子弹头
+                pStyle = OxmlElement('w:pStyle')
+                lvl.append(pStyle)
+            # 缩进
+            ind = OxmlElement('w:ind')
+            ind.set(qn('w:left'), str(480 + ilvl * 480))
+            ind.set(qn('w:hanging'), '240')
+            lvl.append(ind)
+            ab.append(lvl)
+        numbering_elem.append(ab)
+        num = OxmlElement('w:num')
+        num.set(qn('w:numId'), str(num_id))
+        ref = OxmlElement('w:abstractNumId')
+        ref.set(qn('w:val'), ab_id)
+        num.append(ref)
+        numbering_elem.append(num)
+        return num_id
+
+    _setup_list_num(_NUM_BULLET, 'bullet', '\u2022', levels=4)    # 实心圆点
+    _setup_list_num(_NUM_DECIMAL, 'decimal', '%1.', levels=4)     # 1. 2. 3.
+
+    class _HtmlRenderer(HTMLParser):
+        def __init__(self, doc, img_base_dir=None):
+            super().__init__()
+            self.doc = doc
+            self.img_base_dir = img_base_dir
+            self.stack = []           # 标签栈
+            self._p_texts = []        # 当前段落内 (text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name)
+            self._in_bq = False
+            self._bq_bg = None
+            self._bq_border = None  # 引用块左侧边框色
+            self._bq_table = None   # 引用块表格
+            self._bq_cell = None    # 引用块单元格
+            self._list_type = None
+            self._list_depth = 0
+            self._list_num_id = None
+            self._skip_p = False
+            self._code_mode = False    # 在 <pre>/<code> 内部
+
+        def _push_run(self, text='', bold=False, italic=False, underline=False, strikethrough=False,
+                      color=None, bg_color=None, link_url='', font_name=None):
+            if text:
+                self._p_texts.append((text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name))
+
+        def _flush_paragraph(self):
+            if not self._p_texts and not self._skip_p:
+                return
+            if self._skip_p:
+                self._skip_p = False
+                return
+
+            p = (self._bq_cell.add_paragraph() if self._in_bq and self._bq_cell
+                 else self.doc.add_paragraph())
+            pPr = p._p.get_or_add_pPr()
+            spacing = OxmlElement('w:spacing')
+            spacing.set(qn('w:line'), '240')
+            spacing.set(qn('w:lineRule'), 'auto')
+            spacing.set(qn('w:before'), '0')
+            spacing.set(qn('w:after'), '0')
+            pPr.append(spacing)
+
+            # 列表编号
+            if self._list_type and self._list_num_id is not None:
+                _apply_numbering(p, self._list_num_id, max(0, self._list_depth - 1))
+
+            for text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name in self._p_texts:
+                fn = font_name or FONT_FAMILY
+                if link_url:
+                    _add_hyperlink(p, text, link_url, size=BODY_SIZE)
+                else:
+                    run = p.add_run(text)
+                    kwargs = {'bold': bold, 'size': BODY_SIZE, 'font_name': fn}
+                    if italic:
+                        run.italic = True
+                    if underline:
+                        run.underline = True
+                    if strikethrough:
+                        run.font.strike = True
+                    if color:
+                        rgb = _color_to_rgb(color)
+                        if rgb:
+                            kwargs['color'] = rgb
+                    if bg_color:
+                        fill_hex = _css_bg_to_shd_fill(bg_color)
+                        if fill_hex:
+                            rPr = run._r.get_or_add_rPr()
+                            shd = OxmlElement('w:shd')
+                            shd.set(qn('w:fill'), fill_hex)
+                            shd.set(qn('w:val'), 'clear')
+                            rPr.append(shd)
+                    _set_run_font(run, **kwargs)
+            self._p_texts = []
+
+        def _get_style_color(self, attrs_dict):
+            """从 style 中提取 color 和 background-color"""
+            style = attrs_dict.get('style', '')
+            style_map = _parse_inline_style(style)
+            return style_map.get('color', ''), style_map.get('background-color', '')
+
+        def _add_image(self, attrs_dict):
+            """将 <img> 标签嵌入 DOCX"""
+            src = attrs_dict.get('src', '')
+            if not src:
+                return
+            # 解析图片路径：/uploads/{project}/requirements/{req}/images/{filename}
+            path = None
+            if src.startswith('/uploads/'):
+                if self.img_base_dir:
+                    rel = src[len('/uploads/'):].replace('/', os.sep)
+                    candidate = os.path.join(self.img_base_dir, rel)
+                    if os.path.isfile(candidate):
+                        path = candidate
+            elif src.startswith('http://') or src.startswith('https://'):
+                return
+            if not path or not os.path.isfile(path):
+                return
+            try:
+                self._flush_paragraph()
+                p = (self._bq_cell.add_paragraph() if self._in_bq and self._bq_cell
+                     else self.doc.add_paragraph())
+                p.alignment = 1  # 居中
+                run = p.add_run()
+                style_map = _parse_inline_style(attrs_dict.get('style', ''))
+                w_str = style_map.get('width', '')
+                max_w = Inches(5.5)
+                if w_str:
+                    try:
+                        w_px = float(w_str.replace('px', '').strip())
+                        max_w = Inches(min(w_px / 96, 5.5))
+                    except ValueError:
+                        pass
+                run.add_picture(path, width=max_w)
+                self._skip_p = True
+            except Exception:
+                pass
+
+        def handle_starttag(self, tag, attrs):
+            attrs_dict = dict(attrs)
+            if tag in ('p', 'div'):
+                self._flush_paragraph()
+                self.stack.append(tag)
+            elif tag in ('h1','h2','h3','h4','h5','h6'):
+                self._flush_paragraph()
+                self.stack.append(tag)
+            elif tag in ('b','strong','em','i','u','s','del','strike'):
+                self.stack.append(tag)
+            elif tag == 'blockquote':
+                self._flush_paragraph()
+                self._in_bq = True
+                # 提取引用块颜色
+                style = attrs_dict.get('style', '')
+                style_map = _parse_inline_style(style)
+                bg = style_map.get('background-color', '')
+                if bg:
+                    self._bq_bg = bg
+                else:
+                    bq_color = attrs_dict.get('data-bq-color', '')
+                    if bq_color:
+                        # bq_colors 可能为空（CSS 不在保存的 HTML 中）→ 直接用属性值
+                        self._bq_bg = bq_colors.get(bq_color, '') or bq_color
+                    else:
+                        self._bq_bg = '#f0f0f0'
+
+                # 提取边框颜色：data-bq-border > CSS 解析 > 背景色加深
+                bq_border_raw = attrs_dict.get('data-bq-border', '')
+                if bq_border_raw:
+                    self._bq_border = bq_border_raw
+                else:
+                    # 尝试从 CSS 解析 border-left-color
+                    bq_border_from_css = bq_border_colors.get(attrs_dict.get('data-bq-color', ''), '')
+                    if bq_border_from_css:
+                        self._bq_border = bq_border_from_css
+                    else:
+                        # 回退：背景色加深为边框色
+                        self._bq_border = _darken_color(self._bq_bg) if self._bq_bg else '#888888'
+
+                # 创建单格表格模拟引用块
+                bq_color_hex = self._bq_bg.replace('#', '') if self._bq_bg else 'f0f0f0'
+                bq_border_hex = self._bq_border.replace('#', '') if self._bq_border else bq_color_hex
+
+                table = self.doc.add_table(rows=1, cols=1)
+                table.autofit = True
+
+                # 取单元格
+                cell = table.rows[0].cells[0]
+                self._bq_cell = cell
+
+                # 删除默认空段落（否则第一行前会多一个回车）
+                default_p = cell.paragraphs[0]._element
+                default_p.getparent().remove(default_p)
+
+                # 设置单元格宽度占满 + 清除表格级边框
+                tblPr = table._tbl.find(qn('w:tblPr'))
+                if tblPr is None:
+                    tblPr = OxmlElement('w:tblPr')
+                    table._tbl.insert(0, tblPr)
+                tblW = OxmlElement('w:tblW')
+                tblW.set(qn('w:w'), '5000')
+                tblW.set(qn('w:type'), 'pct')
+                tblPr.append(tblW)
+                # 清除表格级边框
+                tblBorders = OxmlElement('w:tblBorders')
+                for side in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
+                    sideEl = OxmlElement(f'w:{side}')
+                    sideEl.set(qn('w:val'), 'none')
+                    sideEl.set(qn('w:sz'), '0')
+                    sideEl.set(qn('w:space'), '0')
+                    sideEl.set(qn('w:color'), 'auto')
+                    tblBorders.append(sideEl)
+                tblPr.append(tblBorders)
+
+                # 单元格底纹
+                if self._bq_bg:
+                    shd = OxmlElement('w:shd')
+                    shd.set(qn('w:fill'), bq_color_hex)
+                    shd.set(qn('w:val'), 'clear')
+                    cell._tc.get_or_add_tcPr().append(shd)
+
+                # 设置单元格边框：左侧 12pt 加粗彩色竖线，上右下无边框
+                tcPr = cell._tc.get_or_add_tcPr()
+                tcBorders = OxmlElement('w:tcBorders')
+                for side, sz, color, val in [
+                    ('top',    '0',  'auto',            'none'),   # 无边框
+                    ('left',   '24', bq_border_hex,     'single'), # 12pt 彩色竖线
+                    ('bottom', '0',  'auto',            'none'),   # 无边框
+                    ('right',  '0',  'auto',            'none'),   # 无边框
+                ]:
+                    sideEl = OxmlElement(f'w:{side}')
+                    sideEl.set(qn('w:val'), val)
+                    sideEl.set(qn('w:sz'), sz)
+                    sideEl.set(qn('w:space'), '4')
+                    sideEl.set(qn('w:color'), color)
+                    tcBorders.append(sideEl)
+                tcPr.append(tcBorders)
+
+                # 边距（5pt = 100dxa 上下留白）
+                tcMar = OxmlElement('w:tcMar')
+                for side, val in [('top', '100'), ('left', '120'), ('bottom', '100'), ('right', '60')]:
+                    mar = OxmlElement(f'w:{side}')
+                    mar.set(qn('w:w'), val)
+                    mar.set(qn('w:type'), 'dxa')
+                    tcMar.append(mar)
+                tcPr.append(tcMar)
+
+                self.stack.append(tag)
+            elif tag == 'hr':
+                self._flush_paragraph()
+                # 分割线：底部边框的段落
+                p = self.doc.add_paragraph()
+                pPr = p._p.get_or_add_pPr()
+                pBdr = OxmlElement('w:pBdr')
+                bottom = OxmlElement('w:bottom')
+                bottom.set(qn('w:val'), 'single')
+                bottom.set(qn('w:sz'), '6')
+                bottom.set(qn('w:space'), '4')
+                bottom.set(qn('w:color'), '999999')
+                pBdr.append(bottom)
+                pPr.append(pBdr)
+            elif tag in ('ul', 'ol'):
+                if tag == 'ul':
+                    self._list_type = 'ul'
+                    self._list_num_id = _NUM_BULLET
+                else:
+                    self._list_type = 'ol'
+                    self._list_num_id = _NUM_DECIMAL
+                self._list_depth += 1
+                self.stack.append(tag)
+            elif tag == 'li':
+                self._flush_paragraph()
+                self.stack.append(tag)
+            elif tag == 'a':
+                self.stack.append(('a', attrs_dict.get('href', '')))
+            elif tag == 'br':
+                self._push_run('\n')
+            elif tag == 'img':
+                self._add_image(attrs_dict)
+            elif tag == 'span':
+                self.stack.append(('span', attrs_dict.get('style', '')))
+            elif tag == 'pre':
+                self._flush_paragraph()
+                self._code_mode = True
+                self.stack.append(tag)
+            elif tag == 'code':
+                self._code_mode = True
+                self.stack.append(('code', attrs_dict.get('style', '')))
+
+        def handle_endtag(self, tag):
+            if tag in ('p', 'div'):
+                self._flush_paragraph()
+                self._pop_stack(tag)
+            elif tag in ('h1','h2','h3','h4','h5','h6'):
+                self._flush_paragraph()
+                self._pop_stack(tag)
+            elif tag in ('b','strong','em','i','u','s','del','strike'):
+                self._pop_stack(tag)
+            elif tag == 'blockquote':
+                self._flush_paragraph()
+                self._in_bq = False
+                self._bq_bg = None
+                self._bq_border = None
+                self._bq_cell = None
+                self._pop_stack(tag)
+            elif tag in ('ul', 'ol'):
+                if tag == 'ul':
+                    self._list_type = 'ul' if self._has_type_above('ul') else None
+                else:
+                    self._list_type = 'ol' if self._has_type_above('ol') else None
+                self._list_depth = max(0, self._list_depth - 1)
+                self._pop_stack(tag)
+            elif tag == 'li':
+                self._flush_paragraph()
+                self._skip_p = True
+                self._pop_stack(tag)
+            elif isinstance(self.stack[-1] if self.stack else None, tuple) and self.stack[-1][0] == 'a' and tag == 'a':
+                self._pop_stack(tag)
+            elif tag == 'span':
+                self._pop_stack(tag)
+            elif tag == 'pre':
+                self._code_mode = False
+                self._flush_paragraph()
+                self._pop_stack(tag)
+            elif tag == 'code':
+                self._code_mode = False
+                self._pop_stack(tag)
+
+        def _pop_stack(self, tag):
+            if self.stack and self.stack[-1] == tag:
+                self.stack.pop()
+            elif self.stack and isinstance(self.stack[-1], tuple) and self.stack[-1][0] == tag:
+                self.stack.pop()
+
+        def _has_type_above(self, target):
+            for item in reversed(self.stack[:-1]):
+                if item == target:
+                    return True
+                if item == ('ul' if target == 'ol' else 'ol'):
+                    return False
+            return False
+
+        def handle_data(self, data):
+            if not data.strip() and not self._code_mode:
+                return
+
+            bold = any(t in self.stack for t in ('b', 'strong'))
+            italic = any(t in self.stack for t in ('i', 'em'))
+            underline = 'u' in self.stack
+            strikethrough = any(t in self.stack for t in ('s', 'del', 'strike'))
+            link_url = ''
+            color = ''
+            bg_color = ''
+            font_name = None
+
+            for item in self.stack:
+                if isinstance(item, tuple):
+                    if item[0] == 'a':
+                        link_url = item[1]
+                    elif item[0] == 'span':
+                        c, bg = self._get_style_color(dict(style=item[1]))
+                        if c: color = c
+                        if bg: bg_color = bg
+                    elif item[0] == 'code':
+                        font_name = 'Courier New'
+                        bg_color = '#cccccc'
+
+            if self._code_mode:
+                font_name = 'Courier New'
+                bg_color = '#cccccc'
+
+            self._push_run(data, bold=bold, italic=italic, underline=underline,
+                          strikethrough=strikethrough, color=color, bg_color=bg_color,
+                          link_url=link_url, font_name=font_name)
+
+    # 清理 + 提取全局 CSS 中的 blockquote 颜色
+    bq_colors = {}
+    bq_border_colors = {}
+    for m in re.finditer(r'blockquote\[data-bq-color=["\']([^"\']+)["\']\]\s*\{[^}]*background-color:\s*([^;}]+)', html):
+        bq_colors[m.group(1)] = m.group(2).strip()
+    for m in re.finditer(r'blockquote\[data-bq-color=["\']([^"\']+)["\']\][^{]*\{[^}]*background[^:]*:\s*([^;}]+)', html):
+        bq_colors[m.group(1)] = m.group(2).strip()
+    # 同时提取 border-left-color
+    for m in re.finditer(r'blockquote\[data-bq-color=["\']([^"\']+)["\']\][^{]*\{[^}]*border-left-color:\s*([^;}]+)', html):
+        bq_border_colors[m.group(1)] = m.group(2).strip()
+
+    # 兜底：所有未着色的 blockquote 自动继承前一个有色 blockquote 的颜色
+    # （处理 WangEditor 多段引用块未正确注入 data-bq-color 的情况）
+    html = _propagate_bq_colors(html)
+
+    html = html.strip()
+    if html.startswith('<html>') or html.startswith('<!DOCTYPE'):
+        m = re.search(r'<body[^>]*>([\s\S]*)</body>', html, re.I)
+        if m:
+            html = m.group(1)
+
+    renderer = _HtmlRenderer(doc, img_base_dir=img_base_dir)
+    renderer.feed(html)
+    renderer._flush_paragraph()
+
+
+def _propagate_bq_colors(html: str) -> str:
+    """对 HTML 中未着色的 <blockquote> 向前/后传播继承最近的有色块。
+    纯字符串处理，对抗 WangEditor 序列化丢失属性的情况。"""
+    if 'blockquote' not in html:
+        return html
+    # 提取所有 <blockquote ...> 标签及属性
+    bq_pattern = re.compile(r'<blockquote(\s[^>]*)?>', re.IGNORECASE)
+    matches = list(bq_pattern.finditer(html))
+    if len(matches) < 2:
+        return html
+    # 提取每段的 color/border 属性
+    def get_attrs(tag_text: str):
+        c = re.search(r'data-bq-color=["\']([^"\']+)["\']', tag_text or '')
+        b = re.search(r'data-bq-border=["\']([^"\']+)["\']', tag_text or '')
+        return (c.group(1) if c else None, b.group(1) if b else None)
+    # 先按"原位属性"建立数组
+    bq_attrs = [get_attrs(m.group(1)) for m in matches]
+    # 双向传播
+    last_color = None
+    last_border = None
+    for i in range(len(bq_attrs)):
+        c, b = bq_attrs[i]
+        if c:
+            last_color, last_border = c, b
+        elif last_color:
+            bq_attrs[i] = (last_color, last_border)
+    last_color = None
+    last_border = None
+    for i in range(len(bq_attrs) - 1, -1, -1):
+        c, b = bq_attrs[i]
+        if c:
+            last_color, last_border = c, b
+        elif last_color:
+            bq_attrs[i] = (last_color, last_border)
+    # 重新拼接（仅修改有变化的）
+    result = []
+    last_end = 0
+    for m, (c, b) in zip(matches, bq_attrs):
+        if not c:
+            result.append(html[last_end:m.end()])
+            last_end = m.end()
+            continue
+        original_attrs = m.group(1) or ''
+        # 在原 attrs 基础上补充/覆盖 color/border
+        if 'data-bq-color=' in original_attrs:
+            new_attrs = re.sub(r'data-bq-color=["\'][^"\']*["\']', f'data-bq-color="{c}"', original_attrs)
+        else:
+            new_attrs = original_attrs.rstrip() + f' data-bq-color="{c}"'
+        if b:
+            if 'data-bq-border=' in new_attrs:
+                new_attrs = re.sub(r'data-bq-border=["\'][^"\']*["\']', f'data-bq-border="{b}"', new_attrs)
+            else:
+                new_attrs = new_attrs.rstrip() + f' data-bq-border="{b}"'
+        new_tag = f'<blockquote{new_attrs}>'
+        result.append(html[last_end:m.start()])
+        result.append(new_tag)
+        last_end = m.end()
+    result.append(html[last_end:])
+    return ''.join(result)
 
 
 # ── Excel 导入 ─────────────────────────────────────────

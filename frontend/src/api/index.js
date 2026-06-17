@@ -65,6 +65,12 @@ export const addContact = (projectId, taskId, data) => http.post(`/projects/${pr
 export const updateContact = (projectId, taskId, contactId, data) => http.put(`/projects/${projectId}/tasks/${taskId}/contacts/${contactId}`, data)
 export const deleteContact = (projectId, taskId, contactId) => http.delete(`/projects/${projectId}/tasks/${taskId}/contacts/${contactId}`)
 
+// --- Task Requirements ---
+export const linkRequirement = (projectId, taskId, requirementId) =>
+  http.post(`/projects/${projectId}/tasks/${taskId}/requirements`, { requirement_id: requirementId })
+export const unlinkRequirement = (projectId, taskId, requirementId) =>
+  http.delete(`/projects/${projectId}/tasks/${taskId}/requirements/${requirementId}`)
+
 // --- Project Contacts ---
 export const getProjectContacts = (projectId, params) => http.get(`/projects/${projectId}/contacts`, { params })
 export const addProjectContact = (projectId, data) => http.post(`/projects/${projectId}/contacts`, data)
@@ -108,6 +114,12 @@ export const createRequirement = (projectId, data) => http.post(`/projects/${pro
 export const getRequirement = (projectId, reqId) => http.get(`/projects/${projectId}/requirements/${reqId}`)
 export const updateRequirement = (projectId, reqId, data) => http.put(`/projects/${projectId}/requirements/${reqId}`, data)
 export const deleteRequirement = (projectId, reqId) => http.delete(`/projects/${projectId}/requirements/${reqId}`)
+export const exportRequirementDoc = (projectId, reqId) =>
+  http.get(`/projects/${projectId}/requirements/${reqId}/export`, {
+    responseType: 'blob',
+    rawResponse: true,
+    _silentError: true,
+  })
 export const deleteRequirementImage = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/images/${encodeURIComponent(filename)}`)
 
 // --- Requirement Custom Fields ---

@@ -209,6 +209,16 @@ class TagBrief(BaseModel):
         from_attributes = True
 
 
+class RequirementBrief(BaseModel):
+    id: int
+    display_id: Optional[str] = None
+    title: str
+    priority: str
+    status: str
+    class Config:
+        from_attributes = True
+
+
 # ---- Task ----
 class TaskCreate(BaseModel):
     title: str
@@ -245,6 +255,7 @@ class TaskOut(BaseModel):
 
 class TaskDetail(TaskOut):
     communications: List[CommunicationOut] = []
+    linked_requirements: List[RequirementBrief] = []
     class Config:
         from_attributes = True
 

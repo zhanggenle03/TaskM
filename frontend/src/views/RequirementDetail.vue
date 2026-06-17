@@ -39,6 +39,11 @@
               {{ saveStatus === 'saving' ? '保存中…' : saveStatus === 'saved' ? '已保存' : '保存失败' }}
             </span>
             <el-button
+              size="small" @click="doExportRequirement" :loading="exportLoading"
+            >
+              <el-icon><Download /></el-icon> 导出文档
+            </el-button>
+            <el-button
               v-if="isEditing"
               size="small" type="warning" plain
               @click="exitEdit"
@@ -212,7 +217,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { ref, shallowRef, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
@@ -223,6 +228,7 @@ import { Boot } from '@wangeditor/editor'
 import {
   getRequirement, updateRequirement, deleteRequirement, deleteRequirementImage,
   getReqCustomFields, getReqStatusPools, getReqPriorityPools,
+  exportRequirementDoc,
 } from '../api/index.js'
 
 // ── 引用块颜色选择器 ──
@@ -298,8 +304,15 @@ class BqColorMenu {
       return
     }
 
-    // 只设置 data-bq-color 属性；视觉颜色由 CSS 属性选择器驱动
+    const border = bqBorderColorMap[color] || color
+    const text = (bqEl.textContent || '').trim()
+
+    // 写入持久化存储（JS 变量，Slate 不干涉）
+    bqColorStore[_bqKey(text)] = { color, border }
+
+    // 同时设置 DOM 属性（CSS 属性选择器驱动即时视觉反馈）
     bqEl.setAttribute('data-bq-color', color)
+    bqEl.setAttribute('data-bq-border', border)
 
     hasUnsaved.value = true
   }
@@ -349,6 +362,7 @@ let dragStart = { x: 0, y: 0 }
 // ── 富文本编辑器 ──
 const editorRef = shallowRef()
 const isEditing = ref(false)
+const exportLoading = ref(false)
 const hasUnsaved = ref(false)
 
 const toolbarConfig = {
@@ -391,8 +405,10 @@ const onEditorCreated = (editor) => {
       }
     } catch {}
   }, 300)
-  // 恢复引用块颜色：立刻执行，无需等 300ms（Editor DOM 已就绪），避免先闪灰色再变色的延迟感
+  // 恢复引用块颜色：从数据库 HTML 填充 bqColorStore 并同步到编辑器 DOM
   restoreBqColors()
+  // 延迟兜底：WangEditor 可能异步渲染，200ms 后再试一次
+  setTimeout(() => restoreBqColors(), 200)
 }
 
 /** mousedown 时记录点击位置所在的 blockquote */
@@ -428,6 +444,8 @@ const onEditorChange = (editor) => {
   if (isEditing.value) {
     hasUnsaved.value = true
   }
+  // Slate 重建 DOM 后恢复引用块颜色（数据源为 bqColorStore，不依赖 DOM 残留属性）
+  syncBqColorsToDom()
 }
 
 const editorConfig = {
@@ -575,114 +593,124 @@ const doSaveTitle = async () => {
 
 // ── 描述保存 ──
 
-/**
- * 保存前注入引用块颜色（data-bq-color 属性 → CSS 属性选择器驱动颜色）。
- *
- * 从编辑器 DOM 读取 data-bq-color，按文本锚点匹配写入待保存 HTML 的对应 blockquote。
- */
-const injectBqColorsToHtml = (html) => {
-  if (!editorRef.value) return html
+/** 从 BQ_PRESETS 查找背景色对应的边框色 */
+const bqBorderColorMap = Object.fromEntries(BQ_PRESETS.map(p => [p.value, p.border]))
 
-  // 1. 获取实时编辑器容器中的所有 blockquote
-  let liveContainer
+/**
+ * 引用块颜色持久化存储：以规范化文本为键，记录 {color, border}。
+ * 不依赖 DOM 属性（Slate 会重建 DOM 导致属性丢失），
+ * 而是作为独立的 JS 数据源驱动保存/加载/显示。
+ */
+const bqColorStore = reactive({})
+
+/** 规范化文本：去空白，截断为稳定键 */
+const _bqKey = (text) => (text || '').replace(/\s+/g, '').slice(0, 80)
+
+/** 将 bqColorStore 的颜色同步到编辑器 DOM 中所有 blockquote（Slate 重建 DOM 后恢复） */
+const syncBqColorsToDom = () => {
+  if (!editorRef.value) return
   try {
-    liveContainer =
+    const container =
       editorRef.value.getEditableContainer?.() ||
       document.querySelector('.w-e-text-container [data-slate-editor]') ||
       document.querySelector('.w-e-text-container')
-  } catch { return html }
-  if (!liveContainer) return html
+    if (!container) return
+    const bqs = container.querySelectorAll('blockquote')
+    for (const bq of bqs) {
+      const text = (bq.textContent || '').trim()
+      // 精确匹配优先
+      let key = _bqKey(text)
+      let entry = bqColorStore[key]
+      // 模糊匹配：查找 store 中以 bq 文本开头或 bq 文本以 store key 开头的项
+      if (!entry && text.length > 3) {
+        for (const [k, v] of Object.entries(bqColorStore)) {
+          if (k.startsWith(key) || key.startsWith(k)) { entry = v; break }
+        }
+      }
+      if (entry) {
+        bq.setAttribute('data-bq-color', entry.color)
+        bq.setAttribute('data-bq-border', entry.border)
+      }
+    }
+  } catch {}
+}
 
-  const allLiveBqs = Array.from(liveContainer.querySelectorAll('blockquote'))
-  if (!allLiveBqs.length) return html
+/**
+ * 保存前注入引用块颜色到 HTML 字符串。
+ * 数据源是 bqColorStore（JS 变量），不依赖编辑器 DOM。
+ * 同时注入 data-bq-border 供后端导出 DOCX 渲染左侧彩色竖线。
+ */
+const injectBqColorsToHtml = (html) => {
+  if (!html || html.indexOf('blockquote') === -1) return html
+  const storeKeys = Object.keys(bqColorStore)
+  if (!storeKeys.length) return html
 
-  // 2. 收集有色 blockquote：{ text, color }
-  const coloredItems = []
-  for (const bq of allLiveBqs) {
-    const color = bq.getAttribute('data-bq-color')
-    if (!color) continue
-    const text = (bq.textContent || '').replace(/\s+/g, ' ').trim()
-    coloredItems.push({ text, color })
-  }
-  if (!coloredItems.length) return html
-
-  // 3. 将待保存 HTML 解析为临时 DOM
   const tmpDiv = document.createElement('div')
   tmpDiv.innerHTML = html
   const parsedBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
   if (!parsedBqs.length) return html
 
-  // 4. 按文本内容锚点匹配，写入 data-bq-color
-  for (const item of coloredItems) {
-    let target = null
-    for (const bq of parsedBqs) {
-      if (bq.hasAttribute('data-bq-matched')) continue
-      const bqText = (bq.textContent || '').replace(/\s+/g, ' ').trim()
-      if (bqText === item.text) { target = bq; break }
-    }
-    if (!target) {
-      for (const bq of parsedBqs) {
-        if (bq.hasAttribute('data-bq-matched')) continue
-        const bqText = (bq.textContent || '').replace(/\s+/g, ' ').trim()
-        if (item.text && bqText && (bqText.includes(item.text) || item.text.includes(bqText))) {
-          target = bq; break
-        }
+  for (const bq of parsedBqs) {
+    const text = (bq.textContent || '').trim()
+    const key = _bqKey(text)
+    let entry = bqColorStore[key]
+    // 模糊匹配
+    if (!entry && text.length > 3) {
+      for (const [k, v] of Object.entries(bqColorStore)) {
+        if (k.startsWith(key) || key.startsWith(k)) { entry = v; break }
       }
     }
-    if (target) {
-      target.setAttribute('data-bq-matched', '1')
-      target.setAttribute('data-bq-color', item.color)
+    if (entry) {
+      bq.setAttribute('data-bq-color', entry.color)
+      bq.setAttribute('data-bq-border', entry.border)
     }
   }
 
-  // 5. 清理临时标记
-  for (const bq of parsedBqs) bq.removeAttribute('data-bq-matched')
+  // 传播：未匹配的相邻块继承最近有色块的颜色
+  const resultBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
+  for (let i = 0; i < resultBqs.length; i++) {
+    if (resultBqs[i].hasAttribute('data-bq-color')) {
+      const color = resultBqs[i].getAttribute('data-bq-color')
+      const border = resultBqs[i].getAttribute('data-bq-border')
+      for (let j = i + 1; j < resultBqs.length; j++) {
+        if (resultBqs[j].hasAttribute('data-bq-color')) break
+        resultBqs[j].setAttribute('data-bq-color', color)
+        if (border) resultBqs[j].setAttribute('data-bq-border', border)
+      }
+    }
+  }
+  for (let i = resultBqs.length - 1; i >= 0; i--) {
+    if (resultBqs[i].hasAttribute('data-bq-color')) {
+      const color = resultBqs[i].getAttribute('data-bq-color')
+      const border = resultBqs[i].getAttribute('data-bq-border')
+      for (let j = i - 1; j >= 0; j--) {
+        if (resultBqs[j].hasAttribute('data-bq-color')) break
+        resultBqs[j].setAttribute('data-bq-color', color)
+        if (border) resultBqs[j].setAttribute('data-bq-border', border)
+      }
+    }
+  }
 
   return tmpDiv.innerHTML
 }
 
 /**
- * 从已保存 HTML 中提取 data-bq-color 并恢复到编辑器 DOM。
- * 页面加载/内容重置后调用。CSS 属性选择器会处理视觉渲染。
+ * 从已保存 HTML 中提取颜色信息填充 bqColorStore 并同步到编辑器 DOM。
+ * 页面加载/内容重置后调用。
  */
 const restoreBqColors = () => {
-  if (!editorRef.value || !req.value?.description) return
-
-  // 1. 解析已保存 HTML，提取 data-bq-color
+  if (!req.value?.description) return
   const tmpDiv = document.createElement('div')
   tmpDiv.innerHTML = req.value.description
   const rawBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
-  const colorMap = []
   for (const bq of rawBqs) {
     const color = bq.getAttribute('data-bq-color')
     if (!color) continue
-    const text = (bq.textContent || '').replace(/\s+/g, ' ').trim()
-    colorMap.push({ text, color })
+    const text = (bq.textContent || '').trim()
+    const border = bq.getAttribute('data-bq-border') || bqBorderColorMap[color] || color
+    bqColorStore[_bqKey(text)] = { color, border }
   }
-  if (!colorMap.length) return
-
-  // 2. 在编辑器 DOM 中查找匹配的 blockquote，设置 data-bq-color
-  const container =
-    editorRef.value.getEditableContainer?.() ||
-    document.querySelector('.w-e-text-container [data-slate-editor]') ||
-    document.querySelector('.w-e-text-container')
-  if (!container) return
-
-  const editorBqs = container.querySelectorAll('blockquote')
-  const used = new Set()
-
-  for (const item of colorMap) {
-    for (const bq of editorBqs) {
-      if (used.has(bq)) continue
-      const bqText = (bq.textContent || '').replace(/\s+/g, ' ').trim()
-      if (bqText === item.text ||
-          (item.text && bqText && (bqText.includes(item.text) || item.text.includes(bqText)))) {
-        bq.setAttribute('data-bq-color', item.color)
-        used.add(bq)
-        break
-      }
-    }
-  }
+  syncBqColorsToDom()
 }
 
 const doSaveDesc = async () => {
@@ -712,6 +740,25 @@ const doSaveDesc = async () => {
   } catch {
     saveStatus.value = 'error'
     setTimeout(() => { saveStatus.value = '' }, 3000)
+  }
+}
+
+const doExportRequirement = async () => {
+  if (!req.value) return
+  exportLoading.value = true
+  try {
+    const res = await exportRequirementDoc(projectId.value, req.value.id)
+    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${req.value.title}_需求文档.docx`
+    a.click()
+    window.URL.revokeObjectURL(url)
+  } catch (e) {
+    ElMessage.error('导出失败')
+  } finally {
+    exportLoading.value = false
   }
 }
 
