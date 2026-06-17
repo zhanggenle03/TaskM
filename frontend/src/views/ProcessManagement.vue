@@ -48,14 +48,8 @@
           <el-switch v-model="autostartEnabled" @change="onAutostartToggle" :loading="saving" size="small" />
         </div>
       </template>
-      <template v-if="autostartEnabled">
-        <p class="hint">开机时自动启动 TaskM 后端和前端服务。</p>
-        <el-radio-group v-model="autostartMode" @change="onAutostartModeChange" :disabled="saving">
-          <el-radio value="backend" class="radio-compact">启动服务 — 开机后在后台静默启动后端和前端，不打开浏览器</el-radio>
-          <el-radio value="full" class="radio-compact">启动服务并打开浏览器 — 开机后启动服务，并自动打开浏览器进入主界面</el-radio>
-        </el-radio-group>
-      </template>
-      <p v-else class="hint muted">开机自启动已关闭，开启后可选择启动方式。</p>
+      <p class="hint">开启后，开机时自动启动 TaskM 后台服务，图标最小化到系统托盘。</p>
+      <p class="hint muted">右键托盘图标可打开浏览器或退出服务。</p>
     </el-card>
 
     <!-- ── 文件 & 工作区 ── -->
@@ -92,7 +86,6 @@ const saving = ref(false)
 const status = ref({ backend: false, frontend: false })
 const isStandalone = ref(false)
 const autostartEnabled = ref(false)
-const autostartMode = ref('backend')
 
 // ── 附件大小限制 ──
 const maxFileSizeMB = ref(50)
@@ -176,29 +169,17 @@ async function refreshAutostart() {
   try {
     const res = await http.get('/process/autostart')
     autostartEnabled.value = res.enabled
-    autostartMode.value = res.mode === 'off' ? 'backend' : res.mode
   } catch {
     autostartEnabled.value = false
-    autostartMode.value = 'backend'
   }
 }
 
 async function onAutostartToggle(val) {
   saving.value = true
   try {
-    await http.put('/process/autostart', { mode: val ? autostartMode.value : 'off' })
+    await http.put('/process/autostart', { mode: val ? 'on' : 'off' })
   } catch {
     autostartEnabled.value = !val
-  }
-  saving.value = false
-}
-
-async function onAutostartModeChange(val) {
-  saving.value = true
-  try {
-    await http.put('/process/autostart', { mode: val })
-  } catch {
-    autostartMode.value = autostartMode.value
   }
   saving.value = false
 }

@@ -1,3 +1,6 @@
 {
-  "max_file_size_mb": 500
+  "max_file_size_mb": 500,
+  "autostart": {
+    "mode": "on"
+  }
 }

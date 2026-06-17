@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul 2>nul
 cd /d "%~dp0"
 
 :: Kill old backend via PID file
@@ -14,14 +15,20 @@ if exist "taskm.pid" (
 echo Cleaning old frontend...
 taskkill /F /IM node.exe 2>nul
 
-:: Detect pythonw location
-set "PYTHONW=pythonw"
-where pythonw >nul 2>&1
-if errorlevel 1 (
-    if exist "D:\python310\pythonw.exe" set "PYTHONW=D:\python310\pythonw.exe"
-    if exist "C:\python310\pythonw.exe" set "PYTHONW=C:\python310\pythonw.exe"
-    if exist "C:\Python310\pythonw.exe" set "PYTHONW=C:\Python310\pythonw.exe"
-    if exist "C:\Program Files\Python310\pythonw.exe" set "PYTHONW=C:\Program Files\Python310\pythonw.exe"
+:: Detect pythonw location (prefer system Python 3.10)
+set "PYTHONW="
+if exist "D:\python310\pythonw.exe" set "PYTHONW=D:\python310\pythonw.exe"
+if not defined PYTHONW if exist "C:\python310\pythonw.exe" set "PYTHONW=C:\python310\pythonw.exe"
+if not defined PYTHONW if exist "C:\Python310\pythonw.exe" set "PYTHONW=C:\Python310\pythonw.exe"
+if not defined PYTHONW if exist "C:\Program Files\Python310\pythonw.exe" set "PYTHONW=C:\Program Files\Python310\pythonw.exe"
+if not defined PYTHONW (
+    where pythonw >nul 2>&1
+    if errorlevel 1 (
+        echo Error: pythonw not found!
+        pause
+        exit /b 1
+    )
+    set "PYTHONW=pythonw"
 )
 
 :: Start backend
@@ -35,11 +42,6 @@ echo WshShell.Run "cmd /c cd /d """"%~dp0frontend"""" && npm run dev", 0, False 
 cscript //nologo %temp%\fe.vbs
 del %temp%\fe.vbs
 
-:: Wait, then open browser
-echo Opening browser...
-timeout /t 5 >nul
-start http://localhost:5173/
-
-echo Done!
+echo TaskM 启动完成 — 右键系统托盘图标打开浏览器
 timeout /t 2 >nul
 exit

@@ -6,6 +6,7 @@ import socket
 import time
 import atexit
 import subprocess
+import threading
 
 # ── 强制 UTF-8 模式 ──
 # pythonw.exe 启动时默认编码是 mbcs/GBK，会导致 openpyxl 读取含中文表头的
@@ -181,6 +182,16 @@ server_sock = bind_server_socket("0.0.0.0", BACKEND_PORT)
 
 # ── 切换工作目录 ──
 os.chdir(BACKEND_DIR)
+
+# ── 启动系统托盘（子线程） ──
+_tray_thread = None
+try:
+    from app.tray_icon import start_tray
+    _tray_thread = threading.Thread(target=start_tray, daemon=True, name="TrayIcon")
+    _tray_thread.start()
+    print("[启动] 系统托盘已启动", flush=True)
+except Exception as e:
+    print(f"[启动] 系统托盘启动失败: {e}", flush=True)
 
 # ── 启动 uvicorn（使用预绑定的 socket） ──
 try:

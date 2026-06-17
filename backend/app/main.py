@@ -19,6 +19,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[lifespan] on_startup failed: {e}", flush=True)
 
+    # ── 启动后尝试重新应用自启动（无沙箱限制时生效） ──
+    try:
+        from .settings_manager import load_settings
+        from .routers.process import _enable_autostart, _check_startup_bat, AUTOSTART_SETTINGS_KEY
+        saved = load_settings().get(AUTOSTART_SETTINGS_KEY, {})
+        saved_mode = saved.get("mode", "off")
+        if saved_mode != "off" and not _check_startup_bat():
+            _enable_autostart()
+            print(f"[lifespan] 已重新应用自启动", flush=True)
+    except Exception as e:
+        print(f"[lifespan] 应用自启动失败: {e}", flush=True)
+
     yield
 
     # ── 关闭时 ──

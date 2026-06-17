@@ -51,18 +51,22 @@ def _hide_console():
 # ── 启动 uvicorn 生产服务 ──
 if __name__ == "__main__":
     import threading
-    import webbrowser
     import uvicorn
 
-    # 打包模式：自动弹出浏览器，服务就绪后隐藏控制台
+    # 打包模式：启动系统托盘（子线程），服务就绪后隐藏控制台
     if getattr(sys, "frozen", False) and os.environ.get("TASKM_FRONTEND_DIST"):
-        def _startup_tasks():
+        def _on_startup():
             import time
             time.sleep(1.5)  # 等 uvicorn 完全就绪
             _hide_console()   # 隐藏控制台窗口
-            webbrowser.open("http://localhost:8000")
+            # 启动系统托盘
+            try:
+                from app.tray_icon import start_tray
+                threading.Thread(target=start_tray, daemon=True, name="TrayIcon").start()
+            except Exception:
+                pass
 
-        threading.Thread(target=_startup_tasks, daemon=True).start()
+        threading.Thread(target=_on_startup, daemon=True).start()
 
     uvicorn.run(
         app,
