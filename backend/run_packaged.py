@@ -3,6 +3,11 @@
 import os
 import sys
 
+# ============================================================
+# 关键：模块级显式导入，PyInstaller 据此追踪依赖，打包整个 app 包
+# ============================================================
+from app.main import app
+
 # ── 确定前端 dist 路径 ──
 # PyInstaller 打包后将前端资源放在 _internal/frontend_dist/ 下
 if getattr(sys, "_MEIPASS", None):
@@ -18,7 +23,7 @@ if os.path.isdir(FRONTEND_DIST):
 else:
     print(f"[打包入口] 警告：前端资源目录不存在 ({FRONTEND_DIST})，将仅以 API 模式运行", flush=True)
 
-# ── 后端工作目录 ──
+# ── 后端工作目录（确保数据库/上传目录相对于打包后的位置） ──
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BACKEND_DIR)
 
@@ -28,7 +33,7 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "app.main:app",
+        app,                    # 直接传 app 对象，不再用字符串
         host="0.0.0.0",
         port=8000,
         reload=False,
