@@ -31,14 +31,19 @@ BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BACKEND_DIR)
 
 
-# ── 隐藏控制台窗口 ──
+# ── 隐藏控制台窗口（FreeConsole 彻底断开，非 SW_HIDE） ──
 def _hide_console():
-    """通过 Windows API 隐藏当前进程的控制台窗口"""
+    """断开进程与控制台的连接，CMD 窗口立即关闭"""
     try:
         import ctypes
-        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
-        if hwnd:
-            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+        # 先将 stdout/stderr 重定向到日志文件，FreeConsole 后不会再输出到 CMD
+        log_path = os.path.join(BACKEND_DIR, "taskm.log")
+        fh = open(log_path, "w", encoding="utf-8", buffering=1)
+        sys.stdout = fh
+        sys.stderr = fh
+        print(f"[TaskM] 日志文件: {log_path}", flush=True)
+        # 彻底断开控制台
+        ctypes.windll.kernel32.FreeConsole()
     except Exception:
         pass
 
