@@ -61,9 +61,24 @@ def _open_browser():
 
 
 def _quit_app():
-    """退出应用"""
+    """退出应用：先杀前端端口，再自毁退出"""
+    import subprocess
+    # 杀前端端口 5173（开发版 Vite）
+    try:
+        result = subprocess.run(
+            'netstat -ano | findstr ":5173 " | findstr LISTENING',
+            shell=True, capture_output=True, text=True,
+        )
+        pids = set()
+        for line in result.stdout.strip().splitlines():
+            parts = line.strip().split()
+            if parts:
+                pids.add(parts[-1])
+        for pid in pids:
+            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
+    except Exception:
+        pass
     from .process_manager import shutdown_service
-    # 直接自毁式退出
     shutdown_service()
 
 
