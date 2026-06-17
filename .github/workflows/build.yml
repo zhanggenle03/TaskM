@@ -79,7 +79,6 @@ jobs:
           pyinstaller `
             --onedir `
             --name TaskM `
-            --noconsole `
             --icon taskm.ico `
             --add-data "frontend_dist;frontend_dist" `
             --hidden-import "uvicorn.logging" `

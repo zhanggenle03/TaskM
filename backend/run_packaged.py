@@ -16,9 +16,9 @@ else:
 
 if os.path.isdir(FRONTEND_DIST):
     os.environ["TASKM_FRONTEND_DIST"] = FRONTEND_DIST
-    print(f"[打包入口] 前端静态资源路径: {FRONTEND_DIST}", flush=True)
+    print(f"[TaskM] 前端资源: {FRONTEND_DIST}", flush=True)
 else:
-    print(f"[打包入口] 警告：前端资源目录不存在 ({FRONTEND_DIST})，将仅以 API 模式运行", flush=True)
+    print(f"[TaskM] 前端资源不存在 ({FRONTEND_DIST})，仅 API 模式", flush=True)
 
 # ============================================================
 # 导入 app 主模块（PyInstaller 据此静态追踪依赖）
@@ -30,12 +30,17 @@ from app.main import app
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BACKEND_DIR)
 
-# ── noconsole 模式：重定向日志到文件 ──
-if getattr(sys, "frozen", False) and not sys.stdout.isatty():
-    log_path = os.path.join(BACKEND_DIR, "taskm.log")
-    sys.stdout = open(log_path, "w", encoding="utf-8", buffering=1)
-    sys.stderr = sys.stdout
-    print(f"[打包入口] 日志文件: {log_path}", flush=True)
+
+# ── 隐藏控制台窗口 ──
+def _hide_console():
+    """通过 Windows API 隐藏当前进程的控制台窗口"""
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 0)  # SW_HIDE
+    except Exception:
+        pass
 
 
 # ── 启动 uvicorn 生产服务 ──
@@ -44,14 +49,15 @@ if __name__ == "__main__":
     import webbrowser
     import uvicorn
 
-    # 打包模式下自动弹出浏览器
+    # 打包模式：自动弹出浏览器，服务就绪后隐藏控制台
     if getattr(sys, "frozen", False) and os.environ.get("TASKM_FRONTEND_DIST"):
-        def _open_browser():
+        def _startup_tasks():
             import time
             time.sleep(1.5)  # 等 uvicorn 完全就绪
+            _hide_console()   # 隐藏控制台窗口
             webbrowser.open("http://localhost:8000")
 
-        threading.Thread(target=_open_browser, daemon=True).start()
+        threading.Thread(target=_startup_tasks, daemon=True).start()
 
     uvicorn.run(
         app,
