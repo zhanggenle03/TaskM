@@ -86,9 +86,13 @@ jobs:
             --hidden-import "uvicorn.loops.auto" `
             --hidden-import "uvicorn.protocols" `
             --hidden-import "uvicorn.protocols.http.auto" `
-            --hidden-import "uvicorn.protocols.websockets.auto" `
             --hidden-import "uvicorn.lifespan.on" `
             --hidden-import "sqlalchemy.sql.default_comparator" `
+            --hidden-import "pythoncom" `
+            --hidden-import "win32com" `
+            --hidden-import "win32com.client" `
+            --hidden-import "win32api" `
+            --hidden-import "win32gui" `
             --clean `
             run_packaged.py
 

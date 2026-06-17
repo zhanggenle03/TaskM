@@ -1,9 +1,19 @@
-"""Office 文档转 PDF — 使用 Microsoft Office COM 自动化"""
+"""Office 文档转 PDF — 使用 Microsoft Office COM 自动化
+
+注意：pywin32 是可选依赖。未安装时，转换功能静默返回 None，
+不影响应用其他功能。
+"""
 
 import os
-import pythoncom
-import win32com.client
-from win32com.client import constants
+
+# pywin32 可选加载
+try:
+    import pythoncom
+    import win32com.client
+    from win32com.client import constants
+    PYWIN32_AVAILABLE = True
+except ImportError:
+    PYWIN32_AVAILABLE = False
 
 
 OFFICE_EXTS = {'.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'}
@@ -15,7 +25,11 @@ def is_office_file(file_path: str) -> bool:
 
 
 def convert_to_pdf(input_path: str, output_dir: str) -> str | None:
-    """将 Office 文档转换为 PDF，返回 PDF 路径；失败返回 None。"""
+    """将 Office 文档转换为 PDF，返回 PDF 路径；失败或不可用时返回 None。"""
+    if not PYWIN32_AVAILABLE:
+        print("[office_convert] pywin32 未安装，跳过 Office 转换")
+        return None
+
     name = os.path.splitext(os.path.basename(input_path))[0]
     output_path = os.path.join(output_dir, f"{name}.pdf")
 
