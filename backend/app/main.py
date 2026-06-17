@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi import Request
 from .database import Base, engine, UPLOAD_DIR
 
 from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements
@@ -53,9 +55,32 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
-@app.get("/")
-def root():
-    return {"message": "TaskM API 运行中", "docs": "/docs"}
+# ── 生产模式：前端静态文件服务（通过环境变量 TASKM_FRONTEND_DIST 控制） ──
+_FRONTEND_DIST = os.environ.get("TASKM_FRONTEND_DIST", "")
+
+if _FRONTEND_DIST and os.path.isdir(_FRONTEND_DIST):
+    # 挂载前端静态资源目录（JS/CSS/字体等）
+    assets_dir = os.path.join(_FRONTEND_DIST, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend_assets")
+
+    # 覆写根路由为前端首页
+    @app.get("/", include_in_schema=False)
+    async def serve_frontend():
+        return FileResponse(os.path.join(_FRONTEND_DIST, "index.html"), media_type="text/html")
+
+    # SPA fallback：非 API/非文件路由返回 index.html
+    @app.exception_handler(404)
+    async def spa_fallback(request: Request, exc):
+        path = request.url.path
+        if not path.startswith("/api") and not path.startswith("/uploads"):
+            return FileResponse(os.path.join(_FRONTEND_DIST, "index.html"), media_type="text/html")
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+else:
+    # ── 开发模式：API 运行状态（由 Vite 代理代理 /api） ──
+    @app.get("/")
+    def root():
+        return {"message": "TaskM API 运行中", "docs": "/docs"}
 
 
 @app.get("/ping")

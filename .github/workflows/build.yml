@@ -1,0 +1,123 @@
+# =============================================================================
+# TaskM — GitHub Actions 自动打包 & 发布工作流
+# =============================================================================
+#
+# 触发策略：
+#   - 任何 push 均触发打包流程（分支提交 / tag 推送）
+#   - 仅推送 v* 语义化 tag（例如 v1.0.0、v2.1.0-beta）时，
+#     额外自动创建 GitHub Release 并附带打包产物
+#
+# 目标平台：Windows x64
+# 打包工具：PyInstaller --onedir（多文件可执行程序，非单文件）
+# 前端框架：Vue 3 + Vite，构建后嵌入 PyInstaller 产物
+# 运行要求：无需目标机器安装 Python / Node / 任何运行时
+#
+# =============================================================================
+
+name: Build & Release
+
+on: push
+
+# ─────────────────────────────────────────────
+# 权限声明（创建 Release 需要的内容写入权限）
+# ─────────────────────────────────────────────
+permissions:
+  contents: write
+
+jobs:
+  # ─────────────────────────────────────────────
+  #  Job: Windows x64 打包
+  # ─────────────────────────────────────────────
+  build-windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. 检出代码 ──
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. 安装 Python 3.10 ──
+      - name: Setup Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # ── 3. 安装后端 Python 依赖 ──
+      - name: Install Python dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pyinstaller
+
+      # ── 4. 安装 Node.js 22 ──
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      # ── 5. 构建前端 ──
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+
+      # ── 6. 前端产物合并入后端目录 ──
+      - name: Copy frontend dist to backend
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path backend/frontend_dist
+          Copy-Item -Recurse -Force -Path frontend/dist/* -Destination backend/frontend_dist/
+
+      # ── 7. PyInstaller 打包（--onedir 多文件模式） ──
+      - name: Package with PyInstaller
+        shell: pwsh
+        run: |
+          cd backend
+          pyinstaller `
+            --onedir `
+            --name TaskM `
+            --add-data "frontend_dist;frontend_dist" `
+            --hidden-import "uvicorn.logging" `
+            --hidden-import "uvicorn.loops" `
+            --hidden-import "uvicorn.loops.auto" `
+            --hidden-import "uvicorn.protocols" `
+            --hidden-import "uvicorn.protocols.http.auto" `
+            --hidden-import "uvicorn.protocols.websockets.auto" `
+            --hidden-import "uvicorn.lifespan.on" `
+            --hidden-import "sqlalchemy.sql.default_comparator" `
+            --clean `
+            run_packaged.py
+
+      # ── 8. 生成构建文件名 ──
+      - name: Set build name
+        id: vars
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".Replace("/", "-")
+          echo "build_name=TaskM-${tag}-windows-x64" >> $env:GITHUB_OUTPUT
+
+      # ── 9. 压缩打包产物 ──
+      - name: Compress artifact
+        shell: pwsh
+        run: |
+          Compress-Archive -Path backend/dist/TaskM -DestinationPath "backend/dist/${{ steps.vars.outputs.build_name }}.zip"
+
+      # ── 10. 上传 Artifact ──
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.vars.outputs.build_name }}
+          path: backend/dist/${{ steps.vars.outputs.build_name }}.zip
+          retention-days: 90
+
+      # ── 11. 创建 Release（仅 v* 标签触发） ──
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TaskM ${{ github.ref_name }}
+          files: backend/dist/${{ steps.vars.outputs.build_name }}.zip
+          generate_release_notes: true
