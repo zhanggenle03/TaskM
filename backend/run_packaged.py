@@ -51,22 +51,26 @@ def _hide_console():
 # ── 启动 uvicorn 生产服务 ──
 if __name__ == "__main__":
     import threading
+    import time
     import uvicorn
+    from app.tray_icon import start_tray, _get_frontend_url
 
-    # 打包模式：启动系统托盘（子线程），服务就绪后隐藏控制台
-    if getattr(sys, "frozen", False) and os.environ.get("TASKM_FRONTEND_DIST"):
-        def _on_startup():
-            import time
-            time.sleep(1.5)  # 等 uvicorn 完全就绪
-            _hide_console()   # 隐藏控制台窗口
-            # 启动系统托盘
-            try:
-                from app.tray_icon import start_tray
-                threading.Thread(target=start_tray, daemon=True, name="TrayIcon").start()
-            except Exception:
-                pass
+    # 服务就绪后：隐藏控制台 + 启动系统托盘
+    is_frozen = getattr(sys, "frozen", False)
 
-        threading.Thread(target=_on_startup, daemon=True).start()
+    def _on_startup():
+        time.sleep(1.5)  # 等 uvicorn 完全就绪
+        if is_frozen:
+            _hide_console()
+        # 启动托盘（始终启动，托盘是唯一的交互入口）
+        try:
+            tray_thread = threading.Thread(target=start_tray, daemon=True, name="TrayIcon")
+            tray_thread.start()
+            print("[TaskM] 托盘已启动", flush=True)
+        except Exception as e:
+            print(f"[TaskM] 托盘启动失败: {e}", flush=True)
+
+    threading.Thread(target=_on_startup, daemon=True).start()
 
     uvicorn.run(
         app,

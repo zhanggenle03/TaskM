@@ -31,10 +31,19 @@ def _get_frontend_url() -> str:
 
 
 def _get_icon_image():
-    """加载托盘图标（优先使用 backend/taskm.ico，不存在则生成占位图标）"""
-    ico_path = BACKEND_DIR / "taskm.ico"
-    if ico_path.exists():
-        return Image.open(str(ico_path))
+    """
+    加载托盘图标
+    开发版：backend/taskm.ico
+    打包版：优先 _MEIPASS/（--add-data 自动打包），其次 exe 同目录（手动放入）
+    """
+    candidates = [BACKEND_DIR / "taskm.ico"]
+    if getattr(sys, "frozen", False):
+        # 打包版也检查 exe 旁边（用户手动放进去的备选）
+        candidates.append(Path(sys.executable).parent / "taskm.ico")
+
+    for p in candidates:
+        if p.exists():
+            return Image.open(str(p))
 
     # fallback：生成 64x64 蓝色 "T" 占位图标
     size = 64
