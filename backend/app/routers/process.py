@@ -1,6 +1,6 @@
 """
 进程管理路由
-提供服务状态检测、服务关闭（自毁模式）、Windows 开机自启动管理
+提供服务状态检测、Windows 开机自启动管理、服务关闭
 """
 import os
 import socket
@@ -25,6 +25,11 @@ REG_NAME = "TaskM Backend"
 
 # ── 辅助方法 ──
 
+def _is_standalone() -> bool:
+    """检测是否为打包版（前后端合并到同一端口）"""
+    return bool(os.environ.get("TASKM_FRONTEND_DIST"))
+
+
 def _port_open(port: int) -> bool:
     """检查本地端口是否正在监听（支持 IPv4 和 IPv6）"""
     for host, family in [("127.0.0.1", socket.AF_INET), ("::1", socket.AF_INET6)]:
@@ -38,6 +43,24 @@ def _port_open(port: int) -> bool:
         except Exception:
             continue
     return False
+
+
+def _kill_port(port: int):
+    """根据端口号杀死监听进程及其子进程树（Windows）"""
+    try:
+        result = subprocess.run(
+            f'netstat -ano | findstr ":{port} " | findstr LISTENING',
+            shell=True, capture_output=True, text=True,
+        )
+        pids = set()
+        for line in result.stdout.strip().splitlines():
+            parts = line.strip().split()
+            if parts:
+                pids.add(parts[-1])
+        for pid in pids:
+            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
+    except Exception:
+        pass
 
 
 def _read_registry() -> str | None:
@@ -149,35 +172,6 @@ def _write_registry(mode: str | None):
     winreg.CloseKey(key)
 
 
-def _kill_process_on_port(port: int):
-    """根据端口号杀死进程及其子进程树（Windows）"""
-    try:
-        result = subprocess.run(
-            f'netstat -ano | findstr ":{port} " | findstr LISTENING',
-            shell=True, capture_output=True, text=True
-        )
-        pids = set()
-        for line in result.stdout.strip().splitlines():
-            parts = line.strip().split()
-            if parts:
-                pids.add(parts[-1])
-        for pid in pids:
-            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
-    except Exception:
-        pass
-
-
-def _kill_by_pid_file():
-    """通过 PID 文件杀死后端进程（比端口反查更可靠）"""
-    try:
-        if PID_FILE.exists():
-            pid = int(PID_FILE.read_text().strip())
-            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
-            PID_FILE.unlink(missing_ok=True)
-    except Exception:
-        pass
-
-
 # ── API ──
 
 class AutostartMode(BaseModel):
@@ -186,10 +180,18 @@ class AutostartMode(BaseModel):
 
 @router.get("/status")
 def get_status():
-    """查询各服务运行状态"""
+    """查询各服务运行状态（打包版前后端合并为同一端口）"""
+    backend_up = _port_open(8000)
+    if _is_standalone():
+        return {
+            "backend": backend_up,
+            "frontend": backend_up,
+            "standalone": True,
+        }
     return {
-        "backend": _port_open(8000),
+        "backend": backend_up,
         "frontend": _port_open(5173),
+        "standalone": False,
     }
 
 
@@ -251,86 +253,11 @@ def update_settings(body: SettingsUpdate):
     return save_settings(data)
 
 
-# ── 停止 & 重启服务 ──
-
-
-@router.post("/stop-backend")
-def stop_backend():
-    """
-    关闭后端服务（自毁模式）
-    """
+@router.post("/shutdown")
+def shutdown():
+    """关闭 TaskM 服务（开发版同时 kill 前端端口，2 秒后退出进程）"""
+    if not _is_standalone():
+        _kill_port(5173)
     from app.process_manager import shutdown_service
-    threading.Timer(0.5, shutdown_service).start()
-    return {"status": "stopped", "service": "backend"}
-
-
-@router.post("/restart-backend")
-def restart_backend():
-    """重启后端服务：启动新进程后再关闭当前进程"""
-    run_py = str(ROOT / "backend" / "run.py")
-    subprocess.Popen(
-        ["python", run_py],
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    from app.process_manager import shutdown_service
-    threading.Timer(0.5, shutdown_service).start()
-    return {"status": "restarting", "service": "backend"}
-
-
-@router.post("/stop-frontend")
-def stop_frontend():
-    """关闭前端服务"""
-    _kill_process_on_port(5173)
-    return {"status": "stopped", "service": "frontend"}
-
-
-@router.post("/restart-frontend")
-def restart_frontend():
-    """重启前端页面服务：杀死旧进程后启动新 Vite"""
-    _kill_process_on_port(5173)
-    frontend_dir = str(ROOT / "frontend")
-    subprocess.Popen(
-        ["npx", "vite"],
-        cwd=frontend_dir,
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return {"status": "restarting", "service": "frontend"}
-
-
-@router.post("/stop-all")
-def stop_all():
-    """一键关闭前后端服务"""
-    _kill_process_on_port(5173)
-    from app.process_manager import shutdown_service
-    threading.Timer(0.5, shutdown_service).start()
-    return {"status": "stopped", "services": ["backend", "frontend"]}
-
-
-@router.post("/restart-all")
-def restart_all():
-    """重启所有服务"""
-    # 重启前端
-    _kill_process_on_port(5173)
-    frontend_dir = str(ROOT / "frontend")
-    subprocess.Popen(
-        ["npx", "vite"],
-        cwd=frontend_dir,
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    # 重启后端
-    run_py = str(ROOT / "backend" / "run.py")
-    subprocess.Popen(
-        ["python", run_py],
-        shell=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    from app.process_manager import shutdown_service
-    threading.Timer(0.5, shutdown_service).start()
-    return {"status": "restarting", "services": ["backend", "frontend"]}
+    threading.Timer(2.0, shutdown_service).start()
+    return {"status": "shutting_down"}

@@ -30,6 +30,13 @@ from app.main import app
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BACKEND_DIR)
 
+# ── noconsole 模式：重定向日志到文件 ──
+if getattr(sys, "frozen", False) and not sys.stdout.isatty():
+    log_path = os.path.join(BACKEND_DIR, "taskm.log")
+    sys.stdout = open(log_path, "w", encoding="utf-8", buffering=1)
+    sys.stderr = sys.stdout
+    print(f"[打包入口] 日志文件: {log_path}", flush=True)
+
 
 # ── 启动 uvicorn 生产服务 ──
 if __name__ == "__main__":

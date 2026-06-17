@@ -11,28 +11,31 @@
         </div>
       </template>
       <div class="svc-grid">
-        <div class="svc-row" :class="{ on: status.backend }">
-          <span class="dot" :class="{ on: status.backend }"></span>
-          <span class="svc-name">后端服务</span>
-          <span class="svc-stat">{{ status.backend ? '运行中 (8000)' : '已停止' }}</span>
-          <span style="flex:1"></span>
-          <el-button v-if="status.backend" size="small" text type="warning" @click="restartBackend" :loading="restarting.backend">
-            <el-icon><Refresh /></el-icon> 重启
-          </el-button>
-        </div>
-        <div class="svc-row" :class="{ on: status.frontend }">
-          <span class="dot" :class="{ on: status.frontend }"></span>
-          <span class="svc-name">前端页面</span>
-          <span class="svc-stat">{{ status.frontend ? '运行中 (5173)' : '已停止' }}</span>
-          <span style="flex:1"></span>
-          <el-button v-if="status.frontend" size="small" text type="warning" @click="restartFrontend" :loading="restarting.frontend">
-            <el-icon><Refresh /></el-icon> 重启
-          </el-button>
-        </div>
+        <!-- 打包版：统一显示 -->
+        <template v-if="isStandalone">
+          <div class="svc-row" :class="{ on: status.backend }">
+            <span class="dot" :class="{ on: status.backend }"></span>
+            <span class="svc-name">TaskM 服务</span>
+            <span class="svc-stat">{{ status.backend ? '运行中 (8000)' : '已停止' }}</span>
+          </div>
+        </template>
+        <!-- 开发版：分开显示 -->
+        <template v-else>
+          <div class="svc-row" :class="{ on: status.backend }">
+            <span class="dot" :class="{ on: status.backend }"></span>
+            <span class="svc-name">后端服务</span>
+            <span class="svc-stat">{{ status.backend ? '运行中 (8000)' : '已停止' }}</span>
+          </div>
+          <div class="svc-row" :class="{ on: status.frontend }">
+            <span class="dot" :class="{ on: status.frontend }"></span>
+            <span class="svc-name">前端页面</span>
+            <span class="svc-stat">{{ status.frontend ? '运行中 (5173)' : '已停止' }}</span>
+          </div>
+        </template>
       </div>
       <div class="card-foot">
-        <el-button size="small" type="warning" plain @click="restartAll" :loading="restarting.all" :disabled="!status.backend && !status.frontend">
-          <el-icon><Refresh /></el-icon> 重启所有服务
+        <el-button size="small" type="danger" plain @click="shutdownService" :loading="shuttingDown" :disabled="!status.backend">
+          关闭服务
         </el-button>
       </div>
     </el-card>
@@ -87,7 +90,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 const refreshing = ref(false)
 const saving = ref(false)
 const status = ref({ backend: false, frontend: false })
-const restarting = ref({ backend: false, frontend: false, all: false })
+const isStandalone = ref(false)
 const autostartEnabled = ref(false)
 const autostartMode = ref('backend')
 
@@ -97,6 +100,9 @@ const settingsSaving = ref(false)
 
 // ── 工作文件夹 ──
 const openingWorkspace = ref(false)
+
+// ── 关闭服务 ──
+const shuttingDown = ref(false)
 
 async function openWorkspace() {
   openingWorkspace.value = true
@@ -129,11 +135,37 @@ async function saveFileSize() {
   settingsSaving.value = false
 }
 
+async function shutdownService() {
+  try {
+    await ElMessageBox.confirm('确认关闭 TaskM 服务？', '确认操作', {
+      confirmButtonText: '确认关闭',
+      cancelButtonText: '取消',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  shuttingDown.value = true
+  try {
+    await http.post('/process/shutdown')
+    ElMessage.success('服务已关闭')
+    status.value.backend = false
+    status.value.frontend = false
+    // 等待提示显示后关闭标签页
+    setTimeout(() => { window.close() }, 800)
+  } catch {
+    status.value.backend = false
+    status.value.frontend = false
+  }
+  shuttingDown.value = false
+}
+
 async function refreshStatus() {
   refreshing.value = true
   try {
     const res = await http.get('/process/status')
     status.value = res
+    isStandalone.value = res.standalone || false
   } catch {
     status.value = { backend: false, frontend: false }
   }
@@ -169,58 +201,6 @@ async function onAutostartModeChange(val) {
     autostartMode.value = autostartMode.value
   }
   saving.value = false
-}
-
-async function confirmRestart(title) {
-  try {
-    await ElMessageBox.confirm(title, '确认操作', {
-      confirmButtonText: '确认重启',
-      cancelButtonText: '取消',
-      type: 'warning',
-    })
-    return true
-  } catch {
-    return false
-  }
-}
-
-async function restartBackend() {
-  if (!(await confirmRestart('确认重启后端服务？\n重启期间 API 将短暂不可用。'))) return
-  restarting.value.backend = true
-  try {
-    await http.post('/process/restart-backend')
-    ElMessage.success('后端服务正在重启...')
-  } catch {
-    ElMessage.success('后端服务正在重启...')
-  }
-  status.value.backend = false
-  restarting.value.backend = false
-}
-
-async function restartFrontend() {
-  if (!(await confirmRestart('确认重启前端服务？\n重启期间页面将刷新。'))) return
-  restarting.value.frontend = true
-  try {
-    await http.post('/process/restart-frontend')
-    ElMessage.success('前端服务正在重启...')
-  } catch {
-    ElMessage.success('前端服务正在重启...')
-  }
-  status.value.frontend = false
-  restarting.value.frontend = false
-}
-
-async function restartAll() {
-  if (!(await confirmRestart('确认重启所有服务？\n重启后页面将自动刷新。'))) return
-  restarting.value.all = true
-  try {
-    await http.post('/process/restart-all')
-    ElMessage.success('所有服务正在重启...')
-  } catch {
-    ElMessage.success('所有服务正在重启...')
-  }
-  // 后端重启后刷新页面
-  setTimeout(() => { window.location.reload() }, 2000)
 }
 
 onMounted(() => {
