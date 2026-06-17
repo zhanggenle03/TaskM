@@ -33,10 +33,21 @@ os.chdir(BACKEND_DIR)
 
 # ── 启动 uvicorn 生产服务 ──
 if __name__ == "__main__":
+    import threading
+    import webbrowser
     import uvicorn
 
+    # 打包模式下自动弹出浏览器
+    if getattr(sys, "frozen", False) and os.environ.get("TASKM_FRONTEND_DIST"):
+        def _open_browser():
+            import time
+            time.sleep(1.5)  # 等 uvicorn 完全就绪
+            webbrowser.open("http://localhost:8000")
+
+        threading.Thread(target=_open_browser, daemon=True).start()
+
     uvicorn.run(
-        app,                    # 直接传 app 对象，不再用字符串
+        app,
         host="0.0.0.0",
         port=8000,
         reload=False,
