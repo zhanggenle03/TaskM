@@ -834,7 +834,7 @@ def create_requirement(
 
 # ---- 富文本图片上传 ----
 
-@router.post("/{requirement_id}/images")
+@router.post("/{requirement_id:int}/images")
 def upload_requirement_image(
     project_id: str,
     requirement_id: int,
@@ -869,7 +869,7 @@ def upload_requirement_image(
     return {"url": url, "errno": 0}
 
 
-@router.delete("/{requirement_id}/images/{filename}")
+@router.delete("/{requirement_id:int}/images/{filename}")
 def delete_requirement_image(
     project_id: str,
     requirement_id: int,
@@ -895,7 +895,7 @@ def delete_requirement_image(
     return {"ok": True}
 
 
-@router.get("/{requirement_id}", response_model=RequirementOut)
+@router.get("/{requirement_id:int}", response_model=RequirementOut)
 def get_requirement(
     project_id: str,
     requirement_id: int,
@@ -913,7 +913,7 @@ def get_requirement(
     return _format_requirement(req)
 
 
-@router.put("/{requirement_id}", response_model=RequirementOut)
+@router.put("/{requirement_id:int}", response_model=RequirementOut)
 def update_requirement(
     project_id: str,
     requirement_id: int,
@@ -968,7 +968,7 @@ def update_requirement(
     return _get_requirement_with_values(db, req.id)
 
 
-@router.delete("/{requirement_id}")
+@router.delete("/{requirement_id:int}")
 def delete_requirement(
     project_id: str,
     requirement_id: int,
@@ -1083,7 +1083,7 @@ def generate_requirement_doc_bytes(req, proj, db) -> bytes:
     return buf.getvalue()
 
 
-@router.get("/{requirement_id}/export")
+@router.get("/{requirement_id:int}/export")
 def export_requirement_doc(
     project_id: str,
     requirement_id: int,
@@ -2347,3 +2347,50 @@ async def import_requirements(
     if skipped_db_collision:
         msg += f"，跳过 {skipped_db_collision} 条（数据库中已存在）"
     return {"created": created, "updated": updated, "skipped_empty": skipped_empty_title, "skipped_db_collision": skipped_db_collision, "message": msg}
+
+
+# ========== 需求列宽持久化 ==========
+
+COL_WIDTHS_DIR = "config"
+COL_WIDTHS_FILE = "column_widths.json"
+
+
+def _col_widths_path(proj):
+    """返回列宽 JSON 文件的完整路径"""
+    d = os.path.join(UPLOAD_DIR, proj.display_id, COL_WIDTHS_DIR)
+    return os.path.join(d, COL_WIDTHS_FILE)
+
+
+@router.get("/column-widths")
+def get_column_widths(project_id: str, db: Session = Depends(get_db)):
+    """读取需求列宽配置"""
+    proj = resolve_project(db, project_id)
+    path = _col_widths_path(proj)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+@router.put("/column-widths")
+def save_column_widths(project_id: str, data: dict, db: Session = Depends(get_db)):
+    """保存需求列宽配置"""
+    proj = resolve_project(db, project_id)
+    path = _col_widths_path(proj)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
+
+
+@router.delete("/column-widths")
+def delete_column_widths(project_id: str, db: Session = Depends(get_db)):
+    """删除需求列宽配置（导入后重置）"""
+    proj = resolve_project(db, project_id)
+    path = _col_widths_path(proj)
+    if os.path.isfile(path):
+        os.remove(path)
+    return {"ok": True}

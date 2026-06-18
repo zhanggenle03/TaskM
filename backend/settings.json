@@ -2,5 +2,10 @@
   "max_file_size_mb": 500,
   "autostart": {
     "mode": "on"
-  }
+  },
+  "holiday_overrides": {
+    "2026-02-13": "off",
+    "2026-02-14": "off"
+  },
+  "entry_date": "2026-03-01"
 }

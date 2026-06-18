@@ -372,7 +372,7 @@ dayjs.locale('zh-cn')
 import {
   getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
 } from '../api'
-import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate } from '../utils/holiday'
+import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer } from '../utils/holiday'
 
 const projects = ref([])
 const allCheckins = ref([])
@@ -660,7 +660,11 @@ const load = async () => {
   loadStatusForDate(todayStr)
   loadHolidayForYear(calYear.value)
 }
-onMounted(load)
+onMounted(async () => {
+  // 从服务端加载节假日覆盖和入职日期（合并到 localStorage）
+  loadUserSettingsFromServer()
+  load()
+})
 
 const formatDateFull = (d) => dayjs(d).format('YYYY年M月D日 dddd')
 

@@ -13,6 +13,8 @@ const cache = {} // { year: { 'MM-DD': { holiday, name, ... } } }
 const OVERRIDE_KEY = 'taskm_holiday_overrides'
 const ENTRY_DATE_KEY = 'taskm_entry_date'
 
+// ------ 入职日期 ------
+
 export function getEntryDate() {
   return localStorage.getItem(ENTRY_DATE_KEY) || null // "YYYY-MM-DD"
 }
@@ -20,7 +22,10 @@ export function getEntryDate() {
 export function setEntryDate(dateStr) {
   if (dateStr) localStorage.setItem(ENTRY_DATE_KEY, dateStr)
   else localStorage.removeItem(ENTRY_DATE_KEY)
+  syncUserSettingsToServer()
 }
+
+// ------ 节假日覆盖（localStorage + 服务端同步） ------
 
 /**
  * 获取所有用户手动覆盖的日期
@@ -37,6 +42,40 @@ function saveOverrides(overrides) {
 }
 
 /**
+ * 将当前覆盖和入职日期同步到服务端
+ */
+let _syncTimer = null
+export function syncUserSettingsToServer() {
+  if (_syncTimer) clearTimeout(_syncTimer)
+  _syncTimer = setTimeout(() => {
+    _syncTimer = null
+    const overrides = getOverrides()
+    const entryDate = getEntryDate()
+    import('../api/index.js').then(({ updateUserSettings }) => {
+      updateUserSettings({ holiday_overrides: overrides, entry_date: entryDate }).catch(() => {})
+    })
+  }, 500)
+}
+
+/**
+ * 从服务端加载覆盖和入职日期，合并到 localStorage
+ */
+export async function loadUserSettingsFromServer() {
+  try {
+    const { getSettings } = await import('../api/index.js')
+    const settings = await getSettings()
+    const serverOverrides = settings.holiday_overrides || {}
+    const serverEntryDate = settings.entry_date || null
+    // 合并覆盖：服务端覆盖优先
+    const merged = { ...getOverrides(), ...serverOverrides }
+    saveOverrides(merged)
+    // 入职日期：服务端有则覆盖
+    if (serverEntryDate) setEntryDate(serverEntryDate)
+    return { overrides: merged, entryDate: serverEntryDate }
+  } catch { return null }
+}
+
+/**
  * 设置某天的覆盖状态
  * @param {string} dateStr "YYYY-MM-DD"
  * @param {'holiday'|'workday'|'normal'|'off'|null} type — null 表示清除覆盖
@@ -49,6 +88,7 @@ export function setHolidayOverride(dateStr, type) {
     overrides[dateStr] = type
   }
   saveOverrides(overrides)
+  syncUserSettingsToServer() // 异步同步到服务端
 }
 
 /**
@@ -78,6 +118,7 @@ export function clearYearOverrides(year) {
     if (key.startsWith(year)) delete overrides[key]
   }
   saveOverrides(overrides)
+  syncUserSettingsToServer()
 }
 
 /**

@@ -97,6 +97,7 @@ export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { o
 // --- Settings ---
 export const getSettings = () => http.get('/process/settings')
 export const updateSettings = (data) => http.put('/process/settings', data)
+export const updateUserSettings = (data) => http.put('/process/settings/user', data)
 
 // --- Export ---
 export const exportTaskDoc = (projectId, taskId, params) =>
@@ -164,3 +165,13 @@ export const importRequirements = (projectId, file, mapping, mode = 'append', fo
     timeout: 120000,
   })
 }
+
+// --- Column Widths ---
+export const getReqColWidths = (projectId) =>
+  http.get(`/projects/${projectId}/requirements/column-widths`)
+
+export const saveReqColWidths = (projectId, data) =>
+  http.put(`/projects/${projectId}/requirements/column-widths`, data, { _silentError: true })
+
+export const deleteReqColWidths = (projectId) =>
+  http.delete(`/projects/${projectId}/requirements/column-widths`)

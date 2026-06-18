@@ -241,6 +241,14 @@ def set_autostart(body: AutostartMode):
 
 class SettingsUpdate(BaseModel):
     max_file_size_mb: int | None = None
+    holiday_overrides: dict | None = None
+    entry_date: str | None = None
+
+
+class UserSettingsUpdate(BaseModel):
+    """用户通用设置（节假日覆盖 + 入职日期）"""
+    holiday_overrides: dict | None = None
+    entry_date: str | None = None
 
 
 @router.post("/open-workspace")
@@ -261,12 +269,31 @@ def get_settings():
 
 @router.put("/settings")
 def update_settings(body: SettingsUpdate):
-    """更新通用设置（仅传入需要修改的字段）"""
+    """更新通用设置"""
     data = {}
     if body.max_file_size_mb is not None:
         if body.max_file_size_mb < 1 or body.max_file_size_mb > 500:
             raise HTTPException(400, "max_file_size_mb 必须在 1~500 之间")
         data["max_file_size_mb"] = body.max_file_size_mb
+    if body.holiday_overrides is not None:
+        data["holiday_overrides"] = body.holiday_overrides
+    if body.entry_date is not None:
+        data["entry_date"] = body.entry_date
+    return save_settings(data)
+
+
+@router.put("/settings/user")
+def update_user_settings(body: UserSettingsUpdate):
+    """更新用户级设置（节假日覆盖 + 入职日期）"""
+    data = {}
+    if body.holiday_overrides is not None:
+        if not isinstance(body.holiday_overrides, dict):
+            raise HTTPException(400, "holiday_overrides 必须为对象")
+        data["holiday_overrides"] = body.holiday_overrides
+    if body.entry_date is not None:
+        if body.entry_date and (not isinstance(body.entry_date, str) or len(body.entry_date) != 10):
+            raise HTTPException(400, "entry_date 格式必须为 YYYY-MM-DD")
+        data["entry_date"] = body.entry_date
     return save_settings(data)
 
 

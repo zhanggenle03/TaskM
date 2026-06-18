@@ -594,6 +594,7 @@ import {
   getReqCustomFields, getProject,
   getReqStatusPools, getReqPriorityPools, getReqFilterStats,
   importRequirementsPreview, importRequirements,
+  getReqColWidths, saveReqColWidths, deleteReqColWidths,
 } from '../api/index.js'
 
 const route = useRoute()
@@ -718,6 +719,8 @@ function recalcAndSaveWidths() {
   const newWidths = calcWidths(requirements.value, customFields.value)
   savedWidths.value = { ...newWidths }
   saveWidths(newWidths)
+  // 导入后删除服务端配置文件，下次打开从 localStorage 恢复算法值
+  deleteReqColWidths(projectId).catch(() => {})
 }
 
 const columnWidths = ref({})
@@ -1116,12 +1119,23 @@ const mergedColWidth = (colKey, autoWidth) => {
   return Math.max(auto, minW)
 }
 
+// 拖拽保存到服务器的防抖函数
+let saveColWidthsTimer = null
+function debouncedSaveToServer(widths) {
+  if (saveColWidthsTimer) clearTimeout(saveColWidthsTimer)
+  saveColWidthsTimer = setTimeout(() => {
+    saveReqColWidths(projectId, widths).catch(() => {})
+    saveColWidthsTimer = null
+  }, 500)
+}
+
 function onColumnResize(newWidth, _, column) {
   // column.property 对于带 prop 的列有效；无 prop 的列用 label
   const colKey = column.property || column.label
   if (!colKey) return
   savedWidths.value[colKey] = newWidth
   saveWidths(savedWidths.value)
+  debouncedSaveToServer(savedWidths.value)
 }
 
 const getSortOrder = (prop) => {
@@ -1758,11 +1772,19 @@ const priorityNameToValue = (name) => {
 }
 
 onMounted(async () => {
-  // 再次从 localStorage 加载列宽
+  // 从 localStorage 加载本地列宽
   const localWidths = loadWidthsFromLocal()
   if (Object.keys(localWidths).length) {
     savedWidths.value = localWidths
   }
+
+  // 异步从服务器加载列宽（覆盖 localStorage），失败时静默忽略
+  try {
+    const serverWidths = await getReqColWidths(projectId)
+    if (serverWidths && Object.keys(serverWidths).length) {
+      savedWidths.value = { ...savedWidths.value, ...serverWidths }
+    }
+  } catch { /* 服务器无配置时使用 localStorage 值 */ }
 
   // 所有数据并行加载
   await Promise.all([
@@ -1785,6 +1807,11 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   if (resizeObserver) resizeObserver.disconnect()
+  // 清空防抖定时器，避免组件卸载后写入旧数据
+  if (saveColWidthsTimer) {
+    clearTimeout(saveColWidthsTimer)
+    saveColWidthsTimer = null
+  }
 })
 </script>
 
