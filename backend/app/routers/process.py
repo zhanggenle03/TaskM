@@ -22,7 +22,7 @@ PID_FILE = ROOT / "taskm.pid"
 # ── 自启动路径 ──
 AUTOSTART_DIR = ROOT
 STARTUP_FOLDER = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-STARTUP_BAT_NAME = "TaskM_Autostart.bat"
+STARTUP_SCRIPT_NAME = "TaskM_Autostart.vbs"
 AUTOSTART_SETTINGS_KEY = "autostart"
 AUTOSTART_LEGACY_LNK = "TaskM.lnk"  # 旧版快捷方式，清理用
 
@@ -68,7 +68,7 @@ def _kill_port(port: int):
 
 
 def _detect_components():
-    """检测开发版组件路径：pythonw / npx — 优先使用 D:\python310"""
+    """检测开发版组件路径：pythonw / node 目录 — 优先使用已知可靠路径"""
     if _is_standalone():
         return None, None
     import shutil
@@ -83,48 +83,78 @@ def _detect_components():
             break
     if not pythonw_path:
         pythonw_path = shutil.which("pythonw") or "pythonw"
-    npx_path = shutil.which("npx.cmd") or shutil.which("npx") or "npx.cmd"
-    return pythonw_path, npx_path
+
+    # 检测可靠的 Node.js 目录（优先 WorkBuddy 管理的 Node 22，避免开机自启时系统 PATH 中的旧版 Node）
+    node_dir = None
+    preferred_nodes = [
+        r"C:\Users\zhk\.workbuddy\binaries\node\versions\22.22.2",
+        r"D:\python310\Scripts",
+    ]
+    for d in preferred_nodes:
+        if os.path.isdir(d) and os.path.isfile(os.path.join(d, "node.exe")) and os.path.isfile(os.path.join(d, "npm.cmd")):
+            node_dir = d
+            break
+    if not node_dir:
+        # fallback：取系统 PATH 中的 npx 所在目录
+        npx_path = shutil.which("npx.cmd") or shutil.which("npx") or "npx.cmd"
+        node_dir = os.path.dirname(os.path.abspath(npx_path))
+    return pythonw_path, node_dir
 
 
-def _generate_autostart_bat() -> str:
-    """生成自启动批处理内容（仅启动服务，不打开浏览器——托盘接管）"""
-    import shutil
-    project_root = str(ROOT)
-
+def _generate_autostart_vbs() -> str:
+    """生成自启动 VBS 脚本（WScript 静默运行，无控制台窗口）"""
     if _is_standalone():
         exe = str(Path(sys.executable).resolve())
-        return f'@echo off\r\nstart "" /b "{exe}"\r\n'
+        return f'CreateObject("WScript.Shell").Run "{exe}", 0, False\r\n'
     else:
-        pythonw_path, npx_path = _detect_components()
+        pythonw_path, node_dir = _detect_components()
+        project_root = str(ROOT)
         frontend_dir = str(ROOT / "frontend")
+
+        # 后端：cd 到项目根目录再启动 pythonw
+        backend_cmd_inner = f'cd /d {project_root} && {pythonw_path} -X utf8 backend\\run.py'
+        backend_cmd_vbs = f'cmd /c "{backend_cmd_inner}"'.replace('"', '""')
+
+        # 前端：cd 到 frontend 目录，置入可靠 Node 到 PATH，启动 npm
+        frontend_cmd_inner = f'cd /d {frontend_dir} && set PATH={node_dir};%PATH% && npm run dev'
+        frontend_cmd_vbs = f'cmd /c "{frontend_cmd_inner}"'.replace('"', '""')
+
+        # 窗口样式 0 = 隐藏
         return (
-            f'@echo off\r\n'
-            f'cd /d "{project_root}"\r\n'
-            f'start "" /b "{pythonw_path}" -X utf8 backend\\run.py\r\n'
-            f'start "" /b cmd /c cd /d "{frontend_dir}" && "{npx_path}" vite\r\n'
+            f'CreateObject("WScript.Shell").Run "{backend_cmd_vbs}", 0, False\r\n'
+            f'CreateObject("WScript.Shell").Run "{frontend_cmd_vbs}", 0, False\r\n'
         )
 
 
-def _check_startup_bat() -> bool:
-    """检查启动文件夹中是否有自启动批处理文件"""
-    return (STARTUP_FOLDER / STARTUP_BAT_NAME).exists()
+def _check_startup_script() -> bool:
+    """检查启动文件夹中是否有自启动脚本"""
+    return (STARTUP_FOLDER / STARTUP_SCRIPT_NAME).exists()
 
 
 def _enable_autostart():
-    """在启动文件夹创建自启动批处理文件"""
-    dst = STARTUP_FOLDER / STARTUP_BAT_NAME
+    """在启动文件夹创建自启动 VBS 脚本"""
+    # 清理旧版 .bat 残留
+    old_bat = STARTUP_FOLDER / "TaskM_Autostart.bat"
+    if old_bat.exists():
+        try: old_bat.unlink()
+        except Exception: pass
+    dst = STARTUP_FOLDER / STARTUP_SCRIPT_NAME
     STARTUP_FOLDER.mkdir(parents=True, exist_ok=True)
-    dst.write_text(_generate_autostart_bat(), encoding="utf-8")
+    dst.write_text(_generate_autostart_vbs(), encoding="utf-8")
     print(f"[autostart] Created {dst}", flush=True)
 
 
 def _disable_autostart():
-    """删除启动文件夹中的自启动批处理文件"""
-    bat = STARTUP_FOLDER / STARTUP_BAT_NAME
-    if bat.exists():
-        bat.unlink()
-        print(f"[autostart] Removed {bat}", flush=True)
+    """删除启动文件夹中的自启动脚本"""
+    script = STARTUP_FOLDER / STARTUP_SCRIPT_NAME
+    if script.exists():
+        script.unlink()
+        print(f"[autostart] Removed {script}", flush=True)
+    # 也清理旧 .bat
+    old_bat = STARTUP_FOLDER / "TaskM_Autostart.bat"
+    if old_bat.exists():
+        try: old_bat.unlink()
+        except Exception: pass
     _cleanup_legacy()
 
 
@@ -180,7 +210,7 @@ def get_status():
 @router.get("/autostart")
 def get_autostart():
     """获取当前开机自启动状态（基于启动文件夹批处理文件）"""
-    enabled = _check_startup_bat()
+    enabled = _check_startup_script()
     if not enabled:
         saved = load_settings().get(AUTOSTART_SETTINGS_KEY, {})
         saved_mode = saved.get("mode", "off")
