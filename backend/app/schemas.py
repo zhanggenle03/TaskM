@@ -246,6 +246,7 @@ class TaskOut(BaseModel):
     due_date: Optional[date]
     status_id: Optional[int]
     last_comm_at: Optional[datetime] = None
+    last_comm_contact_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     contacts: List[ContactOut] = []

@@ -84,15 +84,30 @@ def list_tasks(
         if derived is not None:
             t.status_id = derived
 
-    # 批量查询每个任务的最后一条沟通时间
+    # 批量查询每个任务的最新沟通记录（含对接人）
     from sqlalchemy import func as sa_func
-    last_comm_rows = db.query(
+    max_id_subq = db.query(
         Communication.task_id,
-        sa_func.max(Communication.comm_at).label("max_comm_at")
+        sa_func.max(Communication.id).label("max_id")
     ).filter(
         Communication.task_id.in_(task_ids)
-    ).group_by(Communication.task_id).all()
-    comm_at_map = {row.task_id: row.max_comm_at for row in last_comm_rows}
+    ).group_by(Communication.task_id).subquery()
+    latest_comms = db.query(Communication).join(
+        max_id_subq,
+        Communication.id == max_id_subq.c.max_id
+    ).options(
+        joinedload(Communication.communication_contacts)
+            .joinedload(CommunicationContact.contact)
+    ).all()
+    comm_at_map = {}
+    comm_contact_map = {}
+    for c in latest_comms:
+        comm_at_map[c.task_id] = c.comm_at
+        if c.communication_contacts:
+            names = [cc.contact.name for cc in c.communication_contacts if cc.contact]
+            comm_contact_map[c.task_id] = "、".join(names) if names else None
+        else:
+            comm_contact_map[c.task_id] = None
 
     # 排序（Python 层面，因为状态是在内存中推导的）
     sort_key = None
@@ -149,6 +164,7 @@ def list_tasks(
             "contacts": t.contacts,
             "tags": tags_for_task,
             "last_comm_at": comm_at_map.get(t.id),
+            "last_comm_contact_name": comm_contact_map.get(t.id),
         })
     return result
 

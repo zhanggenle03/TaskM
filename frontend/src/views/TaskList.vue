@@ -54,7 +54,7 @@
     </div>
 
     <!-- 任务列表 -->
-    <div class="task-list" v-if="tasks.length">
+    <div class="task-list" v-if="tasks.length" ref="taskListRef">
       <div
         v-for="t in tasks" :key="t.id"
         class="task-row"
@@ -70,7 +70,10 @@
           </div>
           <div class="task-meta">
             <el-tag v-if="t.priority" :type="priorityType(t.priority)" size="small">{{ priorityLabel(t.priority) }}</el-tag>
-            <span v-if="t.last_comm_at" class="task-comm-time">变更于 {{ formatTime(t.last_comm_at) }}</span>
+            <span v-if="t.last_comm_at" class="task-comm-info">
+              <span class="task-contact-col">当前对接人：{{ t.last_comm_contact_name || '无' }}</span>
+              <span class="task-comm-col">变更于 {{ formatTime(t.last_comm_at) }}</span>
+            </span>
           </div>
         </div>
         <div class="task-status-tag">
@@ -129,7 +132,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -158,6 +161,24 @@ const showCreate = ref(false)
 const loading = ref(false)
 const editTarget = ref(null)
 const form = ref({ title: '', description: '', status_id: null, priority: 'normal', due_date: null, tag_ids: [] })
+const taskListRef = ref(null)
+
+// 自动对齐所有任务卡的「当前负责人」列宽
+const alignContactCols = () => {
+  nextTick(() => {
+    if (!taskListRef.value) return
+    const cols = taskListRef.value.querySelectorAll('.task-contact-col')
+    if (!cols.length) return
+    // 临时放开 overflow 限制，确保 scrollWidth 返回完整内容宽度
+    cols.forEach(el => { el.style.overflow = 'visible' })
+    let maxW = 0
+    cols.forEach(el => { maxW = Math.max(maxW, el.scrollWidth) })
+    cols.forEach(el => {
+      el.style.width = maxW + 'px'
+      el.style.overflow = ''  // 恢复 CSS scoped 的 overflow: hidden
+    })
+  })
+}
 
 // 状态池有加载完成时更新 form 的默认状态
 const defaultStatusId = ref(null)
@@ -204,6 +225,7 @@ const loadTasks = async () => {
   })
   tagCount.value = tagCounts
   statusCount.value = statusCounts
+  alignContactCols()
 }
 
 const setFilter = (statusId) => {
@@ -328,6 +350,9 @@ const removeTask = async (t) => {
 .task-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #888; }
 .task-contacts { display: flex; align-items: center; gap: 3px; }
 .task-comm-time { color: #aaa; font-size: 12px; }
+.task-comm-info { display: inline-flex; gap: 24px; color: #aaa; font-size: 12px; }
+.task-contact-col { flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-comm-col { white-space: nowrap; }
 .task-status-tag { flex-shrink: 0; }
 .task-date-col { font-size: 12px; color: #e24b4a; flex-shrink: 0; white-space: nowrap; }
 .task-actions { display: flex; gap: 4px; flex-shrink: 0; }
