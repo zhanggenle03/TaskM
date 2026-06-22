@@ -7,8 +7,10 @@ import os, random, string
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "taskm.db")
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+CONFIG_DIR = os.path.join(BASE_DIR, "config")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(CONFIG_DIR, exist_ok=True)
 
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{DB_PATH}"
 

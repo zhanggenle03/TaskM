@@ -131,6 +131,9 @@ export const deleteReqCustomField = (projectId, fieldId, config) => http.delete(
 
 // --- Dashboard ---
 export const getDashboardStats = (projectId) => http.get(`/projects/${projectId}/requirements/stats/dashboard`)
+export const getKanbanTasks = (projectId) => http.get(`/projects/${projectId}/tasks/kanban`)
+export const getKanbanConfig = (projectId) => http.get(`/projects/${projectId}/tasks/kanban-config`, { _silentError: true })
+export const putKanbanConfig = (projectId, data) => http.put(`/projects/${projectId}/tasks/kanban-config`, data)
 
 // --- Requirement Status Pools ---
 export const getReqStatusPools = (projectId, params) => http.get(`/projects/${projectId}/requirements/status-pools`, { params })

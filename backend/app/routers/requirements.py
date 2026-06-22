@@ -15,7 +15,7 @@ from ..database import (
     get_db, Project, Requirement, RequirementCustomField, RequirementCustomValue,
     RequirementStatusPool, RequirementPriorityPool,
     Task, StatusPool, touch_project, resolve_project,
-    generate_requirement_display_id, UPLOAD_DIR,
+    generate_requirement_display_id, UPLOAD_DIR, CONFIG_DIR,
 )
 from ..schemas import (
     RequirementCreate, RequirementUpdate, RequirementOut,
@@ -2351,13 +2351,12 @@ async def import_requirements(
 
 # ========== 需求列宽持久化 ==========
 
-COL_WIDTHS_DIR = "config"
 COL_WIDTHS_FILE = "column_widths.json"
 
 
 def _col_widths_path(proj):
     """返回列宽 JSON 文件的完整路径"""
-    d = os.path.join(UPLOAD_DIR, proj.display_id, COL_WIDTHS_DIR)
+    d = os.path.join(CONFIG_DIR, proj.display_id)
     return os.path.join(d, COL_WIDTHS_FILE)
 
 

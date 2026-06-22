@@ -366,6 +366,27 @@ class RequirementCustomFieldOut(BaseModel):
         from_attributes = True
 
 
+# ---- Kanban ----
+class KanbanTaskSimple(BaseModel):
+    id: int
+    display_id: Optional[str]
+    title: str
+    priority: str
+    due_date: Optional[date]
+    contact_names: str = ""
+    status_duration_hours: float = 0
+    status_duration_text: str = ""
+
+class KanbanColumn(BaseModel):
+    status_id: int
+    status_name: str
+    color: str
+    tasks: List[KanbanTaskSimple] = []
+
+class KanbanData(BaseModel):
+    columns: List[KanbanColumn] = []
+
+
 # ---- Dashboard ----
 class StatusDistribution(BaseModel):
     name: str

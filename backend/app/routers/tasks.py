@@ -2,19 +2,23 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime, date as date_type
+import json, os
 from ..database import (
     get_db, Project, Task, Contact, Communication, CommunicationContact,
     Attachment, ProjectContact, StatusPool, CommTypePool, TagPool, TaskTag,
     TaskRequirement, Requirement,
     touch_project, derive_task_status, sync_task_status, cleanup_comm_files,
-    generate_task_display_id, resolve_project, resolve_task
+    generate_task_display_id, resolve_project, resolve_task,
+    UPLOAD_DIR, CONFIG_DIR,
 )
 from ..schemas import (
     TaskCreate, TaskUpdate, TaskOut, TaskDetail,
     ContactCreate, ContactUpdate, ContactOut,
     CommunicationCreate, CommunicationUpdate, CommunicationOut,
     TagBrief, RequirementBrief,
+    KanbanData, KanbanColumn, KanbanTaskSimple,
 )
+from ..database import StatusPool, Communication
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
 
@@ -167,6 +171,158 @@ def list_tasks(
             "last_comm_contact_name": comm_contact_map.get(t.id),
         })
     return result
+
+
+# ponytail: 每项目独立 JSON 文件
+KANBAN_CONFIG_FILE = "kanban.json"
+
+
+def _kanban_config_path(proj):
+    d = os.path.join(CONFIG_DIR, proj.display_id)
+    return os.path.join(d, KANBAN_CONFIG_FILE)
+
+
+@router.get("/kanban-config")
+def get_kanban_config(project_id: str, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    p = _kanban_config_path(proj)
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+@router.put("/kanban-config")
+def put_kanban_config(project_id: str, body: dict, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    p = _kanban_config_path(proj)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
+
+
+@router.get("/kanban", response_model=KanbanData)
+def get_kanban_tasks(project_id: str, db: Session = Depends(get_db)):
+    """获取任务看板数据：按状态分组，含停留时长"""
+    proj = resolve_project(db, project_id)
+    tasks = db.query(Task).options(
+        joinedload(Task.contacts)
+    ).filter(Task.project_id == proj.id).all()
+
+    if not tasks:
+        return KanbanData(columns=[])
+
+    task_ids = [t.id for t in tasks]
+
+    # ponytail: 批量查每条任务的状态变更时间（最新一条有 new_status_id 的记录）
+    from sqlalchemy import func as sa_func
+    max_subq = db.query(
+        Communication.task_id,
+        sa_func.max(Communication.id).label("max_id")
+    ).filter(
+        Communication.task_id.in_(task_ids),
+        Communication.new_status_id.isnot(None)
+    ).group_by(Communication.task_id).subquery()
+
+    status_change_comms = db.query(
+        Communication.task_id,
+        Communication.new_status_id,
+        Communication.comm_at
+    ).join(max_subq, Communication.id == max_subq.c.max_id).all()
+
+    status_change_map = {}  # task_id -> {new_status_id, comm_at}
+    for sc in status_change_comms:
+        status_change_map[sc.task_id] = {"new_status_id": sc.new_status_id, "comm_at": sc.comm_at}
+
+    # ponytail: 批量查每条任务的最新沟通记录（含对接人）
+    max_comm_subq = db.query(
+        Communication.task_id,
+        sa_func.max(Communication.id).label("max_id")
+    ).filter(
+        Communication.task_id.in_(task_ids)
+    ).group_by(Communication.task_id).subquery()
+
+    latest_comms = db.query(Communication).join(
+        max_comm_subq,
+        Communication.id == max_comm_subq.c.max_id
+    ).options(
+        joinedload(Communication.communication_contacts)
+            .joinedload(CommunicationContact.contact)
+    ).all()
+    comm_contact_map = {}
+    for c in latest_comms:
+        if c.communication_contacts:
+            names = [cc.contact.name for cc in c.communication_contacts if cc.contact]
+            comm_contact_map[c.task_id] = "、".join(names) if names else "无"
+        else:
+            comm_contact_map[c.task_id] = "无"
+
+    now = datetime.now()
+    status_groups = {}
+    for t in tasks:
+        sc_info = status_change_map.get(t.id)
+        if sc_info:
+            t.status_id = sc_info["new_status_id"]
+            hours = (now - sc_info["comm_at"]).total_seconds() / 3600
+            days = int(hours // 24)
+            hrs = int(hours % 24)
+            if days >= 30:
+                dur_text = f"{days // 30}个月"
+            elif days > 0:
+                dur_text = f"{days}天{hrs}小时" if hrs else f"{days}天"
+            else:
+                dur_text = f"{int(hours)}小时" if hours >= 1 else "<1小时"
+        else:
+            hours = 0
+            dur_text = ""
+
+        contact_names = comm_contact_map.get(t.id, "无")
+
+        card = KanbanTaskSimple(
+            id=t.id,
+            display_id=t.display_id,
+            title=t.title,
+            priority=t.priority,
+            due_date=t.due_date,
+            contact_names=contact_names,
+            status_duration_hours=hours,
+            status_duration_text=dur_text,
+        )
+        sid = t.status_id or 0
+        status_groups.setdefault(sid, []).append((t, card))
+
+    # 获取项目所有的状态池
+    pools = db.query(StatusPool).filter(
+        StatusPool.project_id == proj.id,
+        StatusPool.is_active == True,
+    ).order_by(StatusPool.sort_order, StatusPool.id).all()
+
+    columns = []
+    for sp in pools:
+        cards = [c for _, c in status_groups.get(sp.id, [])]
+        columns.append(KanbanColumn(
+            status_id=sp.id,
+            status_name=sp.name,
+            color=sp.color,
+            tasks=cards,
+        ))
+
+    # 如果有任务状态指向已停用/不存在的池，归入"其他"
+    known_ids = {sp.id for sp in pools}
+    orphan_cards = []
+    for sid, items in status_groups.items():
+        if sid not in known_ids and sid != 0:
+            orphan_cards.extend(c for _, c in items)
+    if orphan_cards:
+        columns.append(KanbanColumn(
+            status_id=0, status_name="其他", color="#909399", tasks=orphan_cards,
+        ))
+
+    return KanbanData(columns=columns)
 
 
 @router.post("", response_model=TaskOut)

@@ -1786,6 +1786,15 @@ onMounted(async () => {
     }
   } catch { /* 服务器无配置时使用 localStorage 值 */ }
 
+  // 从 URL 查询参数恢复筛选（总览页图表点击跳转）
+  const query = route.query
+  if (query.status || query.priority) {
+    const initial = {}
+    if (query.status) initial.status = [query.status]
+    if (query.priority) initial.priority = [query.priority]
+    columnFilters.value = initial
+  }
+
   // 所有数据并行加载
   await Promise.all([
     loadProject(),
