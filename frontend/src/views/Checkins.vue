@@ -82,8 +82,10 @@
 
         <!-- 月份出勤统计卡片 -->
         <div class="cal-stats-card">
-          <div class="cal-stats-title">{{ calYear }}年{{ calMonth }}月出勤{{ monthStats.isCurrent ? '（截至今日）' : '' }}</div>
+          <div class="cal-stats-title">{{ calYear }}年{{ calMonth }}月出勤</div>
           <div class="cal-stats-row">
+            <span class="cal-stats-item">应出勤 <strong>{{ monthStats.requiredWorkDays }}</strong> 天</span>
+            <span class="cal-stats-divider"></span>
             <span class="cal-stats-item">上班 <strong>{{ monthStats.workDays }}</strong> 天</span>
             <span class="cal-stats-divider"></span>
             <span class="cal-stats-item">请假 <strong>{{ monthStats.leaveDays }}</strong> 天</span>
@@ -615,13 +617,16 @@ const monthStats = computed(() => {
   const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth()
   const today = dayjs()
   const isCurrent = year === today.year() && month === today.month() + 1
+  const monthStart = dayjs(`${year}-${month}-01`)
+  const isFutureMonth = monthStart.isAfter(today, 'day') // 月份第一天在今天之后 → 整月未到来
   const lastDay = isCurrent ? today.date() : daysInMonth
 
-  let workDays = 0   // 有签到记录的总天数（含加班）
-  let leaveDays = 0   // 应上班但没签到
+  let workDays = 0        // 有签到记录的总天数（含加班）
+  let leaveDays = 0        // 应上班但没签到
   let overtimeDays = 0
+  let requiredWorkDays = 0 // 应上班天数（排除周末/节假日/手动假日）
 
-  for (let d = 1; d <= lastDay; d++) {
+  for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = dayjs(`${year}-${month}-${d}`).format('YYYY-MM-DD')
     const weekday = dayjs(dateStr).day()
     const extra = getDayExtraInfo(dateStr)
@@ -640,6 +645,10 @@ const monthStats = computed(() => {
     else if (weekday === 0 || weekday === 6) effectiveIsRest = true
     else effectiveIsRest = false
 
+    if (!effectiveIsRest) requiredWorkDays++
+
+    if (d > lastDay) continue // 今天之后的日期不统计签到/请假/加班
+
     if (hasCheckin) workDays++
 
     if (effectiveIsRest) {
@@ -649,7 +658,16 @@ const monthStats = computed(() => {
     }
   }
 
-  return { workDays, leaveDays, overtimeDays, total: lastDay, isCurrent }
+  // 整月未到来时清零签到相关统计，仅保留应出勤
+  if (isFutureMonth) {
+    workDays = 0
+    leaveDays = 0
+    overtimeDays = 0
+  }
+
+  const absences = requiredWorkDays - workDays // 应出勤 - 实际出勤 = 缺勤天数
+
+  return { workDays, leaveDays, overtimeDays, requiredWorkDays, absences, total: lastDay, isCurrent }
 })
 
 const load = async () => {
