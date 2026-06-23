@@ -1,5 +1,5 @@
 <template>
-  <el-container class="app-layout">
+  <el-container class="app-layout" ref="appLayoutRef">
     <!-- 主侧边栏 -->
     <el-aside v-if="showMainSidebar" width="180px" class="sidebar">
       <div class="logo">
@@ -53,10 +53,32 @@
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { computed, watch, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { getSettings } from './api'
 
 const route = useRoute()
+const appLayoutRef = ref(null)
+
+// ── 加载缩放设置并应用到布局容器 ──
+async function applyZoom() {
+  try {
+    const res = await getSettings()
+    setLayoutZoom(res.zoom_level ?? 100)
+  } catch {
+    // 默认 100%
+  }
+}
+
+function setLayoutZoom(zoom) {
+  const el = appLayoutRef.value
+  if (!el) return
+  const scale = zoom / 100
+  el.style.zoom = `${zoom}%`
+  el.style.height = `${100 / scale}vh`
+}
+
+onMounted(applyZoom)
 
 // 判断是否在项目内部页面
 const projectId = computed(() => route.params.projectId)
@@ -80,7 +102,7 @@ const projectNavActive = computed(() => {
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f7f5; color: #2c2c2a; }
-.app-layout { height: 100vh; }
+.app-layout { width: 100%; }
 .sidebar { background: #fff; border-right: 1px solid #e8e8e4; display: flex; flex-direction: column; }
 .logo { display: flex; align-items: center; gap: 10px; padding: 18px 20px; font-size: 17px; font-weight: 600; color: #3c3489; border-bottom: 1px solid #e8e8e4; }
 .side-menu { border-right: none; flex: 1; }

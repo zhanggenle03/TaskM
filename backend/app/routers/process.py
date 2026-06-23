@@ -241,6 +241,7 @@ def set_autostart(body: AutostartMode):
 
 class SettingsUpdate(BaseModel):
     max_file_size_mb: int | None = None
+    zoom_level: int | None = None
     holiday_overrides: dict | None = None
     entry_date: str | None = None
 
@@ -281,6 +282,10 @@ def update_settings(body: SettingsUpdate):
         if body.max_file_size_mb < 1 or body.max_file_size_mb > 500:
             raise HTTPException(400, "max_file_size_mb 必须在 1~500 之间")
         data["max_file_size_mb"] = body.max_file_size_mb
+    if body.zoom_level is not None:
+        if body.zoom_level < 25 or body.zoom_level > 200:
+            raise HTTPException(400, "zoom_level 必须在 25~200 之间")
+        data["zoom_level"] = body.zoom_level
     if body.holiday_overrides is not None:
         data["holiday_overrides"] = body.holiday_overrides
     if body.entry_date is not None:

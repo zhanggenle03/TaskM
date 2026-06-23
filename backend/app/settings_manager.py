@@ -13,7 +13,8 @@ SETTINGS_FILE = os.path.join(
 
 DEFAULT_SETTINGS = {
     "max_file_size_mb": 50,
-    "autostart": {"mode": "off"}
+    "autostart": {"mode": "off"},
+    "zoom_level": 100
 }
 
 
