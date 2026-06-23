@@ -69,32 +69,12 @@
         </div>
       </div>
 
-      <!-- ── 卡片：显示 ── -->
-      <div class="card">
-        <div class="card-title">显示</div>
-
-        <!-- 缩放分辨率 -->
-        <div class="setting-item">
-          <span class="label">显示效果</span>
-          <div class="control">
-            <el-select v-model="zoomLevel" @change="saveZoom" :disabled="zoomSaving" :teleported="false" style="width:180px">
-              <el-option :value="100" label="1920×1080（FHD 全高清）" />
-              <el-option :value="75" label="2560×1440（2K）" />
-              <el-option :value="50" label="3840×2160（4K 超高清）" />
-            </el-select>
-            <span class="resolution-hint">{{ zoomHint }}</span>
-            <button class="btn btn-apply" @click="resetZoom" :disabled="zoomSaving">设为默认</button>
-          </div>
-          <div class="hint">选择适合你屏幕的分辨率，使不同显示器上的页面元素大小基本一致</div>
-        </div>
-      </div>
-
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import http from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -107,15 +87,6 @@ const autostartEnabled = ref(false)
 // ── 附件大小限制 ──
 const maxFileSizeMB = ref(50)
 const settingsSaving = ref(false)
-
-// ── 缩放分辨率 ──
-const ZOOM_LABELS = { 100: '1920×1080', 75: '2560×1440', 50: '3840×2160' }
-const zoomLevel = ref(100)
-const zoomSaving = ref(false)
-const zoomHint = computed(() => {
-  const hints = { 50: '放大 200%', 75: '放大 133%', 100: '原始大小' }
-  return hints[zoomLevel.value] ?? ''
-})
 
 // ── 工作文件夹 ──
 const openingWorkspace = ref(false)
@@ -139,7 +110,6 @@ async function refreshSettings() {
   try {
     const res = await http.get('/process/settings')
     maxFileSizeMB.value = res.max_file_size_mb ?? 50
-    zoomLevel.value = res.zoom_level ?? 100
   } catch {
     // 默认值
   }
@@ -154,33 +124,6 @@ async function saveFileSize() {
     ElMessage.error('保存失败')
   }
   settingsSaving.value = false
-}
-
-// ── 缩放分辨率 ──
-function applyZoomToPage(zoom) {
-  const layout = document.querySelector('.app-layout')
-  if (!layout) return
-  const scale = zoom / 100
-  layout.style.zoom = `${zoom}%`
-  layout.style.height = `${100 / scale}vh`
-}
-
-async function saveZoom(val) {
-  zoomSaving.value = true
-  try {
-    await http.put('/process/settings', { zoom_level: val })
-    applyZoomToPage(val)
-    ElMessage.success(`分辨率已设置为 ${ZOOM_LABELS[val] || val + '%'}`)
-  } catch {
-    zoomLevel.value = 100
-    ElMessage.error('保存失败')
-  }
-  zoomSaving.value = false
-}
-
-function resetZoom() {
-  zoomLevel.value = 100
-  saveZoom(100)
 }
 
 async function shutdownService() {
@@ -381,11 +324,6 @@ onMounted(() => {
 }
 .slider-value small {
   font-size: 12px; font-weight: 400; color: #94a3b8;
-}
-
-/* ── 分辨率提示 ── */
-.resolution-hint {
-  font-size: 12px; color: #94a3b8; white-space: nowrap;
 }
 
 /* ── 提示小字 ── */

@@ -44,8 +44,9 @@
     </div>
 
     <!-- 需求明细表（仅数据区滚动） -->
-    <div v-loading="loading" element-loading-text="加载中…" class="req-table-wrap" style="flex:1;min-height:0;padding-bottom:56px">
+    <div v-loading="loading" element-loading-text="加载中…" class="req-table-wrap" style="flex:1;min-height:0;display:flex;flex-direction:column">
       <template v-if="requirements.length">
+      <div class="req-table-inner" ref="tableInnerRef" style="flex:1;min-height:0">
       <el-table
         ref="tableRef"
         :key="tableKey"
@@ -53,7 +54,7 @@
         :max-height="tableMaxHeight"
         stripe
         border
-        style="width: 100%"
+        style="width:100%"
         size="small"
         :cell-class-name="cellClassName"
         @cell-click="onCellClick"
@@ -91,10 +92,10 @@
           </span>
         </template>
         <template #default="{ row }">
-          <router-link :to="`/projects/${projectId}/requirements/${row.id}`" class="id-link">{{ row.display_id || '—' }}</router-link>
+          <router-link :to="`/projects/${projectId}/requirements/${row.id}`" class="id-link" :title="row.display_id">{{ row.display_id || '—' }}</router-link>
         </template>
       </el-table-column>
-      <el-table-column prop="title" :width="mergedColWidth('title', columnWidths.title || 240)" show-overflow-tooltip>
+      <el-table-column prop="title" :width="mergedColWidth('title', columnWidths.title || 240)">
         <template #header>
           <span class="th-with-filter">
             <span class="sortable-header" @click.stop="toggleSort('title')" style="flex:1">
@@ -114,7 +115,7 @@
           </span>
         </template>
         <template #default="{ row }">
-          <span class="req-title-cell">{{ row.title }}</span>
+          <span class="req-title-cell" :title="row.title">{{ row.title }}</span>
         </template>
       </el-table-column>
       <el-table-column prop="status" :width="mergedColWidth('status', columnWidths.status ?? 80)" align="center">
@@ -183,7 +184,6 @@
         :label="cf.field_name"
         :width="mergedColWidth('cf_' + cf.id, columnWidths['cf_' + cf.id] || 120)"
         :align="cf.field_type === 'number' ? 'right' : 'center'"
-        show-overflow-tooltip
       >
         <template #header>
           <span class="th-with-filter">
@@ -288,8 +288,9 @@
           <el-button v-if="hasFilter(filterCol)" text size="small" type="danger" @click.stop="filterClear">清除筛选</el-button>
         </div>
       </div>
-    </div>
-    <div class="pagination-sticky">
+      </div>
+      </div>
+      <div class="pagination-bar">
         <span v-if="total !== totalAll && totalAll" class="filter-total-tip">已筛选 {{ total }} 条 / 共 {{ totalAll }} 条</span>
         <span v-else class="filter-total-tip">共 {{ total }} 条</span>
         <el-pagination
@@ -585,7 +586,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, shallowRef } from 'vue'
+import { ref, reactive, computed, onMounted, onBeforeUnmount, watch, shallowRef, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -615,19 +616,15 @@ const total = ref(0)
 const totalAll = ref(0)     // 未筛选时的总条数
 // 表格高度（仅数据区滚动）
 const tableRef = ref(null)
+const tableInnerRef = ref(null)
 const tableMaxHeight = ref(600)
 let resizeObserver = null
 
 function calcTableHeight() {
-  requestAnimationFrame(() => {
-    const page = document.querySelector('.requirement-page')
-    const topSection = page?.querySelector('.req-top-section')
-    if (page && topSection) {
-      const pageRect = page.getBoundingClientRect()
-      const topRect = topSection.getBoundingClientRect()
-      tableMaxHeight.value = pageRect.bottom - topRect.bottom - 56 // 56 = pagination(~40) + padding(~16)
-    }
-  })
+  if (tableInnerRef.value) {
+    const h = tableInnerRef.value.clientHeight
+    if (h > 0) tableMaxHeight.value = h
+  }
 }
 // 多列排序状态：使用有序数组保持点击顺序，sortKeys[0]=主排序
 const sortKeys = reactive([])
@@ -1454,6 +1451,7 @@ async function loadRequirements() {
     if (!activeFilters.length) {
       totalAll.value = total.value
     }
+    await nextTick()
     calcTableHeight() // 数据加载后重新计算表格高度
   } finally {
     loading.value = false
@@ -1806,11 +1804,15 @@ onMounted(async () => {
   computeColumnWidths()
   // 异步加载全量筛选统计数据
   getReqFilterStats(projectId).then(stats => { filterStats.value = stats }).catch(() => {})
-  // 使用 ResizeObserver 监听容器尺寸变化
-  const pageEl = document.querySelector('.requirement-page')
-  if (pageEl) {
-    resizeObserver = new ResizeObserver(() => calcTableHeight())
-    resizeObserver.observe(pageEl)
+  // 使用 ResizeObserver 监听表格容器尺寸变化
+  if (tableInnerRef.value) {
+    resizeObserver = new ResizeObserver(() => {
+      requestAnimationFrame(() => calcTableHeight())
+    })
+    resizeObserver.observe(tableInnerRef.value)
+    // 初始计算（下一个 tick 确保 DOM 就绪）
+    await nextTick()
+    calcTableHeight()
   }
 })
 
@@ -1825,13 +1827,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.requirement-page { width: 100%; height: 100%; display: flex; flex-direction: column; min-width: 0; }
+.requirement-page { width: 100%; flex: 1; min-height: 0; display: flex; flex-direction: column; min-width: 0; }
 .req-top-section { flex-shrink: 0; }
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
 .page-header h2 { font-size: 20px; font-weight: 600; }
 .header-actions { display: flex; gap: 8px; }
 .filter-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
-.req-table { flex: 1; min-height: 0; cursor: pointer; user-select: none; }
+.req-table { cursor: pointer; user-select: none; }
 .req-table .el-table__body-wrapper .el-table__body .el-table__row {
   height: 42px !important;
   overflow: hidden;
@@ -1844,7 +1846,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .req-table .el-table__row:hover { background: #f5f4fe !important; }
-.req-title-cell { font-weight: 500; color: #2c2c2a; }
+.req-title-cell { font-weight: 500; color: #2c2c2a; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .id-cell { font-size: 12px; color: #888; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .id-link { font-size: 12px; font-family: monospace; color: #534ab7; text-decoration: none; cursor: pointer; }
 .id-link:hover { color: #7b6fd6; text-decoration: underline; }
@@ -1885,18 +1887,13 @@ onBeforeUnmount(() => {
 .option-label { display: inline-flex; align-items: center; gap: 6px; }
 .option-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .text-muted { color: #bbb; }
-.pagination-sticky {
-  position: fixed;
-  bottom: 0;
-  left: 76px;
-  right: 0;
-  z-index: 100;
+.pagination-bar {
+  flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
   padding: 10px 32px;
   background: #fff;
   border-top: 1px solid #ebeef5;
-  box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
 }
 .filter-total-tip {
   font-size: 12px;

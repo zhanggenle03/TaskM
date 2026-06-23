@@ -3,7 +3,6 @@
   "autostart": {
     "mode": "on"
   },
-  "zoom_level": 100,
   "holiday_overrides": {
     "2026-02-13": "off",
     "2026-02-14": "off"
