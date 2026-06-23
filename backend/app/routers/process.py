@@ -251,6 +251,12 @@ class UserSettingsUpdate(BaseModel):
     entry_date: str | None = None
 
 
+@router.get("/workspace")
+def get_workspace_path():
+    """返回项目工作目录的绝对路径"""
+    return {"path": os.path.normpath(str(ROOT))}
+
+
 @router.post("/open-workspace")
 def open_workspace():
     """在资源管理器中打开工作文件夹并激活窗口"""

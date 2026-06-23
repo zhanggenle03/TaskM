@@ -1,78 +1,75 @@
 <template>
   <div class="settings-page">
-    <h2 class="page-title">通用设置</h2>
+    <h1 class="page-title">通用设置</h1>
 
-    <!-- ── 服务运行状态 ── -->
-    <el-card shadow="never" class="sec-card">
-      <template #header>
-        <div class="card-head">
-          <span>服务运行状态</span>
-          <el-button size="small" text @click="refreshStatus" :loading="refreshing">刷新</el-button>
-        </div>
-      </template>
-      <div class="svc-grid">
-        <!-- 打包版：统一显示 -->
-        <template v-if="isStandalone">
-          <div class="svc-row" :class="{ on: status.backend }">
-            <span class="dot" :class="{ on: status.backend }"></span>
-            <span class="svc-name">TaskM 服务</span>
-            <span class="svc-stat">{{ status.backend ? '运行中 (8000)' : '已停止' }}</span>
-          </div>
-        </template>
-        <!-- 开发版：分开显示 -->
-        <template v-else>
-          <div class="svc-row" :class="{ on: status.backend }">
-            <span class="dot" :class="{ on: status.backend }"></span>
-            <span class="svc-name">后端服务</span>
-            <span class="svc-stat">{{ status.backend ? '运行中 (8000)' : '已停止' }}</span>
-          </div>
-          <div class="svc-row" :class="{ on: status.frontend }">
-            <span class="dot" :class="{ on: status.frontend }"></span>
-            <span class="svc-name">前端页面</span>
-            <span class="svc-stat">{{ status.frontend ? '运行中 (5173)' : '已停止' }}</span>
-          </div>
-        </template>
-      </div>
-      <div class="card-foot">
-        <el-button size="small" type="danger" plain @click="shutdownService" :loading="shuttingDown" :disabled="!status.backend">
-          关闭服务
-        </el-button>
-      </div>
-    </el-card>
+    <div class="cards-row">
 
-    <!-- ── 开机自启动 ── -->
-    <el-card shadow="never" class="sec-card">
-      <template #header>
-        <div class="card-head">
-          <span>开机自启动</span>
-          <el-switch v-model="autostartEnabled" @change="onAutostartToggle" :loading="saving" size="small" />
-        </div>
-      </template>
-      <p class="hint">开启后，开机时自动启动 TaskM 后台服务，图标最小化到系统托盘。</p>
-      <p class="hint muted">右键托盘图标可打开浏览器或退出服务。</p>
-    </el-card>
+      <!-- ── 卡片：服务 ── -->
+      <div class="card">
+        <div class="card-title">服务</div>
 
-    <!-- ── 文件 & 工作区 ── -->
-    <el-card shadow="never" class="sec-card">
-      <template #header>
-        <div class="card-head">
-          <span>文件 & 工作区</span>
+        <!-- 运行状态 -->
+        <div class="setting-item">
+          <span class="label">运行状态</span>
+          <div class="control">
+            <div class="status-group">
+              <template v-if="isStandalone">
+                <span class="status-item">
+                  <span class="status-dot" :class="status.backend ? 'on' : 'off'"></span>
+                  TaskM <span class="status-port">8000</span>
+                </span>
+              </template>
+              <template v-else>
+                <span class="status-item">
+                  <span class="status-dot" :class="status.backend ? 'on' : 'off'"></span>
+                  后端 <span class="status-port">8000</span>
+                </span>
+                <span class="status-item">
+                  <span class="status-dot" :class="status.frontend ? 'on' : 'off'"></span>
+                  前端 <span class="status-port">5173</span>
+                </span>
+              </template>
+            </div>
+            <button class="btn btn-danger" style="margin-left:auto" @click="shutdownService" :disabled="shuttingDown || !status.backend">关闭服务</button>
+          </div>
         </div>
-      </template>
-      <div class="file-row">
-        <span class="file-lbl">工作文件夹</span>
-        <el-button size="small" @click="openWorkspace" :loading="openingWorkspace">
-          <el-icon><FolderOpened /></el-icon> 打开
-        </el-button>
+
+        <!-- 开机自启动 -->
+        <div class="setting-item">
+          <span class="label">开机自启动</span>
+          <div class="control">
+            <el-switch v-model="autostartEnabled" @change="onAutostartToggle" :loading="saving" />
+            <span class="toggle-status">状态：<span :class="autostartEnabled ? 'on' : 'off'">{{ autostartEnabled ? '已开启' : '已关闭' }}</span></span>
+          </div>
+          <div class="hint">开机自动启动，图标最小化到系统托盘</div>
+        </div>
       </div>
-      <div class="file-row">
-        <span class="file-lbl">附件大小限制</span>
-        <el-input-number v-model="maxFileSizeMB" :min="1" :max="500" :disabled="settingsSaving" controls-position="right" size="small" style="width:110px" />
-        <span class="unit">MB</span>
-        <el-button size="small" type="primary" @click="saveFileSize" :loading="settingsSaving">保存</el-button>
-        <span class="hint" style="margin-left:8px">1~500MB 可调</span>
+
+      <!-- ── 卡片：工作区 ── -->
+      <div class="card">
+        <div class="card-title">工作区</div>
+
+        <!-- 工作文件夹 -->
+        <div class="setting-item">
+          <span class="label">工作文件夹</span>
+          <div class="control">
+            <span class="workspace-path" :title="workspacePath"><span class="ws-text">{{ workspacePath }}</span></span>
+            <button class="btn" @click="openWorkspace" :disabled="openingWorkspace">打开</button>
+          </div>
+        </div>
+
+        <!-- 附件大小限制 -->
+        <div class="setting-item">
+          <span class="label">附件限制 <span class="sub">1-500MB</span></span>
+          <div class="control">
+            <el-slider v-model="maxFileSizeMB" :min="1" :max="500" :disabled="settingsSaving" style="flex:1;min-width:100px" />
+            <span class="slider-value">{{ maxFileSizeMB }}<small>MB</small></span>
+            <button class="btn" @click="saveFileSize" :disabled="settingsSaving">保存</button>
+          </div>
+        </div>
       </div>
-    </el-card>
+
+    </div>
   </div>
 </template>
 
@@ -93,6 +90,7 @@ const settingsSaving = ref(false)
 
 // ── 工作文件夹 ──
 const openingWorkspace = ref(false)
+const workspacePath = ref('')
 
 // ── 关闭服务 ──
 const shuttingDown = ref(false)
@@ -174,6 +172,15 @@ async function refreshAutostart() {
   }
 }
 
+async function refreshWorkspacePath() {
+  try {
+    const res = await http.get('/process/workspace')
+    workspacePath.value = res.path
+  } catch {
+    workspacePath.value = ''
+  }
+}
+
 async function onAutostartToggle(val) {
   saving.value = true
   try {
@@ -188,54 +195,163 @@ onMounted(() => {
   refreshStatus()
   refreshAutostart()
   refreshSettings()
+  refreshWorkspacePath()
 })
 </script>
 
 <style scoped>
 .settings-page {
-  max-width: 640px;
-  margin: 0 auto;
+  max-width: 960px;
+  width: 100%;
 }
+
+/* ── 页面标题 ── */
 .page-title {
-  font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #2c2c2a;
+  font-size: 20px; font-weight: 600;
+  margin-bottom: 24px;
 }
 
-/* 卡片 */
-.sec-card { margin-bottom: 14px; border-radius: 8px; }
-.sec-card :deep(.el-card__body) { padding: 10px 16px 14px; }
-
-.card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 14px; font-weight: 600; color: #444;
+/* ── 两卡片并排 ── */
+.cards-row {
+  display: flex;
+  gap: 20px;
+  align-items: stretch;
 }
 
-/* 服务状态 */
-.svc-grid { display: flex; flex-direction: column; gap: 6px; }
-.svc-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px 12px; border-radius: 6px; background: #f8f8f6;
+/* ── 独立卡片 ── */
+.card {
+  flex: 1;
+  background: #fff;
+  border-radius: 14px;
+  padding: 22px 24px 24px;
+  border: 1px solid #e9edf2;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
-.svc-row.on { background: #f0faf0; }
-.dot {
-  width: 10px; height: 10px; border-radius: 50%;
-  background: #ccc; flex-shrink: 0;
+.card-title {
+  font-size: 13px; font-weight: 600;
+  color: #64748b; letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f1f4f8;
 }
-.dot.on { background: #52c41a; }
-.svc-name { font-size: 13px; font-weight: 500; color: #2c2c2a; }
-.svc-stat { font-size: 12px; color: #888; }
-.card-foot { margin-top: 8px; display: flex; justify-content: flex-end; }
 
-/* 自启动 */
-.hint { font-size: 12px; color: #666; line-height: 1.5; margin-bottom: 6px; }
-.hint.muted { color: #aaa; }
-.radio-compact { margin: 0 0 4px !important; font-size: 13px; }
-
-/* 文件 */
-.file-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 5px 0;
+/* ── 设置项 ── */
+.setting-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.file-row + .file-row { border-top: 1px solid #f0f0ee; }
-.file-lbl { font-size: 13px; color: #444; width: 90px; flex-shrink: 0; }
-.unit { font-size: 12px; color: #888; }
+.setting-item .label {
+  font-size: 14px; font-weight: 500;
+  color: #1e293b;
+  display: flex; align-items: center; gap: 6px;
+}
+.setting-item .label .sub {
+  font-weight: 400; color: #94a3b8; font-size: 12px;
+}
+.setting-item .control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* ── 状态指示 ── */
+.status-group {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #334155;
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #ddd;
+  flex-shrink: 0;
+}
+.status-dot.on { background: #22c55e; }
+.status-dot.off { background: #ef4444; }
+.status-port {
+  font-family: monospace; font-size: 12px;
+  color: #64748b; background: #f1f4f9;
+  padding: 0 8px; border-radius: 30px;
+}
+
+/* ── 通用按钮 ── */
+.btn {
+  border: 1px solid #d1d9e6;
+  background: #fafbfc;
+  padding: 2px 14px;
+  border-radius: 30px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: 0.15s;
+  color: #334155;
+  white-space: nowrap;
+  line-height: 24px;
+  font-family: inherit;
+}
+.btn:hover { background: #eef2f6; border-color: #b0c0d0; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-danger {
+  color: #b91c1c; border-color: #fecaca; background: #fef2f2;
+}
+.btn-danger:hover { background: #fee2e2; }
+
+/* ── 自启动状态文字 ── */
+.toggle-status { font-size: 13px; color: #475569; }
+.toggle-status .on { color: #16a34a; font-weight: 600; }
+.toggle-status .off { color: #dc2626; font-weight: 600; }
+
+/* ── 滑块值 ── */
+.slider-value {
+  font-size: 16px; font-weight: 600;
+  color: #0f172a;
+  min-width: 50px;
+  text-align: center;
+}
+.slider-value small {
+  font-size: 12px; font-weight: 400; color: #94a3b8;
+}
+
+/* ── 提示小字 ── */
+.hint { font-size: 12px; color: #94a3b8; line-height: 1.4; margin-top: 2px; }
+
+/* ── 工作目录路径 ── */
+.workspace-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 2px 12px;
+  flex: 1;
+  min-width: 0;
+  cursor: default;
+  transition: border-color 0.15s, background 0.15s;
+}
+.workspace-path:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+.ws-text {
+  font-size: 12px;
+  color: #475569;
+  line-height: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.2px;
+}
 </style>
