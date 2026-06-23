@@ -66,7 +66,7 @@ async function applyZoom() {
     const res = await getSettings()
     setLayoutZoom(res.zoom_level ?? 100)
   } catch {
-    // 默认 100%
+    setLayoutZoom(100)
   }
 }
 
@@ -102,7 +102,7 @@ const projectNavActive = computed(() => {
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f7f7f5; color: #2c2c2a; }
-.app-layout { width: 100%; }
+.app-layout { width: 100%; min-height: 100vh; }
 .sidebar { background: #fff; border-right: 1px solid #e8e8e4; display: flex; flex-direction: column; }
 .logo { display: flex; align-items: center; gap: 10px; padding: 18px 20px; font-size: 17px; font-weight: 600; color: #3c3489; border-bottom: 1px solid #e8e8e4; }
 .side-menu { border-right: none; flex: 1; }

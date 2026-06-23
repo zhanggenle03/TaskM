@@ -60,6 +60,10 @@ if __name__ == "__main__":
     def _on_startup():
         time.sleep(1.5)  # 等 uvicorn 完全就绪
         if is_frozen:
+            print("\n" + "=" * 48, flush=True)
+            print("  服务已启动完成，点击托盘图标打开浏览器", flush=True)
+            print("=" * 48 + "\n", flush=True)
+            time.sleep(2)  # 给用户时间看到启动提示
             _hide_console()
         # 启动托盘（pystray 缺失时静默跳过）
         try:

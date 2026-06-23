@@ -111,19 +111,20 @@ jobs:
           $tag = "${{ github.ref_name }}".Replace("/", "-")
           echo "build_name=TaskM-${tag}-windows-x64" >> $env:GITHUB_OUTPUT
 
-      # ── 9. 压缩打包产物 ──
-      - name: Compress artifact
-        shell: pwsh
-        run: |
-          Compress-Archive -Path backend/dist/TaskM -DestinationPath "backend/dist/${{ steps.vars.outputs.build_name }}.zip"
-
-      # ── 10. 上传 Artifact ──
+      # ── 9. 上传 Artifact（源目录，upload-artifact 自行压缩，避免 zip 套 zip） ──
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.vars.outputs.build_name }}
-          path: backend/dist/${{ steps.vars.outputs.build_name }}.zip
+          path: backend/dist/TaskM
           retention-days: 90
+
+      # ── 10. 为 Release 打包 zip（仅 v* 标签） ──
+      - name: Compress for Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          Compress-Archive -Path backend/dist/TaskM -DestinationPath "backend/dist/${{ steps.vars.outputs.build_name }}.zip"
 
       # ── 11. 创建 Release（仅 v* 标签触发） ──
       - name: Create Release
