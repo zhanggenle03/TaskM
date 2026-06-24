@@ -43,6 +43,35 @@
 
     </div>
 
+    <!-- 筛选条件展示 -->
+    <div v-if="activeFilters.length || fuzzyFilterChips.length" class="filter-chips-bar">
+      <span
+        v-for="f in activeFilters"
+        :key="f.col + ':' + f.value"
+        class="filter-chip"
+        @click="removeFilterValue(f.col, f.value)"
+      >
+        <span class="filter-chip-label">{{ f.label }}</span>
+        <span class="filter-chip-sep">:</span>
+        <span class="filter-chip-value">{{ f.value }}</span>
+        <el-icon class="filter-chip-close"><Close /></el-icon>
+      </span>
+      <span
+        v-for="f in fuzzyFilterChips"
+        :key="'fuzzy_' + f.col"
+        class="filter-chip fuzzy-chip"
+        @click="removeFuzzyFilter(f.col)"
+      >
+        <span class="filter-chip-label">{{ f.label }}</span>
+        <span class="filter-chip-sep">:</span>
+        <span class="filter-chip-value">{{ f.mode === 'exclude' ? '排除 ' : '' }}{{ f.text }}</span>
+        <el-icon class="filter-chip-close"><Close /></el-icon>
+      </span>
+      <el-button text size="small" type="danger" @click="clearAllFilters" class="filter-clear-all">
+        清除全部筛选
+      </el-button>
+    </div>
+
     <!-- 需求明细表（仅数据区滚动） -->
     <div v-loading="loading" element-loading-text="加载中…" class="req-table-wrap" style="flex:1;min-height:0;display:flex;flex-direction:column">
       <template v-if="requirements.length">
@@ -83,7 +112,15 @@
       <el-table-column prop="display_id" label="显示ID" :width="mergedColWidth('display_id', columnWidths.display_id || 160)" align="center">
         <template #header>
           <span class="th-with-filter">
-            <span style="flex:1">显示ID</span>
+            <span class="sortable-header" @click.stop="toggleSort('display_id')" style="flex:1">
+              显示ID
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('display_id') === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('display_id') === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('display_id')" class="sort-rank">{{ getSortRank('display_id') }}</span>
+              </span>
+            </span>
             <el-icon
               class="filter-icon"
               :class="{ active: hasFilter('display_id') }"
@@ -118,7 +155,7 @@
           <span class="req-title-cell" :title="row.title">{{ row.title }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" :width="mergedColWidth('status', columnWidths.status ?? 80)" align="center">
+      <el-table-column v-if="isBuiltinActive('status')" prop="status" :width="mergedColWidth('status', columnWidths.status ?? 80)" align="center">
         <template #header>
           <span class="th-with-filter">
             <span class="sortable-header" @click.stop="toggleSort('status')" style="flex:1">
@@ -147,7 +184,7 @@
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="priority" :width="mergedColWidth('priority', columnWidths.priority ?? 80)" align="center">
+      <el-table-column v-if="isBuiltinActive('priority')" prop="priority" :width="mergedColWidth('priority', columnWidths.priority ?? 80)" align="center">
         <template #header>
           <span class="th-with-filter">
             <span class="sortable-header" @click.stop="toggleSort('priority')" style="flex:1">
@@ -176,9 +213,49 @@
           </el-tag>
         </template>
       </el-table-column>
+      <!-- 创建时间 -->
+      <el-table-column v-if="isBuiltinActive('created_at')" prop="created_at" :width="mergedColWidth('created_at', 150)" align="center">
+        <template #header>
+          <span class="th-with-filter">
+            <span class="sortable-header" @click.stop="toggleSort('created_at')" style="flex:1">
+              创建时间
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('created_at') === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('created_at') === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('created_at')" class="sort-rank">{{ getSortRank('created_at') }}</span>
+              </span>
+            </span>
+            <el-icon class="filter-icon" :class="{ active: hasFilter('created_at') }" @click.stop="toggleFilterCol('created_at', $event)"><Filter /></el-icon>
+          </span>
+        </template>
+        <template #default="{ row }">
+          <span class="date-cell">{{ formatDateTime(row.created_at) }}</span>
+        </template>
+      </el-table-column>
+      <!-- 更新时间 -->
+      <el-table-column v-if="isBuiltinActive('updated_at')" prop="updated_at" :width="mergedColWidth('updated_at', 150)" align="center">
+        <template #header>
+          <span class="th-with-filter">
+            <span class="sortable-header" @click.stop="toggleSort('updated_at')" style="flex:1">
+              更新时间
+              <span class="sort-indicator">
+                <el-icon v-if="getSortOrder('updated_at') === 'asc'" class="sort-icon active"><SortUp /></el-icon>
+                <el-icon v-else-if="getSortOrder('updated_at') === 'desc'" class="sort-icon active"><SortDown /></el-icon>
+                <el-icon v-else class="sort-icon"><SortUp /></el-icon>
+                <span v-if="getSortOrder('updated_at')" class="sort-rank">{{ getSortRank('updated_at') }}</span>
+              </span>
+            </span>
+            <el-icon class="filter-icon" :class="{ active: hasFilter('updated_at') }" @click.stop="toggleFilterCol('updated_at', $event)"><Filter /></el-icon>
+          </span>
+        </template>
+        <template #default="{ row }">
+          <span class="date-cell">{{ formatDateTime(row.updated_at) }}</span>
+        </template>
+      </el-table-column>
       <!-- 自定义字段列（动态） -->
       <el-table-column
-        v-for="cf in customFields"
+        v-for="cf in customFields.filter(f => !f.is_builtin)"
         :key="'cf_' + cf.id"
         :prop="'cf_' + cf.id"
         :label="cf.field_name"
@@ -236,7 +313,14 @@
     <div v-if="filterOpen" class="filter-overlay" @click="closeFilter" />
     <div v-if="filterOpen" class="filter-panel-wrap" :style="filterPanelStyle" @click.stop>
       <div class="filter-search-wrap">
-        <el-input v-model="filterSearch" size="small" placeholder="搜索… 空格分隔多关键词" clearable />
+        <el-input v-model="filterSearch" size="small" placeholder="搜索… 空格分隔多关键词" clearable class="filter-search-input" @keyup.enter="toggleFuzzyMode" />
+        <el-button
+          size="small"
+          :class="['filter-mode-btn', { active: filterMode !== '' }]"
+          @click="toggleFuzzyMode"
+        >
+          {{ filterMode === 'include' ? '包含' : filterMode === 'exclude' ? '排除' : '搜索' }}
+        </el-button>
       </div>
       <div class="filter-options">
         <!-- 日期/时间列：分级树（扁平渲染） -->
@@ -290,22 +374,22 @@
       </div>
       </div>
       </div>
-      <div class="pagination-bar">
-        <span v-if="total !== totalAll && totalAll" class="filter-total-tip">已筛选 {{ total }} 条 / 共 {{ totalAll }} 条</span>
-        <span v-else class="filter-total-tip">共 {{ total }} 条</span>
-        <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
-          :page-sizes="[25, 50, 75, 100]"
-          :total="total"
-          layout="sizes, prev, pager, next, jumper"
-          background
-          small
-          @current-change="loadRequirements"
-          @size-change="loadRequirements"
-        />
-      </div>
     </template>
+    </div>
+    <div v-if="requirements.length" class="pagination-bar">
+      <span v-if="total !== totalAll && totalAll" class="filter-total-tip">已筛选 {{ total }} 条 / 共 {{ totalAll }} 条</span>
+      <span v-else class="filter-total-tip">共 {{ total }} 条</span>
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[25, 50, 75, 100]"
+        :total="total"
+        layout="sizes, prev, pager, next, jumper"
+        background
+        small
+        @current-change="loadRequirements"
+        @size-change="loadRequirements"
+      />
     </div>
     <el-empty v-if="!loading && !requirements.length" description="暂无需求" />
 
@@ -336,7 +420,7 @@
         <el-form-item label="标题" required>
           <el-input v-model="form.title" placeholder="需求标题" />
         </el-form-item>
-        <el-form-item label="状态">
+        <el-form-item v-if="isBuiltinActive('status')" label="状态">
           <el-select v-model="form.status" style="width: 100%">
             <el-option
               v-for="s in statusPools"
@@ -346,7 +430,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="优先级">
+        <el-form-item v-if="isBuiltinActive('priority')" label="优先级">
           <el-select v-model="form.priority" style="width: 100%">
             <el-option
               v-for="p in priorityPools"
@@ -375,7 +459,7 @@
         <el-form-item label="标题" v-if="cellEditField === 'title'">
           <el-input v-model="cellEditValue" placeholder="输入需求标题" clearable @keyup.enter="saveCellEdit" />
         </el-form-item>
-        <el-form-item label="状态" v-if="cellEditField === 'status'">
+        <el-form-item label="状态" v-if="cellEditField === 'status' && isBuiltinActive('status')">
           <el-select v-model="cellEditValue" placeholder="选择状态" style="width: 100%">
             <el-option
               v-for="s in statusPools"
@@ -385,7 +469,7 @@
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="优先级" v-if="cellEditField === 'priority'">
+        <el-form-item label="优先级" v-if="cellEditField === 'priority' && isBuiltinActive('priority')">
           <el-select v-model="cellEditValue" placeholder="选择优先级" style="width: 100%">
             <el-option
               v-for="p in priorityPools"
@@ -524,7 +608,7 @@
             <el-option label="优先级" value="priority" />
             <el-option-group v-if="importMode !== 'overwrite'" label="自定义字段">
               <el-option
-                v-for="cf in customFields"
+                v-for="cf in customFields.filter(f => !f.is_builtin)"
                 :key="cf.id"
                 :label="cf.field_name"
                 :value="'field:' + cf.id"
@@ -596,6 +680,7 @@ import {
   getReqStatusPools, getReqPriorityPools, getReqFilterStats,
   importRequirementsPreview, importRequirements,
   getReqColWidths, saveReqColWidths, deleteReqColWidths,
+  getReqViewState, saveReqViewState,
 } from '../api/index.js'
 
 const route = useRoute()
@@ -606,6 +691,13 @@ const projectId = route.params.projectId
 const requirements = shallowRef([])
 const loading = ref(false)
 const customFields = ref([])
+
+// 检查内置字段是否启用（从 customFields 中判断，customFields 只含活跃字段）
+function isBuiltinActive(name) {
+  const fieldNameMap = { status: '状态', priority: '优先级', title: '标题', created_at: '创建时间', updated_at: '更新时间' }
+  const cn = fieldNameMap[name] || name
+  return customFields.value.some(f => f.field_name === cn && f.is_builtin)
+}
 const statusPools = ref([])
 const priorityPools = ref([])
 const projectName = ref('')
@@ -729,12 +821,71 @@ function computeColumnWidths() {
 
 // ── 列筛选 ──
 const columnFilters = ref({})  // { prop: string[] }
+const fuzzyFilters = ref({})   // { prop: { text: string, mode: 'include'|'exclude' } }
 const filterOpen = ref(false)
 const filterCol = ref('')       // 当前筛选列 prop
 const filterRect = ref(null)    // 触发元素 DOMRect
 const filterSearch = ref('')    // 筛选面板内搜索词
+const filterMode = ref('include')  // 'include' | 'exclude'
 const filterStats = ref({})     // 全量数据统计 { prop: [{value, count}] }
 const dtExpanded = ref(new Set()) // 日期树展开节点
+
+// ---- 筛选条件展示 ----
+const filterColLabels = {
+  display_id: '显示ID',
+  title: '标题',
+  status: '状态',
+  priority: '优先级',
+  created_at: '创建时间',
+  updated_at: '更新时间',
+}
+
+function getFilterLabel(col) {
+  if (filterColLabels[col]) return filterColLabels[col]
+  if (col.startsWith('cf_')) {
+    const fid = parseInt(col.slice(3))
+    const cf = customFields.value.find(f => f.id === fid)
+    return cf ? cf.field_name : col
+  }
+  return col
+}
+
+const activeFilters = computed(() => {
+  const result = []
+  for (const [col, values] of Object.entries(columnFilters.value)) {
+    if (!values || !values.length) continue
+    const label = getFilterLabel(col)
+    for (const val of values) {
+      result.push({ col, label, value: val })
+    }
+  }
+  return result
+})
+
+const fuzzyFilterChips = computed(() => {
+  const result = []
+  for (const [col, f] of Object.entries(fuzzyFilters.value)) {
+    if (!f.text) continue
+    result.push({ col, label: getFilterLabel(col), text: f.text, mode: f.mode })
+  }
+  return result
+})
+
+function removeFilterValue(col, val) {
+  const cur = (columnFilters.value[col] || []).filter(v => v !== val)
+  if (cur.length) {
+    columnFilters.value = { ...columnFilters.value, [col]: cur }
+  } else {
+    const copy = { ...columnFilters.value }
+    delete copy[col]
+    columnFilters.value = copy
+  }
+}
+
+function clearAllFilters() {
+  columnFilters.value = {}
+  fuzzyFilters.value = {}
+}
 
 const filterPanelStyle = computed(() => {
   const r = filterRect.value
@@ -775,7 +926,15 @@ function toggleFilterCol(colProp, event) {
     }
   }
   filterCol.value = colProp
-  filterSearch.value = ''
+  // 恢复该列已有的模糊筛选状态
+  const existing = fuzzyFilters.value[colProp]
+  if (existing && existing.text) {
+    filterSearch.value = existing.text
+    filterMode.value = existing.mode
+  } else {
+    filterSearch.value = ''
+    filterMode.value = ''
+  }
   filterOpen.value = true
   // 获取跨列联动后的筛选统计数据（排除当前列自己的筛选）
   const otherFilters = Object.fromEntries(
@@ -796,8 +955,9 @@ function closeFilter() {
 }
 
 function hasFilter(colProp) {
-  const sel = columnFilters.value[colProp]
-  return sel && sel.length > 0
+  if (columnFilters.value[colProp]?.length > 0) return true
+  if (fuzzyFilters.value[colProp]?.text) return true
+  return false
 }
 
 function getCellValue(row, colProp) {
@@ -821,6 +981,7 @@ function getCellValue(row, colProp) {
   }
   if (colProp === 'status') return statusLabel(row.status)
   if (colProp === 'priority') return priorityLabel(row.priority)
+  if (colProp === 'created_at' || colProp === 'updated_at') return formatDateTime(row[colProp])
   const v = row[colProp]
   return v !== null && v !== undefined ? String(v) : ''
 }
@@ -836,8 +997,7 @@ function getFilterOptions(colProp) {
   const rows = requirements.value || []
   for (const row of rows) {
     if (!row) continue
-    const val = getCellValue(row, colProp)
-    if (val === '') continue
+    const val = getCellValue(row, colProp) || '(空)'
     counter[val] = (counter[val] || 0) + 1
   }
   return Object.entries(counter)
@@ -885,6 +1045,7 @@ const displayedRequirements = computed(() => {
 })
 
 function isDateFilterByProp(prop) {
+  if (prop === 'created_at' || prop === 'updated_at') return true
   if (!prop || !prop.startsWith('cf_')) return false
   const fid = parseInt(prop.replace('cf_', ''), 10)
   const cf = customFields.value.find(c => c.id === fid)
@@ -902,14 +1063,18 @@ const filteredColOptions = computed(() => {
 
 // ── 日期/时间列分级树 ──
 const isDateFilter = computed(() => {
-  if (!filterCol.value || !filterCol.value.startsWith('cf_')) return false
+  if (!filterCol.value) return false
+  if (filterCol.value === 'created_at' || filterCol.value === 'updated_at') return true
+  if (!filterCol.value.startsWith('cf_')) return false
   const fid = parseInt(filterCol.value.replace('cf_', ''), 10)
   const cf = customFields.value.find(c => c.id === fid)
   return cf && (cf.field_type === 'date' || cf.field_type === 'datetime')
 })
 
 const dateTreeDepth = computed(() => {
-  if (!filterCol.value || !filterCol.value.startsWith('cf_')) return 0
+  if (!filterCol.value) return 0
+  if (filterCol.value === 'created_at' || filterCol.value === 'updated_at') return 6
+  if (!filterCol.value.startsWith('cf_')) return 0
   const fid = parseInt(filterCol.value.replace('cf_', ''), 10)
   const cf = customFields.value.find(c => c.id === fid)
   return cf?.field_type === 'datetime' ? 6 : 3
@@ -919,10 +1084,16 @@ const dateFilterTree = computed(() => {
   if (!isDateFilter.value) return { roots: [] }
   const stats = filterStats.value[filterCol.value] || getFilterOptions(filterCol.value)
   const depth = dateTreeDepth.value  // 3=date, 6=datetime
-  // 按层级前缀聚合
+  // 分离空值
+  let emptyNode = null
   const prefixMap = {}
   for (const { value, count } of stats) {
+    if (value === '(空)') {
+      emptyNode = { value: '(空)', count, level: 0, label: '(空)', children: {} }
+      continue
+    }
     const segments = value.match(/\d+/g) || []
+    if (!segments.length) continue
     for (let i = 1; i <= depth; i++) {
       const prefix = buildPrefix(segments, i)
       if (!prefixMap[prefix]) prefixMap[prefix] = { value: prefix, count: 0, level: i, children: {} }
@@ -949,6 +1120,8 @@ const dateFilterTree = computed(() => {
     }
   }
   roots.sort((a, b) => a.value.localeCompare(b.value))
+  // 空值节点追加到末尾
+  if (emptyNode) roots.push(emptyNode)
   // 为每个节点排序子节点
   for (const n of Object.values(nodeCache)) {
     const keys = Object.keys(n.children).sort()
@@ -1060,7 +1233,68 @@ function filterClear() {
   const copy = { ...columnFilters.value }
   delete copy[col]
   columnFilters.value = copy
+  clearFuzzy()
+  filterMode.value = ''
   closeFilter()
+}
+
+function toggleFuzzyMode() {
+  // 三态循环：'' → 'include' → 'exclude' → ''
+  if (filterMode.value === '') {
+    filterMode.value = 'include'
+  } else if (filterMode.value === 'include') {
+    filterMode.value = 'exclude'
+  } else {
+    filterMode.value = ''
+  }
+}
+
+// 监听模糊搜索模式变化，自动应用/清除模糊筛选
+watch(filterMode, (mode) => {
+  if (!filterCol.value) return
+  if (mode) {
+    const text = filterSearch.value.trim()
+    if (text) {
+      applyFuzzy()
+    }
+  } else {
+    clearFuzzy()
+  }
+})
+
+// 在包含/排除模式下，搜索文字变化时自动更新
+watch(filterSearch, (text) => {
+  if (!filterCol.value || !filterMode.value) return
+  const t = text.trim()
+  if (t) {
+    applyFuzzy()
+  } else {
+    clearFuzzy()
+  }
+})
+
+function applyFuzzy() {
+  const text = filterSearch.value.trim()
+  if (text) {
+    fuzzyFilters.value = { ...fuzzyFilters.value, [filterCol.value]: { text, mode: filterMode.value } }
+    if (columnFilters.value[filterCol.value]) {
+      const copy = { ...columnFilters.value }
+      delete copy[filterCol.value]
+      columnFilters.value = copy
+    }
+  }
+}
+
+function clearFuzzy() {
+  const copy = { ...fuzzyFilters.value }
+  delete copy[filterCol.value]
+  fuzzyFilters.value = copy
+}
+
+function removeFuzzyFilter(col) {
+  const copy = { ...fuzzyFilters.value }
+  delete copy[col]
+  fuzzyFilters.value = copy
 }
 
 // 手动调整列宽持久化（后端 + localStorage 双重持久化）
@@ -1439,10 +1673,19 @@ async function loadRequirements() {
     const activeFilters = Object.entries(columnFilters.value).filter(([, v]) => v && v.length)
     if (activeFilters.length) {
       const raw = Object.fromEntries(activeFilters)
-      // status/priority 的筛选值是中文标签，需要转回英文原名
       if (raw.status) raw.status = raw.status.map(s => statusNameToValue(s))
       if (raw.priority) raw.priority = raw.priority.map(p => priorityNameToValue(p))
       params.column_filters = JSON.stringify(raw)
+    }
+    // 模糊筛选传递到后端
+    if (Object.keys(fuzzyFilters.value).length) {
+      const fuzzy = {}
+      for (const [col, f] of Object.entries(fuzzyFilters.value)) {
+        if (f.text) fuzzy[col] = { text: f.text, mode: f.mode }
+      }
+      if (Object.keys(fuzzy).length) {
+        params.fuzzy_filters = JSON.stringify(fuzzy)
+      }
     }
     const res = await getRequirements(projectId, params)
     requirements.value = res.items || res
@@ -1458,8 +1701,28 @@ async function loadRequirements() {
   }
 }
 
-// 列筛选变更时重新请求后端
+// 自动保存排序和筛选状态到服务端
+let saveViewTimer = null
+function saveViewState() {
+  clearTimeout(saveViewTimer)
+  saveViewTimer = setTimeout(() => {
+    const data = {
+      sortKeys: [...sortKeys],
+      columnFilters: { ...columnFilters.value },
+      fuzzyFilters: { ...fuzzyFilters.value },
+    }
+    saveReqViewState(projectId, data)
+  }, 500)
+}
+watch(sortKeys, saveViewState, { deep: true })
 watch(columnFilters, () => {
+  saveViewState()
+  currentPage.value = 1
+  loadRequirements()
+}, { deep: true })
+
+watch(fuzzyFilters, () => {
+  saveViewState()
   currentPage.value = 1
   loadRequirements()
 }, { deep: true })
@@ -1493,8 +1756,8 @@ function openCreate() {
     || priorityPools.value[0]
   form.value = {
     title: '',
-    priority: defaultPriority ? priorityNameToValue(defaultPriority.name) : 'normal',
-    status: defaultStatus ? statusNameToValue(defaultStatus.name) : 'todo',
+    priority: defaultPriority ? priorityNameToValue(defaultPriority.name) : '',
+    status: defaultStatus ? statusNameToValue(defaultStatus.name) : '',
     customValues: {},
   }
   dialogVisible.value = true
@@ -1506,11 +1769,10 @@ async function submit() {
     return
   }
   try {
-    await createRequirement(projectId, {
-      title: form.value.title,
-      priority: form.value.priority,
-      status: form.value.status,
-    })
+    const payload = { title: form.value.title }
+    if (statusPools.value.length) payload.status = form.value.status
+    if (priorityPools.value.length) payload.priority = form.value.priority
+    await createRequirement(projectId, payload)
     ElMessage.success('需求已创建')
     dialogVisible.value = false
     currentPage.value = 1
@@ -1793,6 +2055,22 @@ onMounted(async () => {
     columnFilters.value = initial
   }
 
+  // 从服务端恢复排序和筛选状态
+  try {
+    const vs = await getReqViewState(projectId)
+    if (vs && Object.keys(vs).length) {
+      if (vs.sortKeys?.length) {
+        sortKeys.splice(0, sortKeys.length, ...vs.sortKeys)
+      }
+      if (vs.columnFilters && !Object.keys(columnFilters.value).length) {
+        columnFilters.value = vs.columnFilters || {}
+      }
+      if (vs.fuzzyFilters) {
+        fuzzyFilters.value = vs.fuzzyFilters || {}
+      }
+    }
+  } catch { /* 无配置则忽略 */ }
+
   // 所有数据并行加载
   await Promise.all([
     loadProject(),
@@ -1851,6 +2129,7 @@ onBeforeUnmount(() => {
 .id-link { font-size: 12px; font-family: monospace; color: #534ab7; text-decoration: none; cursor: pointer; }
 .id-link:hover { color: #7b6fd6; text-decoration: underline; }
 .cf-value { font-size: 12px; color: #555; }
+.date-cell { font-size: 12px; color: #555; white-space: nowrap; }
 .cf-text-cell {
   white-space: nowrap;
   overflow: hidden;
@@ -1890,15 +2169,72 @@ onBeforeUnmount(() => {
 .pagination-bar {
   flex-shrink: 0;
   display: flex;
-  justify-content: flex-end;
-  padding: 10px 32px;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 16px;
   background: #fff;
   border-top: 1px solid #ebeef5;
+  overflow: hidden;
 }
 .filter-total-tip {
   font-size: 12px;
   color: #909399;
   margin-right: auto;
+}
+
+/* 筛选条件标签栏 */
+.filter-chips-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: #e8e6fb;
+  border: 1px solid #c8c3f0;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.filter-chip:hover {
+  opacity: 0.75;
+}
+.filter-chip-label {
+  color: #534ab7;
+  font-weight: 500;
+}
+.filter-chip-sep {
+  color: #999;
+  margin: 0 1px;
+}
+.filter-chip-value {
+  color: #2c2c2a;
+}
+.filter-chip-close {
+  font-size: 12px;
+  color: #999;
+  margin-left: 2px;
+}
+.filter-chip-close:hover {
+  color: #e24b4a;
+}
+.filter-clear-all {
+  font-size: 12px;
+}
+.fuzzy-chip {
+  background: #fff3e0;
+  border-color: #ffcc80;
+}
+.fuzzy-chip .filter-chip-label {
+  color: #e65100;
 }
 
 .sortable-header { cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px; }
@@ -2022,8 +2358,25 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .filter-search-wrap {
-  padding: 0 10px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 8px;
   border-bottom: 1px solid #eee;
+}
+.filter-search-input {
+  flex: 1;
+  min-width: 0;
+}
+.filter-mode-btn {
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 5px 8px;
+}
+.filter-mode-btn.active {
+  color: #fff;
+  background-color: #534ab7;
+  border-color: #534ab7;
 }
 .filter-options {
   flex: 1;

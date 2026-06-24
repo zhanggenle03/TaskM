@@ -13,9 +13,16 @@
         <p class="page-sub">{{ project?.description }}</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <el-select v-model="sortBy" style="width:120px" @change="onSortChange" placeholder="排序方式">
-          <el-option v-for="opt in sortOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
-        </el-select>
+        <div class="sort-group">
+          <el-select v-model="sortBy" @change="onSortChange" placeholder="排序方式">
+            <el-option v-for="opt in sortOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
+          </el-select>
+          <el-tooltip :content="sortOrder === 'asc' ? '升序' : '降序'" placement="top">
+            <el-button class="sort-order-btn" @click="toggleSortOrder">
+              <el-icon><SortUp v-if="sortOrder === 'asc'" /><SortDown v-else /></el-icon>
+            </el-button>
+          </el-tooltip>
+        </div>
         <el-button @click="$router.push(`/projects/${projectId}/settings`)">
           <el-icon><Setting /></el-icon> 设置
         </el-button>
@@ -138,7 +145,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import {
   getTasks, createTask, updateTask, deleteTask, getStatuses, getProjects,
-  getTags,
+  getTags, getTaskSortConfig, putTaskSortConfig,
 } from '../api'
 
 const route = useRoute()
@@ -151,6 +158,7 @@ const tags = ref([])
 const activeStatus = ref(route.query.status_id ? Number(route.query.status_id) : null)
 const activeTagIds = ref(route.query.tag_ids ? route.query.tag_ids.split(',').map(Number) : [])
 const sortBy = ref(route.query.sort_by || 'updated_at')
+const sortOrder = ref(route.query.sort_order || 'desc')
 const sortOptions = [
   { key: 'updated_at', label: '更新时间' },
   { key: 'due_date', label: '截止时间' },
@@ -200,11 +208,18 @@ const load = async () => {
   tags.value = tg
   defaultStatusId.value = s.find(st => st.is_default)?.id ?? null
   usedStatusIds.value = new Set()
+
+  // 从配置文件恢复排序（仅在路由没有显式指定时）
+  if (!route.query.sort_by && !route.query.sort_order) {
+    const saved = await getTaskSortConfig(projectId)
+    if (saved?.sort_by) sortBy.value = saved.sort_by
+    if (saved?.sort_order) sortOrder.value = saved.sort_order
+  }
+
   await loadTasks()
 }
 const loadTasks = async () => {
-  const orderMap = { updated_at: 'desc', due_date: 'asc', status: 'asc', title: 'asc' }
-  const params = { sort_by: sortBy.value, sort_order: orderMap[sortBy.value] || 'asc' }
+  const params = { sort_by: sortBy.value, sort_order: sortOrder.value }
   if (activeStatus.value !== null) params.status_id = activeStatus.value
   if (activeTagIds.value.length) params.tag_ids = activeTagIds.value.join(',')
   tasks.value = await getTasks(projectId, params)
@@ -246,8 +261,22 @@ const toggleTagFilter = (tagId) => {
 }
 
 const onSortChange = (val) => {
-  router.replace({ query: { ...route.query, sort_by: val || undefined } })
+  router.replace({ query: { ...route.query, sort_by: val || undefined, sort_order: sortOrder.value || undefined } })
   loadTasks()
+  saveSortConfig()
+}
+
+const toggleSortOrder = () => {
+  sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  router.replace({ query: { ...route.query, sort_order: sortOrder.value || undefined } })
+  loadTasks()
+  saveSortConfig()
+}
+
+const saveSortConfig = async () => {
+  try {
+    await putTaskSortConfig(projectId, { sort_by: sortBy.value, sort_order: sortOrder.value })
+  } catch { /* 静默写入，不影响用户体验 */ }
 }
 
 const formatTime = (dt) => dayjs(dt).format('YYYY-MM-DD HH:mm')
@@ -270,6 +299,13 @@ watch(() => route.query.status_id, (newVal) => {
 watch(() => route.query.sort_by, (newVal) => {
   if (newVal && newVal !== sortBy.value) {
     sortBy.value = newVal
+    loadTasks()
+  }
+})
+
+watch(() => route.query.sort_order, (newVal) => {
+  if (newVal && newVal !== sortOrder.value) {
+    sortOrder.value = newVal
     loadTasks()
   }
 })
@@ -353,6 +389,11 @@ const removeTask = async (t) => {
 .task-comm-info { display: inline-flex; gap: 24px; color: #aaa; font-size: 12px; }
 .task-contact-col { flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-comm-col { white-space: nowrap; }
+.sort-group { display: inline-flex; align-items: center; }
+.sort-group .el-select { width: 120px; }
+.sort-group .el-select .el-input__wrapper { border-radius: 4px 0 0 4px; border-right: none; }
+.sort-group .el-select .el-input__inner { padding-right: 4px; }
+.sort-order-btn { border-radius: 0 4px 4px 0; border-left: none; margin-left: -1px; }
 .task-status-tag { flex-shrink: 0; }
 .task-date-col { font-size: 12px; color: #e24b4a; flex-shrink: 0; white-space: nowrap; }
 .task-actions { display: flex; gap: 4px; flex-shrink: 0; }

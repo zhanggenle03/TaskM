@@ -134,6 +134,7 @@ class RequirementCustomField(Base):
     field_options = Column(Text, default="")  # JSON string for dropdown options
     sort_order = Column(Integer, default=0)
     is_active = Column(Boolean, default=True)
+    is_builtin = Column(Boolean, default=False)  # 是否为内置字段（标题/状态/优先级）
     created_at = Column(DateTime, default=datetime.now)
 
     project = relationship("Project", back_populates="requirement_fields")

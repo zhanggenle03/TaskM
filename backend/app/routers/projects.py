@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
+import os
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from typing import List, Optional
-from ..database import get_db, Project, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR
+from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -139,6 +140,31 @@ def create_project(data: ProjectCreate, db: Session = Depends(get_db)):
         CommTypePool(project_id=proj.id, name="线上", color="#185FA5", sort_order=4),
     ]
     db.add_all(type_defaults)
+    # 创建默认需求状态池
+    req_statuses = [
+        RequirementStatusPool(project_id=proj.id, name="待处理", color="#185FA5", sort_order=0, is_default=True),
+        RequirementStatusPool(project_id=proj.id, name="进行中", color="#0F6E56", sort_order=1),
+        RequirementStatusPool(project_id=proj.id, name="已完成", color="#639922", sort_order=2),
+        RequirementStatusPool(project_id=proj.id, name="已取消", color="#909399", sort_order=3),
+    ]
+    db.add_all(req_statuses)
+    # 创建默认需求优先级池
+    req_priorities = [
+        RequirementPriorityPool(project_id=proj.id, name="低", color="#909399", sort_order=0),
+        RequirementPriorityPool(project_id=proj.id, name="普通", color="#185FA5", sort_order=1, is_default=True),
+        RequirementPriorityPool(project_id=proj.id, name="高", color="#854F0B", sort_order=2),
+        RequirementPriorityPool(project_id=proj.id, name="紧急", color="#993C1D", sort_order=3),
+    ]
+    db.add_all(req_priorities)
+    # 创建需求内置字段
+    req_builtin_fields = [
+        RequirementCustomField(project_id=proj.id, field_name="标题", field_type="text", field_options="", sort_order=0, is_active=True, is_builtin=True),
+        RequirementCustomField(project_id=proj.id, field_name="状态", field_type="dropdown", field_options="待处理\n进行中\n已完成\n已取消", sort_order=1, is_active=True, is_builtin=True),
+        RequirementCustomField(project_id=proj.id, field_name="优先级", field_type="dropdown", field_options="低\n普通\n高\n紧急", sort_order=2, is_active=True, is_builtin=True),
+        RequirementCustomField(project_id=proj.id, field_name="创建时间", field_type="datetime", field_options="", sort_order=3, is_active=True, is_builtin=True),
+        RequirementCustomField(project_id=proj.id, field_name="更新时间", field_type="datetime", field_options="", sort_order=4, is_active=True, is_builtin=True),
+    ]
+    db.add_all(req_builtin_fields)
     db.commit()
     db.refresh(proj)
     return proj
@@ -283,6 +309,11 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
     if os.path.isdir(proj_upload_dir):
         import shutil
         shutil.rmtree(proj_upload_dir)
+    # 删除项目级配置目录
+    proj_config_dir = os.path.join(CONFIG_DIR, proj.display_id)
+    if os.path.isdir(proj_config_dir):
+        import shutil
+        shutil.rmtree(proj_config_dir)
     return {"ok": True}
 
 

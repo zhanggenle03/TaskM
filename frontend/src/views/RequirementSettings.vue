@@ -28,27 +28,25 @@
             :class="{
               'drag-over': dragOver === i,
               inactive: !f.is_active,
-              'builtin-item': f.builtin,
             }"
-            :draggable="(!f.builtin && f.is_active) ? 'true' : 'false'"
-            @dragstart="!f.builtin && f.is_active && (dragIdx = i)"
-            @dragover.prevent="!f.builtin && f.is_active && (dragOver = i)"
+            :draggable="(f.is_active && f.field_name !== '标题') ? 'true' : 'false'"
+            @dragstart="f.is_active && f.field_name !== '标题' && (dragIdx = i)"
+            @dragover.prevent="f.is_active && f.field_name !== '标题' && (dragOver = i)"
             @dragleave="dragOver = -1"
-            @drop="!f.builtin && f.is_active && onDrop(i)"
+            @drop="f.is_active && f.field_name !== '标题' && onDrop(i)"
             @dragend="dragIdx = -1; dragOver = -1"
           >
-            <span v-if="!f.builtin" class="drag-handle" :style="{ opacity: f.is_active ? 1 : 0.3 }"><el-icon><Rank /></el-icon></span>
+            <span v-if="f.field_name !== '标题'" class="drag-handle" :style="{ opacity: f.is_active ? 1 : 0.3 }"><el-icon><Rank /></el-icon></span>
             <span v-else style="width:20px"></span>
-            <div class="dot" :style="{ background: f.builtin ? '#bbb' : '#534ab7' }"></div>
+            <div class="dot" :style="{ background: '#534ab7' }"></div>
             <div style="flex:1;min-width:0">
               <div class="item-name" :class="{ 'inactive-text': !f.is_active }">{{ f.field_name }}</div>
               <div style="font-size:12px;color:#888">
-                {{ f.builtin ? '内置字段' : fieldTypeLabel(f.field_type) }}{{ !f.builtin && (f.field_type === 'dropdown' || f.field_type === 'multi_dropdown') && f.field_options ? ' · ' + formatOptionsPreview(f.field_options) : '' }}
+                {{ fieldTypeLabel(f.field_type) }}{{ (f.field_type === 'dropdown' || f.field_type === 'multi_dropdown') && f.field_options ? ' · ' + formatOptionsPreview(f.field_options) : '' }}
               </div>
             </div>
-            <el-tag v-if="f.builtin" size="small" type="info" effect="plain">内置</el-tag>
-            <el-tag v-if="!f.is_active && !f.builtin" type="warning" size="small">已停用</el-tag>
-            <template v-if="!f.builtin">
+            <el-tag v-if="!f.is_active" type="warning" size="small">已停用</el-tag>
+            <template v-if="!f.is_builtin">
               <el-button v-if="f.is_active" size="small" text @click="editField(f)"><el-icon><Edit /></el-icon></el-button>
               <el-button v-if="f.is_active" size="small" text type="warning" @click="removeField(f)"><el-icon><Remove /></el-icon> 停用</el-button>
               <el-button v-if="f.is_active" size="small" text type="danger" @click="permanentDelete(f)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
@@ -56,6 +54,14 @@
                 <el-button size="small" text type="primary" @click="restoreField(f)"><el-icon><Refresh /></el-icon> 还原</el-button>
                 <el-button size="small" text type="danger" @click="permanentDelete(f)"><el-icon><Delete /></el-icon> 彻底删除</el-button>
               </template>
+            </template>
+            <template v-else-if="f.is_builtin && f.field_name !== '标题'">
+              <el-button v-if="f.is_active" size="small" text type="warning" @click="toggleBuiltinField(f)" style="margin-left:20px"><el-icon><Remove /></el-icon> 停用</el-button>
+              <el-button v-else size="small" text type="primary" @click="toggleBuiltinField(f)" style="margin-left:20px"><el-icon><Refresh /></el-icon> 启用</el-button>
+              <span class="builtin-tag-label" style="margin-left:24px">内置字段</span>
+            </template>
+            <template v-else-if="f.is_builtin && f.field_name === '标题'">
+              <span class="builtin-tag-label">内置字段</span>
             </template>
           </div>
           <el-empty v-if="!displayFields.length" description="暂无字段" :image-size="60" />
@@ -305,18 +311,11 @@ function formatOptionsPreview(opts) {
 
 const fieldTypeLabel = (t) => ({ text: '文本', dropdown: '单选', multi_dropdown: '多选', datetime: '时间', date: '日期', number: '数字' }[t] || t)
 
-// 基础字段定义
-const builtInFields = [
-  { id: '_title', field_name: '标题', field_type: 'text', field_options: '', is_active: true, builtin: true },
-  { id: '_status', field_name: '状态', field_type: 'dropdown', field_options: '待处理\n进行中\n已完成\n已取消', is_active: true, builtin: true },
-  { id: '_priority', field_name: '优先级', field_type: 'dropdown', field_options: '低\n普通\n高\n紧急', is_active: true, builtin: true },
-]
-
-// 合并显示：基础字段在前，自定义字段在后
-const displayFields = computed(() => [
-  ...builtInFields,
-  ...fields.value,
-])
+// 合并显示：按 sort_order 排序，showInactive=false 时过滤掉已停用的
+const displayFields = computed(() => {
+  const sorted = [...fields.value].sort((a, b) => a.sort_order - b.sort_order)
+  return showInactive.value ? sorted : sorted.filter(f => f.is_active)
+})
 
 function openAddField() {
   editingField.value = null
@@ -380,17 +379,32 @@ async function permanentDelete(f) {
   } catch {}
 }
 
+// 内置字段停用/启用
+async function toggleBuiltinField(f) {
+  const action = f.is_active ? '停用' : '启用'
+  try {
+    await ElMessageBox.confirm(`确定${action}内置字段「${f.field_name}」吗？`, '提示', { type: 'warning' })
+    await updateReqCustomField(projectId, f.id, { is_active: !f.is_active })
+    ElMessage.success(`字段已${action}`)
+    await load()
+  } catch {}
+}
+
 // 拖拽排序
 const onDrop = async (i) => {
   dragOver.value = -1
   if (dragIdx.value < 0 || dragIdx.value === i) { dragIdx.value = -1; return }
-  const offset = builtInFields.length
-  const adjustedFrom = dragIdx.value - offset
-  const adjustedTo = i - offset
-  if (adjustedFrom < 0 || adjustedTo < 0) { dragIdx.value = -1; return }
+  const fromField = displayFields.value[dragIdx.value]
+  const toField = displayFields.value[i]
+  if (!fromField || !toField) { dragIdx.value = -1; return }
+
   const arr = fields.value
-  const [moved] = arr.splice(adjustedFrom, 1)
-  arr.splice(adjustedTo, 0, moved)
+  const fromIdx = arr.findIndex(f => f.id === fromField.id)
+  const toIdx = arr.findIndex(f => f.id === toField.id)
+  if (fromIdx < 0 || toIdx < 0) { dragIdx.value = -1; return }
+
+  const [moved] = arr.splice(fromIdx, 1)
+  arr.splice(toIdx, 0, moved)
   dragIdx.value = -1
   for (let idx = 0; idx < arr.length; idx++) {
     if (arr[idx].sort_order !== idx) {
@@ -573,8 +587,8 @@ async function onPriorityDrop(i) {
 .list-item[draggable="true"]:active { cursor: grabbing; }
 .list-item.drag-over { border-color: #534ab7; box-shadow: 0 0 0 2px rgba(83,74,183,.15); }
 .list-item.inactive { background: #f5f5f5; opacity: 0.7; }
-.builtin-item { background: #fafafa; cursor: default !important; opacity: 0.85; }
 .inactive-text { color: #999; }
+.builtin-tag-label { display: inline-flex; align-items: center; height: 24px; padding: 5px 11px; font-size: 12px; color: #909399; border: 0; border-radius: 4px; background: #f5f7fa; }
 .drag-handle { color: #bbb; cursor: grab; display: flex; align-items: center; }
 .drag-handle:active { cursor: grabbing; }
 .dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }

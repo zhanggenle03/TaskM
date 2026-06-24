@@ -134,6 +134,8 @@ export const getDashboardStats = (projectId) => http.get(`/projects/${projectId}
 export const getKanbanTasks = (projectId) => http.get(`/projects/${projectId}/tasks/kanban`)
 export const getKanbanConfig = (projectId) => http.get(`/projects/${projectId}/tasks/kanban-config`, { _silentError: true })
 export const putKanbanConfig = (projectId, data) => http.put(`/projects/${projectId}/tasks/kanban-config`, data)
+export const getTaskSortConfig = (projectId) => http.get(`/projects/${projectId}/tasks/sort-config`, { _silentError: true })
+export const putTaskSortConfig = (projectId, data) => http.put(`/projects/${projectId}/tasks/sort-config`, data)
 
 // --- Requirement Status Pools ---
 export const getReqStatusPools = (projectId, params) => http.get(`/projects/${projectId}/requirements/status-pools`, { params })
@@ -178,3 +180,10 @@ export const saveReqColWidths = (projectId, data) =>
 
 export const deleteReqColWidths = (projectId) =>
   http.delete(`/projects/${projectId}/requirements/column-widths`)
+
+// --- View State ---
+export const getReqViewState = (projectId) =>
+  http.get(`/projects/${projectId}/requirements/view-state`)
+
+export const saveReqViewState = (projectId, data) =>
+  http.put(`/projects/${projectId}/requirements/view-state`, data, { _silentError: true })

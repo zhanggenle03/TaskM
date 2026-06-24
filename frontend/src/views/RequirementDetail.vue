@@ -540,7 +540,7 @@ const load = async (id) => {
       getReqStatusPools(projectId.value, { show_inactive: true }),
       getReqPriorityPools(projectId.value, { show_inactive: true }),
     ])
-    customFields.value = cfs || []
+    customFields.value = (cfs || []).filter(f => !f.is_builtin)
     statusPools.value = sp || []
     priorityPools.value = pp || []
     const desc = reqRes.description || ''

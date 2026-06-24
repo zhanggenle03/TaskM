@@ -352,6 +352,7 @@ class RequirementCustomFieldUpdate(BaseModel):
     field_type: Optional[str] = None
     field_options: Optional[str] = None
     sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
 
 class RequirementCustomFieldOut(BaseModel):
     id: int
@@ -361,6 +362,7 @@ class RequirementCustomFieldOut(BaseModel):
     field_options: str
     sort_order: int
     is_active: bool = True
+    is_builtin: bool = False
     created_at: datetime
     class Config:
         from_attributes = True

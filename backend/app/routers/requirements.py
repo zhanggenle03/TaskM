@@ -30,6 +30,23 @@ from ..schemas import (
 router = APIRouter(prefix="/projects/{project_id}/requirements", tags=["requirements"])
 
 
+# 内置字段名称（不允许创建同名自定义字段，不允许删除）
+BUILTIN_FIELD_NAMES = {"标题", "状态", "优先级", "创建时间", "更新时间"}
+EMPTY_FILTER_VALUE = "(空)"
+
+
+def _apply_empty_filter(column, values):
+    """处理筛选条件中的空值标记 (空)"""
+    non_empty = [v for v in values if v != EMPTY_FILTER_VALUE]
+    has_empty = EMPTY_FILTER_VALUE in values
+    if has_empty and non_empty:
+        return or_(column.in_(non_empty), column.is_(None), column == "")
+    elif has_empty:
+        return or_(column.is_(None), column == "")
+    else:
+        return column.in_(values)
+
+
 # ========== 自定义字段 CRUD ==========
 
 @router.get("/fields", response_model=List[RequirementCustomFieldOut])
@@ -44,6 +61,11 @@ def list_custom_fields(
     )
     if not show_inactive:
         q = q.filter(RequirementCustomField.is_active == True)
+    # 过滤旧版遗留的与内置字段同名的非内置字段
+    q = q.filter(
+        ~((RequirementCustomField.is_builtin == False) &
+          RequirementCustomField.field_name.in_(list(BUILTIN_FIELD_NAMES)))
+    )
     return q.order_by(RequirementCustomField.sort_order).all()
 
 
@@ -55,6 +77,16 @@ def create_custom_field(
 ):
     proj = resolve_project(db, project_id)
 
+    # 不允许创建与内置字段同名的自定义字段
+    if data.field_name in BUILTIN_FIELD_NAMES:
+        raise HTTPException(400, f"「{data.field_name}」为内置字段，不能重复创建")
+
+    # 自动分配 sort_order：排在最后
+    max_order = db.query(func.max(RequirementCustomField.sort_order)).filter(
+        RequirementCustomField.project_id == proj.id,
+    ).scalar() or -1
+    auto_sort = max_order + 1
+
     # 检查是否存在同名非活动字段，有则自动激活
     existing = db.query(RequirementCustomField).filter(
         RequirementCustomField.project_id == proj.id,
@@ -65,7 +97,7 @@ def create_custom_field(
         existing.is_active = True
         existing.field_type = data.field_type
         existing.field_options = data.field_options
-        existing.sort_order = data.sort_order
+        existing.sort_order = data.sort_order if data.sort_order != 0 else auto_sort
         db.commit()
         db.refresh(existing)
         touch_project(db, proj.id)
@@ -76,7 +108,7 @@ def create_custom_field(
         field_name=data.field_name,
         field_type=data.field_type,
         field_options=data.field_options,
-        sort_order=data.sort_order,
+        sort_order=data.sort_order if data.sort_order != 0 else auto_sort,
     )
     db.add(field)
     db.commit()
@@ -99,6 +131,15 @@ def update_custom_field(
     ).first()
     if not field:
         raise HTTPException(404, "自定义字段不存在")
+    # 内置字段只能修改排序和激活状态，不能改名和改类型
+    if field.is_builtin:
+        if data.field_name is not None and data.field_name != field.field_name:
+            raise HTTPException(400, "内置字段不允许修改名称")
+        if data.field_type is not None and data.field_type != field.field_type:
+            raise HTTPException(400, "内置字段不允许修改类型")
+        # 标题不允许停用
+        if data.is_active is not None and not data.is_active and field.field_name == "标题":
+            raise HTTPException(400, "标题字段不允许停用")
     if data.field_name is not None:
         field.field_name = data.field_name
     if data.field_type is not None:
@@ -107,6 +148,8 @@ def update_custom_field(
         field.field_options = data.field_options
     if data.sort_order is not None:
         field.sort_order = data.sort_order
+    if data.is_active is not None:
+        field.is_active = data.is_active
     db.commit()
     db.refresh(field)
     touch_project(db, proj.id)
@@ -127,7 +170,18 @@ def delete_custom_field(
     ).first()
     if not field:
         raise HTTPException(404, "自定义字段不存在")
+    if field.is_builtin:
+        raise HTTPException(400, "内置字段不允许删除，只能停用")
     if force:
+        # 批量更新受影响需求的 updated_at（自定义值将被级联删除）
+        req_ids = db.query(RequirementCustomValue.requirement_id).filter(
+            RequirementCustomValue.field_id == field_id
+        ).distinct().all()
+        if req_ids:
+            affected = [r[0] for r in req_ids]
+            db.query(Requirement).filter(Requirement.id.in_(affected)).update(
+                {"updated_at": datetime.now()}, synchronize_session=False
+            )
         db.delete(field)
     else:
         field.is_active = False
@@ -162,13 +216,17 @@ def filter_stats(
             if not values:
                 continue
             if prop == "status":
-                req_q = req_q.filter(Requirement.status.in_(values))
+                req_q = req_q.filter(_apply_empty_filter(Requirement.status, values))
             elif prop == "priority":
-                req_q = req_q.filter(Requirement.priority.in_(values))
+                req_q = req_q.filter(_apply_empty_filter(Requirement.priority, values))
             elif prop == "display_id":
-                req_q = req_q.filter(Requirement.display_id.in_(values))
+                req_q = req_q.filter(_apply_empty_filter(Requirement.display_id, values))
             elif prop == "title":
-                req_q = req_q.filter(Requirement.title.in_(values))
+                req_q = req_q.filter(_apply_empty_filter(Requirement.title, values))
+            elif prop == "created_at":
+                req_q = req_q.filter(_apply_empty_filter(Requirement.created_at, values))
+            elif prop == "updated_at":
+                req_q = req_q.filter(_apply_empty_filter(Requirement.updated_at, values))
             elif prop.startswith("cf_"):
                 try:
                     fid = int(prop[3:])
@@ -180,20 +238,36 @@ def filter_stats(
                 ).first()
                 if not cf:
                     continue
+                non_empty = [v for v in values if v != EMPTY_FILTER_VALUE]
+                has_empty = EMPTY_FILTER_VALUE in values
                 if cf.field_type in ("date", "datetime"):
                     subq = db.query(RequirementCustomValue.requirement_id).filter(
                         RequirementCustomValue.field_id == fid
                     )
-                    like_conds = [RequirementCustomValue.value.like(f"{v}%") for v in values if v]
-                    if like_conds:
-                        subq = subq.filter(or_(*like_conds))
-                    req_q = req_q.filter(Requirement.id.in_(subq))
+                    like_conds = [RequirementCustomValue.value.like(f"{v}%") for v in non_empty if v]
+
+                    if has_empty and like_conds:
+                        req_q = req_q.filter(or_(
+                            Requirement.id.in_(subq.filter(or_(*like_conds))),
+                            ~Requirement.id.in_(subq),
+                        ))
+                    elif has_empty:
+                        req_q = req_q.filter(~Requirement.id.in_(subq))
+                    elif like_conds:
+                        req_q = req_q.filter(Requirement.id.in_(subq.filter(or_(*like_conds))))
                 else:
                     subq = db.query(RequirementCustomValue.requirement_id).filter(
                         RequirementCustomValue.field_id == fid,
-                        RequirementCustomValue.value.in_(values),
                     )
-                    req_q = req_q.filter(Requirement.id.in_(subq))
+                    if has_empty and non_empty:
+                        req_q = req_q.filter(or_(
+                            Requirement.id.in_(subq.filter(RequirementCustomValue.value.in_(non_empty))),
+                            ~Requirement.id.in_(subq),
+                        ))
+                    elif has_empty:
+                        req_q = req_q.filter(~Requirement.id.in_(subq))
+                    else:
+                        req_q = req_q.filter(Requirement.id.in_(subq.filter(RequirementCustomValue.value.in_(values))))
 
     reqs = req_q.all()
 
@@ -204,13 +278,23 @@ def filter_stats(
     priority_counter = {}
     display_id_counter = {}
     title_counter = {}
+    created_counter = {}
+    updated_counter = {}
     for r in reqs:
-        status_counter[STATUS_LABELS.get(r.status, r.status)] = status_counter.get(STATUS_LABELS.get(r.status, r.status), 0) + 1
-        priority_counter[PRIORITY_LABELS.get(r.priority, r.priority)] = priority_counter.get(PRIORITY_LABELS.get(r.priority, r.priority), 0) + 1
-        if r.display_id:
-            display_id_counter[r.display_id] = display_id_counter.get(r.display_id, 0) + 1
-        if r.title:
-            title_counter[r.title] = title_counter.get(r.title, 0) + 1
+        status_counter[STATUS_LABELS.get(r.status, r.status) if r.status else EMPTY_FILTER_VALUE] = status_counter.get(STATUS_LABELS.get(r.status, r.status) if r.status else EMPTY_FILTER_VALUE, 0) + 1
+        priority_counter[PRIORITY_LABELS.get(r.priority, r.priority) if r.priority else EMPTY_FILTER_VALUE] = priority_counter.get(PRIORITY_LABELS.get(r.priority, r.priority) if r.priority else EMPTY_FILTER_VALUE, 0) + 1
+        display_id_counter[r.display_id or EMPTY_FILTER_VALUE] = display_id_counter.get(r.display_id or EMPTY_FILTER_VALUE, 0) + 1
+        title_counter[r.title or EMPTY_FILTER_VALUE] = title_counter.get(r.title or EMPTY_FILTER_VALUE, 0) + 1
+        if r.created_at:
+            dt = r.created_at[:19] if isinstance(r.created_at, str) else r.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            created_counter[dt] = created_counter.get(dt, 0) + 1
+        else:
+            created_counter[EMPTY_FILTER_VALUE] = created_counter.get(EMPTY_FILTER_VALUE, 0) + 1
+        if r.updated_at:
+            dt = r.updated_at[:19] if isinstance(r.updated_at, str) else r.updated_at.strftime("%Y-%m-%d %H:%M:%S")
+            updated_counter[dt] = updated_counter.get(dt, 0) + 1
+        else:
+            updated_counter[EMPTY_FILTER_VALUE] = updated_counter.get(EMPTY_FILTER_VALUE, 0) + 1
 
     def fmt(counter):
         return [{"value": k, "count": v} for k, v in sorted(counter.items(), key=lambda x: -x[1])]
@@ -220,6 +304,8 @@ def filter_stats(
         "priority": fmt(priority_counter),
         "display_id": fmt(display_id_counter),
         "title": fmt(title_counter),
+        "created_at": fmt(created_counter),
+        "updated_at": fmt(updated_counter),
     }
 
     # 自定义字段
@@ -235,8 +321,8 @@ def filter_stats(
                 RequirementCustomValue.requirement_id == r.id,
                 RequirementCustomValue.field_id == cf.id,
             ).first()
-            if cv and cv.value:
-                cv_counter[cv.value] = cv_counter.get(cv.value, 0) + 1
+            val = (cv.value if cv and cv.value else None) or EMPTY_FILTER_VALUE
+            cv_counter[val] = cv_counter.get(val, 0) + 1
         result[f"cf_{cf.id}"] = fmt(cv_counter)
 
     return result
@@ -339,6 +425,8 @@ def _get_requirement_with_values(db: Session, req_id: int) -> RequirementOut:
 def _format_requirement(req: Requirement) -> RequirementOut:
     vals = []
     for cv in req.custom_values:
+        if cv.field and cv.field.is_builtin:
+            continue
         vals.append(RequirementCustomValueOut(
             field_id=cv.field_id,
             field_name=cv.field.field_name if cv.field else "",
@@ -360,6 +448,35 @@ def _format_requirement(req: Requirement) -> RequirementOut:
 
 
 # ========== 需求状态池 ==========
+
+def _sync_builtin_field_options(proj, db):
+    """同步内置字段的 field_options 与对应池的值"""
+    # 状态
+    status_names = [s.name for s in db.query(RequirementStatusPool).filter(
+        RequirementStatusPool.project_id == proj.id,
+        RequirementStatusPool.is_active == True,
+    ).order_by(RequirementStatusPool.sort_order).all()]
+    status_field = db.query(RequirementCustomField).filter(
+        RequirementCustomField.project_id == proj.id,
+        RequirementCustomField.field_name == "状态",
+        RequirementCustomField.is_builtin == True,
+    ).first()
+    if status_field:
+        status_field.field_options = "\n".join(status_names) if status_names else ""
+
+    # 优先级
+    priority_names = [p.name for p in db.query(RequirementPriorityPool).filter(
+        RequirementPriorityPool.project_id == proj.id,
+        RequirementPriorityPool.is_active == True,
+    ).order_by(RequirementPriorityPool.sort_order).all()]
+    priority_field = db.query(RequirementCustomField).filter(
+        RequirementCustomField.project_id == proj.id,
+        RequirementCustomField.field_name == "优先级",
+        RequirementCustomField.is_builtin == True,
+    ).first()
+    if priority_field:
+        priority_field.field_options = "\n".join(priority_names) if priority_names else ""
+
 
 @router.get("/status-pools", response_model=List[RequirementStatusPoolOut])
 def list_status_pools(
@@ -391,6 +508,7 @@ def create_status_pool(
         existing.color = data.color
         existing.sort_order = data.sort_order
         existing.is_default = data.is_default
+        _sync_builtin_field_options(proj, db)
         db.commit()
         db.refresh(existing)
         return existing
@@ -401,6 +519,7 @@ def create_status_pool(
         ).update({"is_default": False})
     pool = RequirementStatusPool(project_id=proj.id, **data.model_dump())
     db.add(pool)
+    _sync_builtin_field_options(proj, db)
     db.commit()
     db.refresh(pool)
     touch_project(db, proj.id)
@@ -422,6 +541,7 @@ def update_status_pool(project_id: str, pool_id: int, data: RequirementStatusPoo
     update_data = data.model_dump(exclude_unset=True)
     for k, v in update_data.items():
         setattr(pool, k, v)
+    _sync_builtin_field_options(proj, db)
     db.commit()
     db.refresh(pool)
     return pool
@@ -479,10 +599,12 @@ def delete_status_pool(
             ).update({"status": default_value or "todo"}, synchronize_session=False)
 
         db.delete(pool)
+        _sync_builtin_field_options(proj, db)
         db.commit()
         return {"message": "ok", "refs_cleaned": {"需求": ref_count} if ref_count > 0 else {}}
 
     pool.is_active = False
+    _sync_builtin_field_options(proj, db)
     db.commit()
     return {"message": "ok"}
 
@@ -550,6 +672,7 @@ def update_priority_pool(project_id: str, pool_id: int, data: RequirementPriorit
     update_data = data.model_dump(exclude_unset=True)
     for k, v in update_data.items():
         setattr(pool, k, v)
+    _sync_builtin_field_options(proj, db)
     db.commit()
     db.refresh(pool)
     return pool
@@ -604,10 +727,12 @@ def delete_priority_pool(
             ).update({"priority": default_value or "normal"}, synchronize_session=False)
 
         db.delete(pool)
+        _sync_builtin_field_options(proj, db)
         db.commit()
         return {"message": "ok", "refs_cleaned": {"需求": ref_count} if ref_count > 0 else {}}
 
     pool.is_active = False
+    _sync_builtin_field_options(proj, db)
     db.commit()
     return {"message": "ok"}
 
@@ -625,6 +750,7 @@ def list_requirements(
     status_order: Optional[str] = None,
     priority_order: Optional[str] = None,
     column_filters: Optional[str] = None,  # JSON: {prop: [values]}
+    fuzzy_filters: Optional[str] = None,   # JSON: {prop: {text, mode: 'include'|'exclude'}}
     page: int = 1,
     page_size: int = 50,
     db: Session = Depends(get_db),
@@ -658,48 +784,119 @@ def list_requirements(
             if not values:
                 continue
             if prop == "status":
-                q = q.filter(Requirement.status.in_(values))
+                q = q.filter(_apply_empty_filter(Requirement.status, values))
             elif prop == "priority":
-                q = q.filter(Requirement.priority.in_(values))
+                q = q.filter(_apply_empty_filter(Requirement.priority, values))
             elif prop == "display_id":
-                q = q.filter(Requirement.display_id.in_(values))
+                q = q.filter(_apply_empty_filter(Requirement.display_id, values))
             elif prop == "title":
-                q = q.filter(Requirement.title.in_(values))
+                q = q.filter(_apply_empty_filter(Requirement.title, values))
+            elif prop == "created_at":
+                q = q.filter(_apply_empty_filter(Requirement.created_at, values))
+            elif prop == "updated_at":
+                q = q.filter(_apply_empty_filter(Requirement.updated_at, values))
             elif prop.startswith("cf_"):
                 try:
                     fid = int(prop[3:])
                 except ValueError:
                     continue
-                # 检查字段类型
                 cf = db.query(RequirementCustomField).filter(
                     RequirementCustomField.id == fid,
                     RequirementCustomField.project_id == proj.id,
                 ).first()
                 if not cf:
                     continue
+                non_empty = [v for v in values if v != EMPTY_FILTER_VALUE]
+                has_empty = EMPTY_FILTER_VALUE in values
                 if cf.field_type in ("date", "datetime"):
-                    # 日期列：前缀匹配 (LIKE)
                     subq = db.query(RequirementCustomValue.requirement_id).filter(
                         RequirementCustomValue.field_id == fid
                     )
-                    # 使用 LIKE 前缀匹配每个筛选值
-                    like_conds = []
-                    for v in values:
-                        like_conds.append(RequirementCustomValue.value.like(f"{v}%"))
-                    if like_conds:
-                        subq = subq.filter(or_(*like_conds))
-                    q = q.filter(Requirement.id.in_(subq))
+                    like_conds = [RequirementCustomValue.value.like(f"{v}%") for v in non_empty if v]
+
+                    if has_empty and like_conds:
+                        q = q.filter(or_(
+                            Requirement.id.in_(subq.filter(or_(*like_conds))),
+                            ~Requirement.id.in_(subq),
+                        ))
+                    elif has_empty:
+                        q = q.filter(~Requirement.id.in_(subq))
+                    elif like_conds:
+                        q = q.filter(Requirement.id.in_(subq.filter(or_(*like_conds))))
                 else:
-                    # 非日期列：精确匹配
                     subq = db.query(RequirementCustomValue.requirement_id).filter(
                         RequirementCustomValue.field_id == fid,
-                        RequirementCustomValue.value.in_(values),
                     )
-                    q = q.filter(Requirement.id.in_(subq))
+                    non_empty_vals = [v for v in values if v != EMPTY_FILTER_VALUE]
+                    if has_empty and non_empty_vals:
+                        q = q.filter(or_(
+                            Requirement.id.in_(subq.filter(RequirementCustomValue.value.in_(non_empty_vals))),
+                            ~Requirement.id.in_(subq),
+                        ))
+                    elif has_empty:
+                        q = q.filter(~Requirement.id.in_(subq))
+                    else:
+                        q = q.filter(Requirement.id.in_(subq.filter(RequirementCustomValue.value.in_(values))))
+
+    # 模糊筛选（fuzzy_filters）
+    if fuzzy_filters:
+        try:
+            fuzzy_json = json.loads(fuzzy_filters)
+        except (json.JSONDecodeError, TypeError):
+            fuzzy_json = {}
+        for prop, f in fuzzy_json.items():
+            text = (f.get("text") or "").strip()
+            if not text:
+                continue
+            mode = f.get("mode", "include")
+            # 空格分隔多关键词，AND 逻辑
+            keywords = [k for k in text.split() if k]
+            if not keywords:
+                continue
+            if prop == "status":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    q = q.filter(Requirement.status.like(like_val) if mode == 'include' else ~Requirement.status.like(like_val))
+            elif prop == "priority":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    q = q.filter(Requirement.priority.like(like_val) if mode == 'include' else ~Requirement.priority.like(like_val))
+            elif prop == "display_id":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    q = q.filter(Requirement.display_id.like(like_val) if mode == 'include' else ~Requirement.display_id.like(like_val))
+            elif prop == "title":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    q = q.filter(Requirement.title.like(like_val) if mode == 'include' else ~Requirement.title.like(like_val))
+            elif prop == "created_at":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    q = q.filter(Requirement.created_at.like(like_val) if mode == 'include' else ~Requirement.created_at.like(like_val))
+            elif prop == "updated_at":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    q = q.filter(Requirement.updated_at.like(like_val) if mode == 'include' else ~Requirement.updated_at.like(like_val))
+            elif prop.startswith("cf_"):
+                try:
+                    fid = int(prop[3:])
+                except ValueError:
+                    continue
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    subq = db.query(RequirementCustomValue.requirement_id).filter(
+                        RequirementCustomValue.field_id == fid,
+                        RequirementCustomValue.value.like(like_val),
+                    )
+                    if mode == 'include':
+                        q = q.filter(Requirement.id.in_(subq))
+                    else:
+                        q = q.filter(~Requirement.id.in_(subq))
 
     # 多列排序：接收逗号分隔的 sort_by 和 sort_order
     # 如 sort_by=priority,status&sort_order=asc,desc → 先按优先级升序，再按状态降序
     sort_map = {
+        "display_id": Requirement.display_id,
         "updated_at": Requirement.updated_at,
         "created_at": Requirement.created_at,
         "title": Requirement.title,
@@ -771,6 +968,8 @@ def list_requirements(
     for r in results:
         vals = []
         for cv in r.custom_values:
+            if cv.field and cv.field.is_builtin:
+                continue
             vals.append(RequirementCustomValueOut(
                 field_id=cv.field_id,
                 field_name=cv.field.field_name if cv.field else "",
@@ -2025,8 +2224,10 @@ async def import_requirements(
             )
         ).delete(synchronize_session=False)
         db.query(Requirement).filter(Requirement.project_id == proj.id).delete(synchronize_session=False)
+        # 删除非内置自定义字段（含旧版导入遗留的与内置同名的字段）
         db.query(RequirementCustomField).filter(
-            RequirementCustomField.project_id == proj.id
+            RequirementCustomField.project_id == proj.id,
+            RequirementCustomField.is_builtin == False,
         ).delete(synchronize_session=False)
         db.query(RequirementStatusPool).filter(
             RequirementStatusPool.project_id == proj.id
@@ -2050,9 +2251,15 @@ async def import_requirements(
                 return None
         if m.target != "new":
             return None
+        # 新字段名称若匹配内置字段名，改为映射到内置列，不创建新字段
+        field_name = m.field_name or excel_col
+        builtin_name_map = {"标题": "title", "状态": "status", "优先级": "priority"}
+        if field_name in builtin_name_map:
+            mapping_dict[excel_col].target = builtin_name_map[field_name]
+            return None
         cf = RequirementCustomField(
             project_id=proj.id,
-            field_name=m.field_name or excel_col,
+            field_name=field_name,
             field_type=m.field_type or "text",
             field_options=m.field_options or "",
             sort_order=999,
@@ -2287,12 +2494,13 @@ async def import_requirements(
         if mode == 'update' and raw_title in existing:
             # 更新已有需求
             req = existing[raw_title]
+            changed = False
             if data.get('priority'):
                 req.priority = _normalize_priority(data.get('priority'))
+                changed = True
             if data.get('status'):
                 req.status = _normalize_status(data.get('status'))
-            db.add(req)
-            db.flush()
+                changed = True
 
             # 更新自定义字段值
             for fid_str, val in custom_vals.items():
@@ -2303,14 +2511,22 @@ async def import_requirements(
                     RequirementCustomValue.field_id == int(fid_str),
                 ).first()
                 if existing_cv:
-                    existing_cv.value = val
-                    db.add(existing_cv)
+                    if existing_cv.value != val:
+                        existing_cv.value = val
+                        db.add(existing_cv)
+                        changed = True
                 else:
                     db.add(RequirementCustomValue(
                         requirement_id=req.id,
                         field_id=int(fid_str),
                         value=val,
                     ))
+                    changed = True
+
+            if changed:
+                req.updated_at = datetime.now()
+                db.add(req)
+                db.flush()
             updated += 1
         else:
             # 新增需求
@@ -2334,6 +2550,7 @@ async def import_requirements(
                     db.add(cv)
             created += 1
 
+    _sync_builtin_field_options(proj, db)
     db.commit()
     touch_project(db, proj.id)
     msg_parts = []
@@ -2392,4 +2609,39 @@ def delete_column_widths(project_id: str, db: Session = Depends(get_db)):
     path = _col_widths_path(proj)
     if os.path.isfile(path):
         os.remove(path)
+    return {"ok": True}
+
+
+# ========== 视图状态（排序/筛选）持久化 ==========
+
+VIEW_STATE_FILE = "requirement_view.json"
+
+
+def _view_state_path(proj):
+    d = os.path.join(CONFIG_DIR, proj.display_id)
+    return os.path.join(d, VIEW_STATE_FILE)
+
+
+@router.get("/view-state")
+def get_view_state(project_id: str, db: Session = Depends(get_db)):
+    """读取排序和筛选配置"""
+    proj = resolve_project(db, project_id)
+    path = _view_state_path(proj)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+@router.put("/view-state")
+def save_view_state(project_id: str, data: dict, db: Session = Depends(get_db)):
+    """保存排序和筛选配置"""
+    proj = resolve_project(db, project_id)
+    path = _view_state_path(proj)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
     return {"ok": True}

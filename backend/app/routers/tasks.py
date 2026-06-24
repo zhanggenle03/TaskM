@@ -127,7 +127,7 @@ def list_tasks(
         reverse = (sort_order == "desc")
     elif sort_by == "due_date":
         sort_key = lambda t: (0, t.due_date) if t.due_date else (1, date_type.max)
-        reverse = False
+        reverse = (sort_order == "desc")
     else:  # 默认按最后沟通时间，无沟通任务的按创建时间
         sort_key = lambda t: comm_at_map.get(t.id) or t.created_at or datetime.min
         reverse = (sort_order == "desc")
@@ -180,6 +180,37 @@ KANBAN_CONFIG_FILE = "kanban.json"
 def _kanban_config_path(proj):
     d = os.path.join(CONFIG_DIR, proj.display_id)
     return os.path.join(d, KANBAN_CONFIG_FILE)
+
+
+SORT_CONFIG_FILE = "sort.json"
+
+
+def _sort_config_path(proj):
+    d = os.path.join(CONFIG_DIR, proj.display_id)
+    return os.path.join(d, SORT_CONFIG_FILE)
+
+
+@router.get("/sort-config")
+def get_sort_config(project_id: str, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    p = _sort_config_path(proj)
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+@router.put("/sort-config")
+def put_sort_config(project_id: str, body: dict, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    p = _sort_config_path(proj)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(body, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
 
 
 @router.get("/kanban-config")
