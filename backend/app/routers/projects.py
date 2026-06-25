@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 import os
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
 from typing import List, Optional
 from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
 from ..schemas import (
@@ -66,17 +65,6 @@ def _count_tag_refs(db: Session, tag_id: int) -> dict:
     return {"任务": count} if count else {}
 
 
-def _count_contact_refs(db: Session, contact_id: int) -> dict:
-    """统计项目对接人被引用的次数（实际对接到任务的 contacts 表）"""
-    count = db.query(Contact).filter(Contact.project_contact_id == contact_id).count()
-    return {"任务对接人": count} if count else {}
-
-
-def _clear_contact_refs(db: Session, contact_id: int):
-    """清理对接人引用（SET NULL）"""
-    db.query(Contact).filter(Contact.project_contact_id == contact_id).update({Contact.project_contact_id: None}, synchronize_session=False)
-
-
 from datetime import date as date_type, datetime
 
 
@@ -118,10 +106,6 @@ def delete_holiday_overrides(dates: List[str], db: Session = Depends(get_db)):
     count = db.query(HolidayOverride).filter(HolidayOverride.date.in_(date_objs)).delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": count}
-
-
-
-
 
 @router.get("", response_model=List[ProjectOut])
 def list_projects(

@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from typing import Optional, List
-import io
 
 from ..database import get_db
 from ..export_service import generate_export_package, TASK_ATTR_OPTIONS

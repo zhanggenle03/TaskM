@@ -8,7 +8,7 @@ import os
 # 确保能找到 app 包
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.database import engine, Base, SessionLocal
+from app.database import engine, SessionLocal
 from app.database import Project, RequirementCustomField
 from sqlalchemy import inspect, text
 

@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse, Response, HTMLResponse
 from sqlalchemy.orm import Session
-from typing import List
 import uuid
 import os
 import html as html_mod

@@ -18,7 +18,6 @@ from ..schemas import (
     TagBrief, RequirementBrief,
     KanbanData, KanbanColumn, KanbanTaskSimple,
 )
-from ..database import StatusPool, Communication
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
 

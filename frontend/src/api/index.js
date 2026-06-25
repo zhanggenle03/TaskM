@@ -47,7 +47,6 @@ export const deleteTag = (projectId, id, config) => http.delete(`/projects/${pro
 // --- Checkins ---
 export const getAllCheckins = (params) => http.get('/projects/checkins', { params })
 export const getTodayCheckinStatus = (date) => http.get('/projects/checkins/today-update-status', { params: date ? { date } : {} })
-export const getCheckins = (projectId) => http.get(`/projects/${projectId}/checkins`)
 export const createCheckin = (data) => http.post('/projects/checkins', data)
 export const updateCheckin = (id, data) => http.put(`/projects/checkins/${id}`, data)
 export const deleteCheckin = (projectId, id) => http.delete(`/projects/${projectId}/checkins/${id}`)
@@ -96,7 +95,6 @@ export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { o
 
 // --- Settings ---
 export const getSettings = () => http.get('/process/settings')
-export const updateSettings = (data) => http.put('/process/settings', data)
 export const updateUserSettings = (data) => http.put('/process/settings/user', data)
 
 // --- Holiday Overrides ---

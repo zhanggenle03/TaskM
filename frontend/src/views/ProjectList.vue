@@ -116,12 +116,9 @@
 
 <script setup>
 import { ref, onMounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { getProjects, createProject, updateProject, deleteProject } from '../api'
-
-const router = useRouter()
 
 // ---------- 数据 ----------
 const allProjects = ref([])
@@ -314,7 +311,6 @@ const onCmd = async (cmd, p) => {
   overflow: hidden;
 }
 .proj-date { font-size: 12px; color: #bbb; }
-.proj-display-id { margin-bottom: 4px; }
 .date-sep { margin: 0 6px; color: #ddd; }
 .error-card {
   text-align: center;

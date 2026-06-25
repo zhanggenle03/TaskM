@@ -52,10 +52,9 @@ function saveOverrides(overrides) {
 }
 
 /**
- * 从数据库加载指定年份的覆盖，合并到 localStorage
+ * 从数据库加载指定年份的覆盖，合并到 localStorage（内部使用）
  */
-let _dbLoadPromise = null
-export async function loadOverridesFromDb(year) {
+async function loadOverridesFromDb(year) {
   try {
     const { getHolidayOverrides } = await import('../api/index.js')
     const rows = await getHolidayOverrides(year)
@@ -193,27 +192,6 @@ export function getAllOverrides() {
 }
 
 /**
- * 清除指定年份的所有覆盖
- */
-export function clearYearOverrides(year) {
-  const overrides = getOverrides()
-  const datesToDelete = []
-  for (const key of Object.keys(overrides)) {
-    if (key.startsWith(year)) {
-      delete overrides[key]
-      datesToDelete.push(key)
-    }
-  }
-  saveOverrides(overrides)
-  // 同步到数据库
-  if (datesToDelete.length) {
-    import('../api/index.js').then(({ deleteHolidayOverrides }) => {
-      deleteHolidayOverrides(datesToDelete).catch(() => {})
-    })
-  }
-}
-
-/**
  * 获取指定年份的解析后覆盖数据（按MM-DD索引），避免重复 JSON.parse
  */
 function getYearOverridesIndexed(year) {
@@ -273,7 +251,7 @@ export async function loadHolidayData(year) {
  * @param {string} dateStr "YYYY-MM-DD"
  * @returns {{ type: 'holiday'|'workday', label: string, name: string } | null}
  */
-export function getHolidayInfo(dateStr) {
+function getHolidayInfo(dateStr) {
   // 手动覆盖优先
   const override = getHolidayOverride(dateStr)
   if (override === 'holiday') return { type: 'holiday', label: '假', name: '自定义假日' }

@@ -133,7 +133,6 @@ const dashboardData = ref({})
 const refreshing = ref(false)
 const lastUpdateTime = ref(dayjs().format('HH:mm:ss'))
 const autoRefresh = ref(0)
-const showCharts = ref(false)
 let refreshTimer = null
 
 // ---- 看板栏位定义 ----

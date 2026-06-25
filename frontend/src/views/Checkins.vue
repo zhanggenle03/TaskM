@@ -724,7 +724,6 @@ const onEntryDateChange = (val) => { setEntryDate(val || null); holidayVersion.v
 const clearEntryDate = () => { entryDateVal.value = null; setEntryDate(null); holidayVersion.value++ }
 
 // 供日历和计算器使用的计算属性
-const entryDate = computed(() => getEntryDate())
 const hsPrev = () => { if (hsMonth.value === 1) { hsYear.value--; hsMonth.value = 12 } else hsMonth.value-- }
 const hsNext = () => { if (hsMonth.value === 12) { hsYear.value++; hsMonth.value = 1 } else hsMonth.value++ }
 
@@ -1015,8 +1014,6 @@ const submitBatch = async () => {
 .cal-stats-row { display: flex; align-items: center; gap: 12px; }
 .cal-stats-item { font-size: 13px; color: #333; }
 .cal-stats-item strong { font-size: 18px; color: #534ab7; }
-.cal-stats-leave { font-size: 13px; color: #e67e22; }
-.cal-stats-leave strong { font-size: 18px; color: #e67e22; }
 .cal-stats-divider { width: 1px; height: 20px; background: #e0e0e0; }
 .cal-stats-overtime { font-size: 12px; color: #d48806; margin-top: 4px; }
 .cal-stats-overtime strong { font-size: 14px; }

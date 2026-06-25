@@ -10,7 +10,6 @@ import os
 try:
     import pythoncom
     import win32com.client
-    from win32com.client import constants
     PYWIN32_AVAILABLE = True
 except ImportError:
     PYWIN32_AVAILABLE = False

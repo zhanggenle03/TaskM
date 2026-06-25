@@ -579,7 +579,6 @@ const restoreTag = async (t) => {
 }
 
 // ---- 拖拽（标签池） ----
-const onTagDragStart = (i) => { tagDragIdx.value = i }
 const onTagDrop = async (i) => {
   tagDragOver.value = -1
   if (tagDragIdx.value < 0 || tagDragIdx.value === i) { tagDragIdx.value = -1; return }
@@ -609,7 +608,6 @@ const onTagDrop = async (i) => {
 .drag-handle { color: #bbb; cursor: grab; display: flex; align-items: center; }
 .drag-handle:active { cursor: grabbing; }
 .avatar { width: 32px; height: 32px; border-radius: 50%; background: #eeedfe; color: #534ab7; display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 13px; flex-shrink: 0; }
-.proj-info-bar { padding: 10px 14px; background: #f9f9f8; border-radius: 8px; border: 1px solid #e8e8e4; margin-bottom: 20px; display: flex; align-items: center; }
 .list-item.inactive { background: #f5f5f5; opacity: 0.7; }
 .inactive-text { color: #999; }
 </style>

@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import Response
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, case, nullslast, select, or_
+from sqlalchemy import func, case, select, or_
 from typing import List, Optional, Dict
 from collections import defaultdict
 from datetime import datetime, date, timedelta
 import json, os, uuid, io, urllib.parse, re
 from docx import Document
-from docx.shared import Pt
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 

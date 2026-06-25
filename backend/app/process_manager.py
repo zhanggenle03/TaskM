@@ -4,7 +4,6 @@
 提供 PID 文件追踪、单实例保护、优雅关闭、自毁式退出
 """
 import os
-import sys
 import signal
 import subprocess
 import time

@@ -305,10 +305,6 @@ onMounted(() => {
   color: #b91c1c; border-color: #fecaca; background: #fef2f2;
 }
 .btn-danger:hover { background: #fee2e2; }
-.btn-apply {
-  color: #534ab7; border-color: #d7d4f5; background: #f4f3ff;
-}
-.btn-apply:hover { background: #edebff; }
 
 /* ── 自启动状态文字 ── */
 .toggle-status { font-size: 13px; color: #475569; }
