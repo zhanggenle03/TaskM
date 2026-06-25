@@ -344,6 +344,12 @@ const descDraft = ref('')
 const origImgFilenames = new Set()  // 原始描述中的图片文件名
 const saveStatus = ref('')  // '' | 'saving' | 'saved' | 'error'
 
+// ── 状态/优先级 英文↔中文 映射（与 RequirementList.vue 保持一致） ──
+const statusEnToZh = { todo: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }
+const statusZhToEn = Object.fromEntries(Object.entries(statusEnToZh).map(([k, v]) => [v, k]))
+const priorityEnToZh = { low: '低', normal: '普通', high: '高', urgent: '紧急' }
+const priorityZhToEn = Object.fromEntries(Object.entries(priorityEnToZh).map(([k, v]) => [v, k]))
+
 const editTitleDialog = ref(false)
 const editTitleVal = ref('')
 const exitConfirmVisible = ref(false)
@@ -551,6 +557,12 @@ const load = async (id) => {
     origImgFilenames.clear()
     for (const fn of extractImgFilenames(reqRes.description)) {
       origImgFilenames.add(fn)
+    }
+    // 将英文状态/优先级转为中文显示名（匹配池选项）
+    req.value = {
+      ...reqRes,
+      status: statusEnToZh[reqRes.status] || reqRes.status,
+      priority: priorityEnToZh[reqRes.priority] || reqRes.priority,
     }
   } catch {
     ElMessage.error('加载需求失败')
@@ -765,7 +777,9 @@ const doExportRequirement = async () => {
 // ── 右侧栏快速编辑 ──
 const quickUpdateStatus = async (val) => {
   try {
-    await updateRequirement(projectId.value, req.value.id, { status: val })
+    // 中文显示名 → 英文存储值
+    const enVal = statusZhToEn[val] || val
+    await updateRequirement(projectId.value, req.value.id, { status: enVal })
     ElMessage.success('状态已更新')
   } catch {
     ElMessage.error('状态更新失败')
@@ -774,7 +788,9 @@ const quickUpdateStatus = async (val) => {
 
 const quickUpdatePriority = async (val) => {
   try {
-    await updateRequirement(projectId.value, req.value.id, { priority: val })
+    // 中文显示名 → 英文存储值
+    const enVal = priorityZhToEn[val] || val
+    await updateRequirement(projectId.value, req.value.id, { priority: enVal })
     ElMessage.success('优先级已更新')
   } catch {
     ElMessage.error('优先级更新失败')
