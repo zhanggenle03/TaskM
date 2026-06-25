@@ -3,7 +3,12 @@
  * 数据来源：
  *  - timor.tech 免费 API（https://timor.tech/api/holiday）— 法定节假日 & 调休
  *  - lunar-javascript — 农历日期 & 传统节日
- *  - 用户手动覆盖（localStorage）— 自定义微调
+ *  - 用户手动覆盖（DB + localStorage 缓存）— 自定义微调
+ *
+ * 覆盖数据流向：
+ *   写: 前端 → localStorage（即时） + DB（异步同步）
+ *   读: localStorage（同步，快速） → 回退 DB 加载
+ *   首次加载: DB → localStorage
  */
 
 import { Solar } from 'lunar-javascript'
@@ -12,6 +17,10 @@ const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 小时
 const cache = {} // { year: { 'MM-DD': { holiday, name, ... } } }
 const OVERRIDE_KEY = 'taskm_holiday_overrides'
 const ENTRY_DATE_KEY = 'taskm_entry_date'
+
+// 缓存：一次解析后的覆盖数据（按年份分组），避免重复 JSON.parse
+let _parsedOverrides = null
+let _parsedOverridesYear = null
 
 // ------ 入职日期 ------
 
@@ -25,7 +34,7 @@ export function setEntryDate(dateStr) {
   syncUserSettingsToServer()
 }
 
-// ------ 节假日覆盖（localStorage + 服务端同步） ------
+// ------ 节假日覆盖（localStorage + 数据库同步） ------
 
 /**
  * 获取所有用户手动覆盖的日期
@@ -39,44 +48,111 @@ function getOverrides() {
 
 function saveOverrides(overrides) {
   localStorage.setItem(OVERRIDE_KEY, JSON.stringify(overrides))
+  _parsedOverrides = null // 清空解析缓存
 }
 
 /**
- * 将当前覆盖和入职日期同步到服务端
+ * 从数据库加载指定年份的覆盖，合并到 localStorage
+ */
+let _dbLoadPromise = null
+export async function loadOverridesFromDb(year) {
+  try {
+    const { getHolidayOverrides } = await import('../api/index.js')
+    const rows = await getHolidayOverrides(year)
+    if (!rows || !rows.length) return
+    const overrides = getOverrides()
+    let changed = false
+    for (const row of rows) {
+      const dateStr = row.date ? row.date.slice(0, 10) : null
+      if (dateStr) {
+        overrides[dateStr] = row.override_type
+        changed = true
+      }
+    }
+    if (changed) saveOverrides(overrides)
+  } catch { /* 静默失败，保留 localStorage 已有数据 */ }
+}
+
+/**
+ * 从数据库加载所有覆盖（跨年），合并到 localStorage
+ */
+export async function loadAllOverridesFromDb() {
+  try {
+    const { getHolidayOverrides } = await import('../api/index.js')
+    const rows = await getHolidayOverrides()
+    if (!rows || !rows.length) return
+    const overrides = getOverrides()
+    let changed = false
+    for (const row of rows) {
+      const dateStr = row.date ? row.date.slice(0, 10) : null
+      if (dateStr) {
+        overrides[dateStr] = row.override_type
+        changed = true
+      }
+    }
+    if (changed) saveOverrides(overrides)
+    return rows
+  } catch { return null }
+}
+
+
+/**
+ * 将入职日期同步到服务端（settings.json）
  */
 let _syncTimer = null
 export function syncUserSettingsToServer() {
   if (_syncTimer) clearTimeout(_syncTimer)
   _syncTimer = setTimeout(() => {
     _syncTimer = null
-    const overrides = getOverrides()
     const entryDate = getEntryDate()
     import('../api/index.js').then(({ updateUserSettings }) => {
-      updateUserSettings({ holiday_overrides: overrides, entry_date: entryDate }).catch(() => {})
+      updateUserSettings({ entry_date: entryDate }).catch(() => {})
     })
   }, 500)
 }
 
 /**
  * 从服务端加载覆盖和入职日期，合并到 localStorage
+ * 同时也会从数据库加载覆盖数据（增量合并）
  */
 export async function loadUserSettingsFromServer() {
   try {
-    const { getSettings } = await import('../api/index.js')
-    const settings = await getSettings()
-    const serverOverrides = settings.holiday_overrides || {}
-    const serverEntryDate = settings.entry_date || null
-    // 合并覆盖：服务端覆盖优先
-    const merged = { ...getOverrides(), ...serverOverrides }
+    const { getSettings, getHolidayOverrides } = await import('../api/index.js')
+    // 并行：从 settings.json 和 DB 同时加载
+    const [settings, dbRows] = await Promise.all([
+      getSettings(),
+      getHolidayOverrides().catch(() => null),
+    ]).catch(() => [null, null])
+
+    let merged
+
+    // 从 settings.json 合并
+    if (settings) {
+      const serverOverrides = settings.holiday_overrides || {}
+      const serverEntryDate = settings.entry_date || null
+      merged = { ...getOverrides(), ...serverOverrides }
+      if (serverEntryDate) setEntryDate(serverEntryDate)
+    } else {
+      merged = getOverrides()
+    }
+
+    // 从数据库合并（DB 数据优先于 settings.json）
+    if (dbRows && dbRows.length) {
+      for (const row of dbRows) {
+        const dateStr = row.date ? row.date.slice(0, 10) : null
+        if (dateStr) {
+          merged[dateStr] = row.override_type
+        }
+      }
+    }
+
     saveOverrides(merged)
-    // 入职日期：服务端有则覆盖
-    if (serverEntryDate) setEntryDate(serverEntryDate)
-    return { overrides: merged, entryDate: serverEntryDate }
+    return { overrides: merged, entryDate: settings?.entry_date || null }
   } catch { return null }
 }
 
 /**
- * 设置某天的覆盖状态
+ * 设置某天的覆盖状态（同步：localStorage + 异步：DB）
  * @param {string} dateStr "YYYY-MM-DD"
  * @param {'holiday'|'workday'|'normal'|'off'|null} type — null 表示清除覆盖
  */
@@ -88,7 +164,14 @@ export function setHolidayOverride(dateStr, type) {
     overrides[dateStr] = type
   }
   saveOverrides(overrides)
-  syncUserSettingsToServer() // 异步同步到服务端
+  // 同步到数据库
+  import('../api/index.js').then(({ setHolidayOverride: setDb, deleteHolidayOverrides: delDb }) => {
+    if (type === null) {
+      delDb([dateStr]).catch(() => {})
+    } else {
+      setDb({ date: dateStr, override_type: type }).catch(() => {})
+    }
+  })
 }
 
 /**
@@ -114,11 +197,39 @@ export function getAllOverrides() {
  */
 export function clearYearOverrides(year) {
   const overrides = getOverrides()
+  const datesToDelete = []
   for (const key of Object.keys(overrides)) {
-    if (key.startsWith(year)) delete overrides[key]
+    if (key.startsWith(year)) {
+      delete overrides[key]
+      datesToDelete.push(key)
+    }
   }
   saveOverrides(overrides)
-  syncUserSettingsToServer()
+  // 同步到数据库
+  if (datesToDelete.length) {
+    import('../api/index.js').then(({ deleteHolidayOverrides }) => {
+      deleteHolidayOverrides(datesToDelete).catch(() => {})
+    })
+  }
+}
+
+/**
+ * 获取指定年份的解析后覆盖数据（按MM-DD索引），避免重复 JSON.parse
+ */
+function getYearOverridesIndexed(year) {
+  if (_parsedOverrides && _parsedOverridesYear === year) {
+    return _parsedOverrides
+  }
+  const all = getOverrides()
+  const indexed = {}
+  for (const [dateStr, type] of Object.entries(all)) {
+    if (dateStr.startsWith(year)) {
+      indexed[dateStr.slice(5)] = type
+    }
+  }
+  _parsedOverrides = indexed
+  _parsedOverridesYear = year
+  return indexed
 }
 
 /**

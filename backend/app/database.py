@@ -327,6 +327,16 @@ class CheckinTask(Base):
     task_id = Column(Integer, ForeignKey("tasks.id"), primary_key=True)
 
 
+class HolidayOverride(Base):
+    """节假日用户手动覆盖表"""
+    __tablename__ = "holiday_overrides"
+    date = Column(Date, primary_key=True)  # 唯一键，同一天只能有一个覆盖
+    override_type = Column(String(20), nullable=False)  # 'holiday' | 'workday' | 'normal' | 'off'
+    remark = Column(String(200), default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class TagPool(Base):
     """标签池 —— 项目级别的标签定义"""
     __tablename__ = "tag_pools"

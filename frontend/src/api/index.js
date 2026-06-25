@@ -45,7 +45,7 @@ export const updateTag = (projectId, id, data) => http.put(`/projects/${projectI
 export const deleteTag = (projectId, id, config) => http.delete(`/projects/${projectId}/tags/${id}`, config)
 
 // --- Checkins ---
-export const getAllCheckins = () => http.get('/projects/checkins')
+export const getAllCheckins = (params) => http.get('/projects/checkins', { params })
 export const getTodayCheckinStatus = (date) => http.get('/projects/checkins/today-update-status', { params: date ? { date } : {} })
 export const getCheckins = (projectId) => http.get(`/projects/${projectId}/checkins`)
 export const createCheckin = (data) => http.post('/projects/checkins', data)
@@ -98,6 +98,11 @@ export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { o
 export const getSettings = () => http.get('/process/settings')
 export const updateSettings = (data) => http.put('/process/settings', data)
 export const updateUserSettings = (data) => http.put('/process/settings/user', data)
+
+// --- Holiday Overrides ---
+export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })
+export const setHolidayOverride = (data) => http.put('/projects/holiday-overrides', data)
+export const deleteHolidayOverrides = (dates) => http.delete('/projects/holiday-overrides', { params: { dates }, _silentError: true })
 
 // --- Export ---
 export const exportTaskDoc = (projectId, taskId, params) =>

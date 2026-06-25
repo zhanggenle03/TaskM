@@ -3,13 +3,14 @@ import os
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from typing import List, Optional
-from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
+from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
     CommTypePoolCreate, CommTypePoolUpdate, CommTypePoolOut,
     TagPoolCreate, TagPoolUpdate, TagPoolOut,
     CheckinCreate, CheckinOut, BatchDeleteIds,
+    HolidayOverrideSet, HolidayOverrideOut,
 )
 
 
@@ -76,7 +77,50 @@ def _clear_contact_refs(db: Session, contact_id: int):
     db.query(Contact).filter(Contact.project_contact_id == contact_id).update({Contact.project_contact_id: None}, synchronize_session=False)
 
 
+from datetime import date as date_type, datetime
+
+
 router = APIRouter(prefix="/projects", tags=["projects"])
+# ---- 节假日覆盖（数据库版） ----
+@router.get("/holiday-overrides", response_model=List[HolidayOverrideOut])
+def list_holiday_overrides(year: Optional[int] = None, db: Session = Depends(get_db)):
+    from sqlalchemy import extract
+    q = db.query(HolidayOverride)
+    if year is not None:
+        q = q.filter(extract('year', HolidayOverride.date) == year)
+    return q.order_by(HolidayOverride.date).all()
+
+
+@router.put("/holiday-overrides", response_model=HolidayOverrideOut)
+def set_holiday_override(data: HolidayOverrideSet, db: Session = Depends(get_db)):
+    chk_date = date_type.fromisoformat(data.date)
+    existing = db.query(HolidayOverride).filter(HolidayOverride.date == chk_date).first()
+    if data.override_type is None:
+        if existing:
+            db.delete(existing)
+            db.commit()
+        return {'date': chk_date, 'override_type': '', 'remark': '', 'created_at': datetime.utcnow(), 'updated_at': datetime.utcnow()}
+    if existing:
+        existing.override_type = data.override_type
+        existing.remark = data.remark
+    else:
+        ho = HolidayOverride(date=chk_date, override_type=data.override_type, remark=data.remark)
+        db.add(ho)
+    db.commit()
+    ho = db.query(HolidayOverride).filter(HolidayOverride.date == chk_date).first()
+    return ho
+
+
+@router.delete("/holiday-overrides")
+def delete_holiday_overrides(dates: List[str], db: Session = Depends(get_db)):
+    # 批量删除指定日期的覆盖
+    date_objs = [date_type.fromisoformat(d) for d in dates]
+    count = db.query(HolidayOverride).filter(HolidayOverride.date.in_(date_objs)).delete(synchronize_session=False)
+    db.commit()
+    return {"ok": True, "deleted": count}
+
+
+
 
 
 @router.get("", response_model=List[ProjectOut])
@@ -193,26 +237,32 @@ def today_checkin_status(date: Optional[str] = None, db: Session = Depends(get_d
     local_today_start = datetime(local_date.year, local_date.month, local_date.day)
     local_today_end = local_today_start + timedelta(days=1)
 
-    comms = db.query(Communication).filter(
+    comms = db.query(Communication).options(
+        joinedload(Communication.task)
+    ).filter(
         Communication.comm_at >= local_today_start,
         Communication.comm_at < local_today_end,
     ).all()
 
     for comm in comms:
         task_ids.add(comm.task_id)
-        # 通过 task 找到所属项目
-        task = db.query(Task).filter(Task.id == comm.task_id).first()
-        if task:
-            project_ids.add(task.project_id)
+        if comm.task:
+            project_ids.add(comm.task.project_id)
 
     return {"project_ids": list(project_ids), "task_ids": list(task_ids)}
 
 
 @router.get("/checkins", response_model=List[CheckinOut])
-def list_all_checkins(db: Session = Depends(get_db)):
-    return db.query(Checkin).options(
+def list_all_checkins(year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
+    q = db.query(Checkin).options(
         joinedload(Checkin.projects), joinedload(Checkin.tasks)
-    ).order_by(Checkin.date.desc(), Checkin.created_at.desc()).all()
+    )
+    if year is not None:
+        from sqlalchemy import extract
+        q = q.filter(extract('year', Checkin.date) == year)
+        if month is not None:
+            q = q.filter(extract('month', Checkin.date) == month)
+    return q.order_by(Checkin.date.desc(), Checkin.created_at.desc()).all()
 
 
 @router.post("/checkins", response_model=CheckinOut)

@@ -374,7 +374,7 @@ dayjs.locale('zh-cn')
 import {
   getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
 } from '../api'
-import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer } from '../utils/holiday'
+import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer, loadAllOverridesFromDb } from '../utils/holiday'
 
 const projects = ref([])
 const allCheckins = ref([])
@@ -408,7 +408,6 @@ const loadHolidayForYear = async (year) => {
   await loadHolidayData(year)
   // 也预加载前后一年，方便月份切换
   await Promise.all([loadHolidayData(year - 1), loadHolidayData(year + 1)].filter(Boolean))
-  holidayVersion.value++
 }
 
 // 出勤计算器
@@ -552,6 +551,21 @@ const checkinsByDate = computed(() => {
   return map
 })
 
+// 农历/节日信息缓存：整个月的数据预先计算一次，calendarDays 和 monthStats 共享
+const monthExtraInfo = computed(() => {
+  // eslint-disable-next-line no-unused-expressions
+  holidayVersion.value
+  const year = calYear.value
+  const month = calMonth.value
+  const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth()
+  const cache = {}
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = dayjs(`${year}-${month}-${d}`).format('YYYY-MM-DD')
+    cache[d] = getDayExtraInfo(dateStr)
+  }
+  return cache
+})
+
 const calendarDays = computed(() => {
   // eslint-disable-next-line no-unused-expressions
   holidayVersion.value // 依赖版本号，数据加载后重新计算
@@ -569,7 +583,7 @@ const calendarDays = computed(() => {
     const dateStr = firstDay.date(d).format('YYYY-MM-DD')
     const beforeEntry = entryDateStr && dateStr < entryDateStr
     const weekday = dayjs(dateStr).day()
-    const extra = getDayExtraInfo(dateStr)
+    const extra = monthExtraInfo.value[d] // 从缓存获取
     const hasCheckin = !!checkinsByDate.value[dateStr]
     const isFuture = dayjs(dateStr).isAfter(dayjs().startOf('day'))
 
@@ -629,7 +643,7 @@ const monthStats = computed(() => {
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = dayjs(`${year}-${month}-${d}`).format('YYYY-MM-DD')
     const weekday = dayjs(dateStr).day()
-    const extra = getDayExtraInfo(dateStr)
+    const extra = monthExtraInfo.value[d] // 从缓存获取
     const hasCheckin = !!checkinsByDate.value[dateStr]
     const entryDateStr = getEntryDate()
     const beforeEntry = entryDateStr && dateStr < entryDateStr
@@ -671,24 +685,32 @@ const monthStats = computed(() => {
 })
 
 const load = async () => {
-  const [p, c] = await Promise.all([getProjects(), getAllCheckins()])
+  // 按当前年月过滤签到数据，避免全量加载
+  const [p, c] = await Promise.all([
+    getProjects(),
+    getAllCheckins({ year: calYear.value, month: calMonth.value }),
+  ])
   projects.value = p
   allCheckins.value = c
   selectedDate.value = todayStr
   loadStatusForDate(todayStr)
-  loadHolidayForYear(calYear.value)
+  await loadHolidayForYear(calYear.value)
 }
 onMounted(async () => {
-  // 从服务端加载节假日覆盖和入职日期（合并到 localStorage）
-  loadUserSettingsFromServer()
-  load()
+  // 并行：从 settings.json 和 DB 加载节假日覆盖 + 主数据
+  await Promise.all([
+    loadUserSettingsFromServer(),
+    loadAllOverridesFromDb(),
+    load(),
+  ])
+  holidayVersion.value++
 })
 
 const formatDateFull = (d) => dayjs(d).format('YYYY年M月D日 dddd')
 
-const prevMonth = () => { if (calMonth.value === 1) { calYear.value--; calMonth.value = 12 } else calMonth.value--; loadHolidayForYear(calYear.value) }
-const nextMonth = () => { if (calMonth.value === 12) { calYear.value++; calMonth.value = 1 } else calMonth.value++; loadHolidayForYear(calYear.value) }
-const goToday = () => { calYear.value = dayjs().year(); calMonth.value = dayjs().month() + 1; selectedDate.value = todayStr; loadHolidayForYear(calYear.value) }
+const prevMonth = async () => { if (calMonth.value === 1) { calYear.value--; calMonth.value = 12 } else calMonth.value--; allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value }); await loadHolidayForYear(calYear.value); holidayVersion.value++ }
+const nextMonth = async () => { if (calMonth.value === 12) { calYear.value++; calMonth.value = 1 } else calMonth.value++; allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value }); await loadHolidayForYear(calYear.value); holidayVersion.value++ }
+const goToday = async () => { calYear.value = dayjs().year(); calMonth.value = dayjs().month() + 1; selectedDate.value = todayStr; allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value }); await loadHolidayForYear(calYear.value); holidayVersion.value++ }
 
 // 日历设置
 const showHolidaySettings = ref(false)
@@ -713,15 +735,19 @@ const hsDays = computed(() => {
   const daysInMonth = firstDay.daysInMonth()
   const startWeekday = (firstDay.day() + 6) % 7
   const cells = []
+  // 提前解析整年节假日数据，避免每单元格重复 JSON.parse
+  const yearKey = `taskm_holiday_${hsYear.value}`
+  const yearData = (() => {
+    try {
+      const stored = localStorage.getItem(yearKey)
+      return stored ? JSON.parse(stored)?.data : null
+    } catch { return null }
+  })()
   for (let i = 0; i < startWeekday; i++) cells.push({ empty: true })
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = firstDay.date(d).format('YYYY-MM-DD')
-    const defaultInfo = (() => {
-      const mmdd = dateStr.slice(5)
-      const year = dateStr.slice(0, 4)
-      const data = (() => { try { return JSON.parse(localStorage.getItem(`taskm_holiday_${year}`) || 'null')?.data } catch { return null } })()
-      return data?.[mmdd]
-    })()
+    const mmdd = dateStr.slice(5)
+    const defaultInfo = yearData?.[mmdd] || null
     const override = getHolidayOverride(dateStr)
     // 计算生效状态
     let effective
@@ -813,16 +839,15 @@ const onProjectChange = () => {
   else tasksForSelected.value = []
 }
 const loadTasksForProjects = async (pids) => {
-  const all = []
-  for (const pid of pids) {
+  const results = await Promise.all(pids.map(async (pid) => {
     try {
       const proj = projects.value.find((p) => p.id === pid)
-      if (!proj) continue
+      if (!proj) return []
       const ts = await getTasks(proj.display_id || pid)
-      all.push(...ts.map((t) => ({ ...t, _projectLabel: proj.name })))
-    } catch {}
-  }
-  tasksForSelected.value = all
+      return ts.map((t) => ({ ...t, _projectLabel: proj.name }))
+    } catch { return [] }
+  }))
+  tasksForSelected.value = results.flat()
 }
 const submitCheckin = async () => {
   if (!checkinForm.value.project_ids.length) { ElMessage.warning('请选择项目'); return }
@@ -836,13 +861,13 @@ const submitCheckin = async () => {
       ElMessage.success('签到成功')
     }
     showCheckinDlg.value = false
-    allCheckins.value = await getAllCheckins()
+    allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value })
     loadStatusForDate(selectedDate.value)
   } finally { checkinLoading.value = false }
 }
 const removeCheckin = async (chk) => {
   await deleteCheckin(chk.projects?.[0]?.display_id || chk.projects?.[0]?.id || 0, chk.id)
-  allCheckins.value = await getAllCheckins()
+  allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value })
   loadStatusForDate(selectedDate.value)
 }
 
@@ -871,7 +896,7 @@ const confirmBatchDelete = async () => {
   await batchDeleteCheckins(ids)
   ElMessage.success(`已删除 ${ids.length} 条签到记录（${deleteDates.value.length} 天）`)
   deleteDates.value = []
-  allCheckins.value = await getAllCheckins()
+  allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value })
   loadStatusForDate(selectedDate.value)
 }
 
@@ -916,16 +941,15 @@ const onBatchProjectChange = () => {
   else batchTasks.value = []
 }
 const loadBatchTasks = async (pids) => {
-  const all = []
-  for (const pid of pids) {
+  const results = await Promise.all(pids.map(async (pid) => {
     try {
       const proj = projects.value.find((p) => p.id === pid)
-      if (!proj) continue
+      if (!proj) return []
       const ts = await getTasks(proj.display_id || pid)
-      all.push(...ts.map((t) => ({ ...t, _projectLabel: proj.name })))
-    } catch {}
-  }
-  batchTasks.value = all
+      return ts.map((t) => ({ ...t, _projectLabel: proj.name }))
+    } catch { return [] }
+  }))
+  batchTasks.value = results.flat()
 }
 const resetBatchForm = () => { batchForm.value = { project_ids: [], task_ids: [], multi_project: false, content: '' }; batchTasks.value = [] }
 const submitBatch = async () => {
@@ -939,7 +963,7 @@ const submitBatch = async () => {
     }
     ElMessage.success(`批量签到完成（${count} 天）`)
     showBatchDlg.value = false
-    allCheckins.value = await getAllCheckins()
+    allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value })
     loadStatusForDate(selectedDate.value)
     toggleBatchMode()
   } finally { batchLoading.value = false }

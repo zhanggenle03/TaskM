@@ -28,6 +28,22 @@ class ProjectOut(BaseModel):
         from_attributes = True
 
 
+# ---- HolidayOverride ----
+class HolidayOverrideSet(BaseModel):
+    date: str  # "YYYY-MM-DD"
+    override_type: Optional[str] = None  # 'holiday'|'workday'|'normal'|'off' — None 表示清除
+    remark: str = ""
+
+class HolidayOverrideOut(BaseModel):
+    date: date
+    override_type: str
+    remark: str
+    created_at: datetime
+    updated_at: datetime
+    class Config:
+        from_attributes = True
+
+
 # ---- StatusPool ----
 class StatusPoolCreate(BaseModel):
     name: str
