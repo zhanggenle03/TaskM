@@ -567,23 +567,32 @@ const reqPriorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', ur
 const reqPriorityColor = (p) => ({ low: '#909399', normal: '#409eff', high: '#e6a23c', urgent: '#f56c6c' }[p] || '#909399')
 const reqStatusLabel = (s) => ({ todo: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }[s] || s)
 const reqStatusColor = (s) => ({ todo: '#909399', in_progress: '#409eff', done: '#67c23a', cancelled: '#f56c6c' }[s] || '#909399')
-// 从池中取颜色，fallback 到默认
-const reqPrioBg = (p) => {
-  const pool = reqPriorityPools.value.find(x => x.name === p)
-  return pool ? pool.color + '1A' : '#f0f0f0'
+// 从池中取颜色（支持英文key / 中文名 / 中文标签多种匹配），fallback 到 reqPriorityColor / reqStatusColor
+const resolveReqPrioColor = (p) => {
+  if (!p) return null
+  // 1. 直接按英文 key 匹配池中的 name（若池中 name 存的是英文）
+  let pool = reqPriorityPools.value.find(x => x.name === p)
+  if (pool && pool.color) return pool.color
+  // 2. 将英文 key 转成中文标签，按包含关系匹配池中的中文名
+  const label = reqPriorityLabel(p)   // "high" -> "高"
+  pool = reqPriorityPools.value.find(x => label && x.name && x.name.includes(label))
+  if (pool && pool.color) return pool.color
+  // 3. fallback：使用 reqPriorityColor 的硬编码映射
+  return reqPriorityColor(p)
 }
-const reqPrioText = (p) => {
-  const pool = reqPriorityPools.value.find(x => x.name === p)
-  return pool ? pool.color : '#666'
+const resolveReqStatColor = (s) => {
+  if (!s) return null
+  let pool = reqStatusPools.value.find(x => x.name === s)
+  if (pool && pool.color) return pool.color
+  const label = reqStatusLabel(s)     // "done" -> "已完成"
+  pool = reqStatusPools.value.find(x => label && x.name && x.name.includes(label))
+  if (pool && pool.color) return pool.color
+  return reqStatusColor(s)
 }
-const reqStatBg = (s) => {
-  const pool = reqStatusPools.value.find(x => x.name === s)
-  return pool ? pool.color + '1A' : '#f0f0f0'
-}
-const reqStatText = (s) => {
-  const pool = reqStatusPools.value.find(x => x.name === s)
-  return pool ? pool.color : '#666'
-}
+const reqPrioBg = (p) => (resolveReqPrioColor(p) || '#909399') + '1A'
+const reqPrioText = (p) => resolveReqPrioColor(p) || '#909399'
+const reqStatBg = (s) => (resolveReqStatColor(s) || '#909399') + '1A'
+const reqStatText = (s) => resolveReqStatColor(s) || '#909399'
 
 const loadRequirements = async () => {
   reqPickerLoading.value = true
