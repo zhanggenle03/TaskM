@@ -42,11 +42,14 @@
         :key="p.id"
         style="margin-bottom:16px"
       >
-        <div class="proj-card" @click="$router.push(`/projects/${p.display_id}`)">
+        <div class="proj-card" :class="{ 'proj-card-pinned': p.pinned }" @click="$router.push(`/projects/${p.display_id}`)">
           <div class="proj-card-header">
             <div class="proj-icon">{{ p.name[0] }}</div>
             <div class="proj-info">
-              <el-tag v-if="p.display_id" size="small" type="info" effect="plain" style="font-size:10px;padding:0 3px;height:16px;line-height:16px;margin-bottom:1px;border-width:0">{{ p.display_id }}</el-tag>
+              <div class="proj-info-top">
+                <el-tag v-if="p.display_id" size="small" type="info" effect="plain" style="font-size:10px;padding:0 3px;height:16px;line-height:16px;margin-bottom:1px;border-width:0">{{ p.display_id }}</el-tag>
+                <el-icon v-if="p.pinned" class="pinned-icon"><Rank /></el-icon>
+              </div>
               <div class="proj-name">{{ p.name }}</div>
             </div>
             <el-dropdown trigger="click" @command="cmd => onCmd(cmd, p)">
@@ -55,6 +58,7 @@
               </el-button>
               <template #dropdown>
                 <el-dropdown-menu>
+                  <el-dropdown-item command="pin">{{ p.pinned ? '取消置顶' : '置顶' }}</el-dropdown-item>
                   <el-dropdown-item command="edit">编辑</el-dropdown-item>
                   <el-dropdown-item command="delete" style="color:#e24b4a">删除</el-dropdown-item>
                 </el-dropdown-menu>
@@ -233,7 +237,11 @@ const submit = async () => {
 }
 
 const onCmd = async (cmd, p) => {
-  if (cmd === 'edit') {
+  if (cmd === 'pin') {
+    await updateProject(p.display_id, { pinned: !p.pinned })
+    ElMessage.success(p.pinned ? '已取消置顶' : '已置顶')
+    await load(searchText.value)
+  } else if (cmd === 'edit') {
     editTarget.value = p
     form.value = { name: p.name, description: p.description, start_date: p.start_date, custom_prefix: p.custom_prefix }
     showCreate.value = true
@@ -321,4 +329,20 @@ const onCmd = async (cmd, p) => {
 }
 .error-card h3 { margin: 12px 0 8px; color: #2c2c2a; }
 .error-card p { color: #888; font-size: 13px; }
+
+/* 置顶 */
+.proj-card-pinned {
+  border-color: #534ab7;
+  box-shadow: 0 1px 6px rgba(83,74,183,.08);
+}
+.proj-info-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.pinned-icon {
+  font-size: 13px;
+  color: #534ab7;
+  transform: rotate(90deg);
+}
 </style>

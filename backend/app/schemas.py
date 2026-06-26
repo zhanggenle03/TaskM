@@ -14,6 +14,7 @@ class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     start_date: Optional[date] = None
+    pinned: Optional[bool] = None
 
 class ProjectOut(BaseModel):
     id: int
@@ -24,6 +25,7 @@ class ProjectOut(BaseModel):
     start_date: Optional[date]
     created_at: datetime
     updated_at: datetime
+    pinned: bool = False
     class Config:
         from_attributes = True
 

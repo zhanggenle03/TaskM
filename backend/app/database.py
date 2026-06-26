@@ -90,6 +90,7 @@ class Project(Base):
     start_date = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    pinned = Column(Boolean, default=False)
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     status_pools = relationship("StatusPool", back_populates="project", cascade="all, delete-orphan")

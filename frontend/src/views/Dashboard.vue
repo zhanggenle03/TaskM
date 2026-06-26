@@ -53,14 +53,15 @@
                   v-model="col.selectedIds"
                   @change="saveColumnConfig"
                 >
-                  <el-checkbox
-                    v-for="s in allStatuses"
-                    :key="s.status_id"
-                    :value="s.status_id"
-                  >
-                    <span class="status-dot" :style="{ background: s.color }"></span>
-                    {{ s.status_name }}
-                  </el-checkbox>
+                <template v-for="s in allStatuses" :key="s.status_id">
+                <el-checkbox
+                  v-if="s.is_active"
+                  :value="s.status_id"
+                >
+                  <span class="status-dot" :style="{ background: s.color }"></span>
+                  {{ s.status_name }}
+                </el-checkbox>
+                </template>
                 </el-checkbox-group>
               </div>
             </el-popover>
@@ -120,7 +121,7 @@ import { Refresh, Setting, User, Calendar, Timer } from '@element-plus/icons-vue
 import dayjs from 'dayjs'
 import VChart from 'vue-echarts'
 import * as echarts from 'echarts'
-import { getDashboardStats, getProject, getKanbanTasks, getKanbanConfig, putKanbanConfig } from '../api/index.js'
+import { getDashboardStats, getProject, getKanbanTasks, getKanbanConfig, putKanbanConfig, getStatuses } from '../api/index.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -134,6 +135,9 @@ const lastUpdateTime = ref(dayjs().format('HH:mm:ss'))
 const autoRefresh = ref(0)
 let refreshTimer = null
 
+// 状态池列表（独立于任务存在，用于配置弹窗和栏位初始化）
+const statusesList = ref([])
+
 // ---- 看板栏位定义 ----
 const defaultColumnDefs = [
   { key: 'todo',   label: '待开始' },
@@ -145,12 +149,14 @@ const defaultColumnDefs = [
 // 每个栏选中的状态 ID 列表
 const columnDefs = ref([])
 
-// 从后端获取所有状态
+// 从状态池获取所有状态（即使没有任务也要显示配置）
+// 含 is_active，弹窗里已停用项置灰禁用，但之前选中的仍可见可取消
 const allStatuses = computed(() => {
-  return (kanbanData.value.columns || []).map(c => ({
-    status_id: c.status_id,
-    status_name: c.status_name,
-    color: c.color,
+  return statusesList.value.map(s => ({
+    status_id: s.id,
+    status_name: s.name,
+    color: s.color,
+    is_active: s.is_active,
   }))
 })
 
@@ -175,8 +181,7 @@ function saveColumnConfig() {
 }
 
 function initColumnDefs() {
-  const cols = kanbanData.value.columns || []
-  if (!cols.length) return
+  // 始终用默认四栏初始化，不受任务数影响
   columnDefs.value = defaultColumnDefs.map(d => ({
     ...d,
     selectedIds: [],
@@ -257,16 +262,18 @@ const priorityBarOption = computed(() => {
 // ---- 数据加载 ----
 async function loadData() {
   try {
-    const [kanban, stats] = await Promise.all([
+    const [kanban, stats, statuses] = await Promise.all([
       getKanbanTasks(projectId),
       getDashboardStats(projectId),
+      getStatuses(projectId, { show_inactive: true }),
     ])
     kanbanData.value = kanban || { columns: [] }
     dashboardData.value = stats || {}
+    statusesList.value = statuses || []
     lastUpdateTime.value = dayjs().format('HH:mm:ss')
 
-    // 首次加载时初始化栏配置
-    if (!columnDefs.value.length && kanban?.columns?.length) {
+    // 首次加载时初始化栏配置（不受任务数影响）
+    if (!columnDefs.value.length) {
       initColumnDefs()
     }
   } catch {}

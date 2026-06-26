@@ -131,7 +131,7 @@ def list_projects(
     col = sort_map.get(sort_by, Project.updated_at)
     order_fn = col.asc() if sort_order == "asc" else col.desc()
 
-    return query.order_by(order_fn).all()
+    return query.order_by(Project.pinned.desc(), order_fn).all()
 
 
 @router.post("", response_model=ProjectOut)
