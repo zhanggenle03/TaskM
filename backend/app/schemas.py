@@ -396,6 +396,7 @@ class KanbanTaskSimple(BaseModel):
     contact_names: str = ""
     status_duration_hours: float = 0
     status_duration_text: str = ""
+    status_name: str = ""
 
 class KanbanColumn(BaseModel):
     status_id: int

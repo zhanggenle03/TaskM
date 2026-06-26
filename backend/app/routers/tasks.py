@@ -291,6 +291,12 @@ def get_kanban_tasks(project_id: str, db: Session = Depends(get_db)):
         else:
             comm_contact_map[c.task_id] = "无"
 
+    # ponytail: 构建状态名称映射
+    all_status_pools = db.query(StatusPool).filter(
+        StatusPool.project_id == proj.id,
+    ).all()
+    status_name_map = {sp.id: sp.name for sp in all_status_pools}
+
     now = datetime.now()
     status_groups = {}
     for t in tasks:
@@ -321,6 +327,7 @@ def get_kanban_tasks(project_id: str, db: Session = Depends(get_db)):
             contact_names=contact_names,
             status_duration_hours=hours,
             status_duration_text=dur_text,
+            status_name=status_name_map.get(t.status_id or 0, "未知"),
         )
         sid = t.status_id or 0
         status_groups.setdefault(sid, []).append((t, card))

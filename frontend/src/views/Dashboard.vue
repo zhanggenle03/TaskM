@@ -85,9 +85,10 @@
                   {{ task.due_date }}
                 </span>
               </div>
-              <div v-if="task.status_duration_text && col.key !== 'done'" class="task-duration">
+              <div v-if="task.status_duration_text" class="task-duration">
                 <el-icon :size="11"><Timer /></el-icon>
                 已{{ col.key === 'todo' ? '等待' : '停留' }} {{ task.status_duration_text }}
+                <span class="status-badge" :style="{ color: col.color }">· {{ task.status_name }}</span>
               </div>
             </div>
           </div>
