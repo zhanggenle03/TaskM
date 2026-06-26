@@ -175,6 +175,7 @@
             <el-option label="时间" value="datetime" />
             <el-option label="日期" value="date" />
             <el-option label="数字" value="number" />
+            <el-option label="链接" value="link" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="fieldForm.field_type === 'dropdown' || fieldForm.field_type === 'multi_dropdown'" label="选项">
@@ -309,7 +310,7 @@ function formatOptionsPreview(opts) {
   return opts.split('\n').filter(Boolean).join(' / ')
 }
 
-const fieldTypeLabel = (t) => ({ text: '文本', dropdown: '单选', multi_dropdown: '多选', datetime: '时间', date: '日期', number: '数字' }[t] || t)
+const fieldTypeLabel = (t) => ({ text: '文本', dropdown: '单选', multi_dropdown: '多选', datetime: '时间', date: '日期', number: '数字', link: '链接' }[t] || t)
 
 // 合并显示：按 sort_order 排序，showInactive=false 时过滤掉已停用的
 const displayFields = computed(() => {

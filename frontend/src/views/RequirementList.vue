@@ -300,6 +300,9 @@
           <span v-else-if="cf.field_type === 'text'" class="cf-value cf-text-cell" :title="getCustomValue(row.custom_values, cf.id)">{{ getCustomValue(row.custom_values, cf.id) }}</span>
           <span v-else-if="cf.field_type === 'datetime'" class="cf-value">{{ formatDateTime(getCustomValue(row.custom_values, cf.id)) }}</span>
           <span v-else-if="cf.field_type === 'date'" class="cf-value">{{ formatDate(getCustomValue(row.custom_values, cf.id)) }}</span>
+          <span v-else-if="cf.field_type === 'link'" class="cf-value">
+            <a v-if="getCustomValue(row.custom_values, cf.id)" :href="getCustomValue(row.custom_values, cf.id)" target="_blank" class="cf-link" :title="getCustomValue(row.custom_values, cf.id)">{{ getCustomValue(row.custom_values, cf.id) }}</a>
+          </span>
     <span v-else class="cf-value">{{ getCustomValue(row.custom_values, cf.id) }}</span>
         </template>
       </el-table-column>
@@ -549,6 +552,12 @@
             :controls="false"
             style="width: 100%"
           />
+          <el-input
+            v-else-if="cellEditFieldDef && cellEditFieldDef.field_type === 'link'"
+            v-model="cellEditValue"
+            placeholder="输入链接地址（URL）"
+            clearable
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -626,6 +635,7 @@
               <el-option label="时间" value="datetime" />
               <el-option label="日期" value="date" />
               <el-option label="数字" value="number" />
+              <el-option label="链接" value="link" />
             </el-select>
           </span>
         </div>
@@ -2134,6 +2144,20 @@ onBeforeUnmount(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.cf-link {
+  color: #409eff;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  display: inline-block;
+  vertical-align: middle;
+}
+.cf-link:hover {
+  color: #66b1ff;
+  text-decoration: underline;
 }
 .pool-tag-plain {
   background-color: #fff !important;

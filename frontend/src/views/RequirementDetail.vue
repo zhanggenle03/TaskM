@@ -127,7 +127,12 @@
             <div class="side-field-section-title">自定义字段</div>
             <div v-for="f in customFields" :key="f.id" class="side-field">
               <span class="side-field-label" :title="f.field_name">{{ f.field_name }}</span>
-              <span class="side-field-value">{{ getFieldValue(f.id) || '—' }}</span>
+              <span class="side-field-value">
+                <template v-if="f.field_type === 'link'">
+                  <a v-if="getFieldValue(f.id)" :href="getFieldValue(f.id)" target="_blank" class="cf-detail-link">{{ getFieldValue(f.id) }}</a>
+                </template>
+                <template v-else>{{ getFieldValue(f.id) || '—' }}</template>
+              </span>
             </div>
           </div>
         </div>
@@ -1726,6 +1731,15 @@ const onImgMouseUp = () => { isDragging.value = false }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .side-field-value { font-size: 13px; color: #333; flex: 1; min-width: 0; word-break: break-all; }
+.cf-detail-link {
+  color: #409eff;
+  text-decoration: none;
+  word-break: break-all;
+}
+.cf-detail-link:hover {
+  color: #66b1ff;
+  text-decoration: underline;
+}
 .side-field-section { margin-top: 4px; }
 .side-field-section-title {
   font-size: 12px; font-weight: 500; color: #aaa;
