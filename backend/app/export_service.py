@@ -2,6 +2,7 @@
 
 import os
 import io
+import re
 import zipfile
 from datetime import datetime
 from typing import Optional, List
@@ -16,7 +17,7 @@ from docx.oxml import OxmlElement
 from sqlalchemy.orm import Session, joinedload
 from .database import (
     Communication, Attachment, Contact, StatusPool,
-    TagPool, TaskTag, Project,
+    TagPool, TaskTag, Project, Requirement,
     UPLOAD_DIR, derive_task_status
 )
 
@@ -679,6 +680,39 @@ def generate_export_package(
         if req_doc_bytes_list:
             for _, req_bytes, req_filename, _ in req_doc_bytes_list:
                 zf.writestr(req_filename, req_bytes)
+
+        # 收集并添加需求附件文件
+        req_file_entries = []  # (arcname, file_path)
+        seen_files = set()
+        for req_info in linked_req_data:
+            req = db.query(Requirement).filter(
+                Requirement.id == req_info['id'],
+                Requirement.project_id == proj.id
+            ).first()
+            if not req or not req.description:
+                continue
+            file_pattern = re.compile(
+                r'/uploads/' + re.escape(proj.display_id) +
+                r'/requirements/[^/]+/files/([^"\s)]+)'
+            )
+            for m in file_pattern.finditer(req.description):
+                fn = m.group(1)
+                if fn in seen_files:
+                    continue
+                seen_files.add(fn)
+                file_path = os.path.join(
+                    UPLOAD_DIR, proj.display_id, 'requirements',
+                    req.display_id or f'req_{req.id}', 'files', fn
+                )
+                if os.path.isfile(file_path):
+                    arcname = f'requirements/files/{fn}'
+                    req_file_entries.append((arcname, file_path))
+
+        for arcname, file_path in req_file_entries:
+            try:
+                zf.write(file_path, arcname)
+            except Exception:
+                pass
 
         att_count = 0
         for rec_idx, comm in enumerate(communications):

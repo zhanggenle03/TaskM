@@ -426,3 +426,22 @@ def resolve_task(db, project_pk: int, task_display_id: str):
     if not task:
         raise HTTPException(404, "任务不存在")
     return task
+
+
+def resolve_requirement(db, project_pk: int, requirement_id: str):
+    """解析需求：支持数字 ID 或显示 ID（如 Q20260625001），未找到抛出404"""
+    from fastapi import HTTPException
+    query = db.query(Requirement).filter(Requirement.project_id == project_pk)
+    # 尝试按数字 ID 查询
+    try:
+        numeric_id = int(requirement_id)
+        req = query.filter(Requirement.id == numeric_id).first()
+        if req:
+            return req
+    except (ValueError, TypeError):
+        pass
+    # 按显示 ID 查询
+    req = query.filter(Requirement.display_id == requirement_id).first()
+    if not req:
+        raise HTTPException(404, "需求不存在")
+    return req

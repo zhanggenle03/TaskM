@@ -501,7 +501,7 @@
         <el-form-item label="任务属性">
           <el-checkbox-group v-model="exportFields">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <el-checkbox v-for="opt in exportFieldOptions" :key="opt.key" :label="opt.key">
+              <el-checkbox v-for="opt in exportFieldOptions" :key="opt.key" :value="opt.key">
                 {{ opt.label }}
               </el-checkbox>
             </div>

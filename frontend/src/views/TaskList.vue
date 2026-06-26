@@ -76,7 +76,7 @@
             </span>
           </div>
           <div class="task-meta">
-            <el-tag v-if="t.priority" :type="priorityType(t.priority)" size="small">{{ priorityLabel(t.priority) }}</el-tag>
+            <el-tag v-if="t.priority" :type="priorityType(t.priority) || undefined" size="small">{{ priorityLabel(t.priority) }}</el-tag>
             <span v-if="t.last_comm_at" class="task-comm-info">
               <span class="task-contact-col">当前对接人：{{ t.last_comm_contact_name || '无' }}</span>
               <span class="task-comm-col">变更于 {{ formatTime(t.last_comm_at) }}</span>
@@ -316,7 +316,7 @@ onBeforeRouteUpdate(() => { load() })
 const statusColor = (id) => statuses.value.find(s => s.id === id)?.color || '#aaa'
 const statusName = (id) => statuses.value.find(s => s.id === id)?.name || '无状态'
 const priorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', urgent: '紧急' }[p] || p)
-const priorityType = (p) => ({ low: 'info', normal: '', high: 'warning', urgent: 'danger' }[p] || '')
+const priorityType = (p) => ({ low: 'info', normal: undefined, high: 'warning', urgent: 'danger' }[p] || undefined)
 
 const resetForm = () => {
   form.value = {

@@ -129,7 +129,7 @@
           </span>
         </template>
         <template #default="{ row }">
-          <router-link :to="`/projects/${projectId}/requirements/${row.id}`" class="id-link" :title="row.display_id">{{ row.display_id || '—' }}</router-link>
+          <router-link :to="`/projects/${projectId}/requirements/${row.display_id}`" class="id-link" :title="row.display_id">{{ row.display_id || '—' }}</router-link>
         </template>
       </el-table-column>
       <el-table-column prop="title" :width="mergedColWidth('title', columnWidths.title || 240)">

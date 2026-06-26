@@ -13,7 +13,7 @@ from docx.oxml import OxmlElement
 from ..database import (
     get_db, Project, Requirement, RequirementCustomField, RequirementCustomValue,
     RequirementStatusPool, RequirementPriorityPool,
-    Task, StatusPool, touch_project, resolve_project,
+    Task, StatusPool, touch_project, resolve_project, resolve_requirement,
     generate_requirement_display_id, UPLOAD_DIR, CONFIG_DIR,
 )
 from ..schemas import (
@@ -1030,23 +1030,99 @@ def create_requirement(
     return _get_requirement_with_values(db, req.id)
 
 
+# ========== 需求列宽持久化 ==========
+
+COL_WIDTHS_FILE = "column_widths.json"
+
+
+def _col_widths_path(proj):
+    """返回列宽 JSON 文件的完整路径"""
+    d = os.path.join(CONFIG_DIR, proj.display_id)
+    return os.path.join(d, COL_WIDTHS_FILE)
+
+
+@router.get("/column-widths")
+def get_column_widths(project_id: str, db: Session = Depends(get_db)):
+    """读取需求列宽配置"""
+    proj = resolve_project(db, project_id)
+    path = _col_widths_path(proj)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+@router.put("/column-widths")
+def save_column_widths(project_id: str, data: dict, db: Session = Depends(get_db)):
+    """保存需求列宽配置"""
+    proj = resolve_project(db, project_id)
+    path = _col_widths_path(proj)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
+
+
+@router.delete("/column-widths")
+def delete_column_widths(project_id: str, db: Session = Depends(get_db)):
+    """删除需求列宽配置（导入后重置）"""
+    proj = resolve_project(db, project_id)
+    path = _col_widths_path(proj)
+    if os.path.isfile(path):
+        os.remove(path)
+    return {"ok": True}
+
+
+# ========== 视图状态（排序/筛选）持久化 ==========
+
+VIEW_STATE_FILE = "requirement_view.json"
+
+
+def _view_state_path(proj):
+    d = os.path.join(CONFIG_DIR, proj.display_id)
+    return os.path.join(d, VIEW_STATE_FILE)
+
+
+@router.get("/view-state")
+def get_view_state(project_id: str, db: Session = Depends(get_db)):
+    """读取排序和筛选配置"""
+    proj = resolve_project(db, project_id)
+    path = _view_state_path(proj)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+@router.put("/view-state")
+def save_view_state(project_id: str, data: dict, db: Session = Depends(get_db)):
+    """保存排序和筛选配置"""
+    proj = resolve_project(db, project_id)
+    path = _view_state_path(proj)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
+
+
 # ---- 富文本图片上传 ----
 
-@router.post("/{requirement_id:int}/images")
+@router.post("/{requirement_id}/images")
 def upload_requirement_image(
     project_id: str,
-    requirement_id: int,
+    requirement_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     """上传富文本编辑器中的图片，返回可访问的 URL"""
     proj = resolve_project(db, project_id)
-    req = db.query(Requirement).filter(
-        Requirement.id == requirement_id,
-        Requirement.project_id == proj.id
-    ).first()
-    if not req:
-        raise HTTPException(404, "需求不存在")
+    req = resolve_requirement(db, proj.id, requirement_id)
 
     # 按项目显示ID/需求显示ID 分目录存储
     req_display_id = req.display_id or f"req_{req.id}"
@@ -1067,21 +1143,16 @@ def upload_requirement_image(
     return {"url": url, "errno": 0}
 
 
-@router.delete("/{requirement_id:int}/images/{filename}")
+@router.delete("/{requirement_id}/images/{filename}")
 def delete_requirement_image(
     project_id: str,
-    requirement_id: int,
+    requirement_id: str,
     filename: str,
     db: Session = Depends(get_db),
 ):
     """删除富文本编辑器中的图片文件"""
     proj = resolve_project(db, project_id)
-    req = db.query(Requirement).filter(
-        Requirement.id == requirement_id,
-        Requirement.project_id == proj.id
-    ).first()
-    if not req:
-        raise HTTPException(404, "需求不存在")
+    req = resolve_requirement(db, proj.id, requirement_id)
 
     req_display_id = req.display_id or f"req_{req.id}"
     img_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "images")
@@ -1093,38 +1164,166 @@ def delete_requirement_image(
     return {"ok": True}
 
 
-@router.get("/{requirement_id:int}", response_model=RequirementOut)
+# ---- 需求文件上传（超链接插入文件） ----
+
+@router.post("/{requirement_id}/files")
+def upload_requirement_file(
+    project_id: str,
+    requirement_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """上传文件作为超链接，返回可访问的 URL"""
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+
+    req_display_id = req.display_id or f"req_{req.id}"
+    file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
+    os.makedirs(file_dir, exist_ok=True)
+
+    # 保留原始扩展名
+    ext = os.path.splitext(file.filename)[1] if file.filename else ""
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    filepath = os.path.join(file_dir, unique_name)
+
+    size = 0
+    max_size = 50 * 1024 * 1024  # 50MB
+    content = file.file.read(1024 * 64)
+    with open(filepath, "wb") as f:
+        while content:
+            size += len(content)
+            if size > max_size:
+                f.close()
+                os.remove(filepath)
+                raise HTTPException(413, "文件超过 50MB 限制")
+            f.write(content)
+            content = file.file.read(1024 * 64)
+
+    url = f"/uploads/{proj.display_id}/requirements/{req_display_id}/files/{unique_name}"
+    return {
+        "url": url,
+        "filename": unique_name,
+        "original_filename": file.filename,
+    }
+
+
+@router.delete("/{requirement_id}/files/{filename}")
+def delete_requirement_file(
+    project_id: str,
+    requirement_id: str,
+    filename: str,
+    db: Session = Depends(get_db),
+):
+    """删除需求超链接关联的文件"""
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+
+    req_display_id = req.display_id or f"req_{req.id}"
+    file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
+    filepath = os.path.join(file_dir, filename)
+
+    if os.path.exists(filepath):
+        os.remove(filepath)
+
+    return {"ok": True}
+
+
+@router.get("/{requirement_id}/files/{filename}/preview")
+def preview_requirement_file(
+    project_id: str,
+    requirement_id: str,
+    filename: str,
+    db: Session = Depends(get_db),
+):
+    """预览需求附件：Office 转 PDF、文本渲染为 HTML，其他 inline 展示"""
+    from fastapi.responses import FileResponse as FR, HTMLResponse
+    from urllib.parse import quote
+    import html as html_mod
+    from ..office_convert import is_office_file, convert_to_pdf
+
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+
+    req_display_id = req.display_id or f"req_{req.id}"
+    file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
+    file_path = os.path.join(file_dir, filename)
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(404, "文件不存在")
+
+    # Office 文档 → 转换为 PDF 后预览
+    if is_office_file(file_path):
+        pdf_path = convert_to_pdf(file_path, file_dir)
+        if pdf_path:
+            return FR(
+                pdf_path, media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}",
+                    "Cache-Control": "no-cache",
+                }
+            )
+        else:
+            return FR(
+                file_path,
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}"}
+            )
+
+    ext = os.path.splitext(file_path)[1].lower()
+    text_exts = {'.txt', '.log', '.md', '.sql', '.py', '.js', '.ts', '.html', '.css',
+                 '.json', '.xml', '.yaml', '.yml', '.ini', '.cfg', '.conf',
+                 '.sh', '.bat', '.ps1', '.csv', '.env', '.gitignore', '.dockerfile',
+                 '.vue', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.rb', '.php'}
+    if ext in text_exts:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        html_content = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{html_mod.escape(filename)}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#f8f8f8;padding:16px;font-family:'Cascadia Code','Consolas',monospace;font-size:14px;line-height:1.7}}
+pre{{background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:16px;white-space:pre-wrap;word-break:break-all;color:#333}}
+</style></head>
+<body><pre>{html_mod.escape(content)}</pre></body></html>'''
+        return HTMLResponse(
+            content=html_content,
+            headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}"}
+        )
+
+    return FR(
+        file_path,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}",
+            "Cache-Control": "no-cache",
+        }
+    )
+
+
+@router.get("/{requirement_id}", response_model=RequirementOut)
 def get_requirement(
     project_id: str,
-    requirement_id: int,
+    requirement_id: str,
     db: Session = Depends(get_db),
 ):
     proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    # 重新加载以 eager load custom_values
     req = db.query(Requirement).options(
         joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
-    ).filter(
-        Requirement.id == requirement_id,
-        Requirement.project_id == proj.id
-    ).first()
-    if not req:
-        raise HTTPException(404, "需求不存在")
+    ).filter(Requirement.id == req.id).first()
     return _format_requirement(req)
 
 
-@router.put("/{requirement_id:int}", response_model=RequirementOut)
+@router.put("/{requirement_id}", response_model=RequirementOut)
 def update_requirement(
     project_id: str,
-    requirement_id: int,
+    requirement_id: str,
     data: RequirementUpdate,
     db: Session = Depends(get_db),
 ):
     proj = resolve_project(db, project_id)
-    req = db.query(Requirement).filter(
-        Requirement.id == requirement_id,
-        Requirement.project_id == proj.id
-    ).first()
-    if not req:
-        raise HTTPException(404, "需求不存在")
+    req = resolve_requirement(db, proj.id, requirement_id)
 
     if data.title is not None:
         req.title = data.title
@@ -1166,19 +1365,14 @@ def update_requirement(
     return _get_requirement_with_values(db, req.id)
 
 
-@router.delete("/{requirement_id:int}")
+@router.delete("/{requirement_id}")
 def delete_requirement(
     project_id: str,
-    requirement_id: int,
+    requirement_id: str,
     db: Session = Depends(get_db),
 ):
     proj = resolve_project(db, project_id)
-    req = db.query(Requirement).filter(
-        Requirement.id == requirement_id,
-        Requirement.project_id == proj.id
-    ).first()
-    if not req:
-        raise HTTPException(404, "需求不存在")
+    req = resolve_requirement(db, proj.id, requirement_id)
     db.delete(req)
     db.commit()
     touch_project(db, proj.id)
@@ -1210,6 +1404,14 @@ def generate_requirement_doc_bytes(req, proj, db) -> bytes:
     priority_pools = {p.name: p.color for p in db.query(RequirementPriorityPool).filter(
         RequirementPriorityPool.project_id == proj.id, RequirementPriorityPool.is_active == True
     ).all()}
+
+    # 状态/优先级 英文→中文映射
+    STATUS_LABEL_MAP = {
+        'todo': '待处理', 'in_progress': '进行中', 'done': '已完成', 'cancelled': '已取消',
+    }
+    PRIORITY_LABEL_MAP = {
+        'low': '低', 'normal': '普通', 'high': '高', 'urgent': '紧急',
+    }
 
     doc = Document()
 
@@ -1250,8 +1452,8 @@ def generate_requirement_doc_bytes(req, proj, db) -> bytes:
     meta_items = [
         ("需求名称", req.title or "-"),
         ("显示ID", req.display_id or "-"),
-        ("状态", req.status or "-"),
-        ("优先级", req.priority or "-"),
+        ("状态", STATUS_LABEL_MAP.get(req.status, req.status or "-")),
+        ("优先级", PRIORITY_LABEL_MAP.get(req.priority, req.priority or "-")),
         ("创建时间", req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "-"),
         ("更新时间", req.updated_at.strftime("%Y-%m-%d %H:%M") if req.updated_at else "-"),
     ]
@@ -1281,36 +1483,62 @@ def generate_requirement_doc_bytes(req, proj, db) -> bytes:
     return buf.getvalue()
 
 
-@router.get("/{requirement_id:int}/export")
+@router.get("/{requirement_id}/export")
 def export_requirement_doc(
     project_id: str,
-    requirement_id: int,
+    requirement_id: str,
     db: Session = Depends(get_db),
 ):
-    """导出需求信息为 DOCX 文档（公文格式）"""
+    """导出需求信息为 ZIP 压缩包（DOCX + 附件文件）"""
+    import zipfile
     from ..database import Requirement, RequirementCustomField, RequirementCustomValue
 
     proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    # 重新加载以 eager load custom_values
     req = db.query(Requirement).options(
         joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
-    ).filter(
-        Requirement.id == requirement_id,
-        Requirement.project_id == proj.id
-    ).first()
-    if not req:
-        raise HTTPException(404, "需求不存在")
+    ).filter(Requirement.id == req.id).first()
 
     doc_bytes = generate_requirement_doc_bytes(req, proj, db)
 
-    filename = f'{req.title}_需求文档.docx'
+    # 创建 ZIP 压缩包
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        # 写入 DOCX
+        doc_name = f'{req.title}_需求文档.docx'
+        zf.writestr(doc_name, doc_bytes)
+
+        # 收集描述中引用的附件文件
+        if req.description:
+            file_pattern = re.compile(
+                r'/uploads/' + re.escape(proj.display_id) +
+                r'/requirements/[^/]+/files/([^"\s)]+)'
+            )
+            seen = set()
+            for m in file_pattern.finditer(req.description):
+                fn = m.group(1)
+                if fn in seen:
+                    continue
+                seen.add(fn)
+                file_path = os.path.join(
+                    UPLOAD_DIR, proj.display_id, 'requirements',
+                    req.display_id or f'req_{req.id}', 'files', fn
+                )
+                if os.path.isfile(file_path):
+                    zf.write(file_path, f'files/{fn}')
+
+    zip_bytes = zip_buf.getvalue()
+
+    filename = f'{req.title}_需求文档.zip'
     encoded_filename = urllib.parse.quote(filename)
 
     return Response(
-        content=doc_bytes,
-        media_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        content=zip_bytes,
+        media_type='application/zip',
         headers={
             'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}",
-            'Content-Length': str(len(doc_bytes)),
+            'Content-Length': str(len(zip_bytes)),
         }
     )
 
@@ -1789,6 +2017,13 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 if isinstance(item, tuple):
                     if item[0] == 'a':
                         link_url = item[1]
+                        # 需求附件文件 → 转为 ZIP 内相对路径
+                        m = re.match(r'^/uploads/[^/]+/requirements/[^/]+/files/(.+)$', link_url)
+                        if m:
+                            link_url = 'files/' + m.group(1)
+                        # 补全缺少协议的链接（如 www.baidu.com → https://www.baidu.com）
+                        elif link_url and not re.match(r'^[a-zA-Z][a-zA-Z0-9+\-.]*://', link_url) and not link_url.startswith('/'):
+                            link_url = 'https://' + link_url
                     elif item[0] == 'span':
                         c, bg = self._get_style_color(dict(style=item[1]))
                         if c: color = c
@@ -2563,84 +2798,3 @@ async def import_requirements(
     if skipped_db_collision:
         msg += f"，跳过 {skipped_db_collision} 条（数据库中已存在）"
     return {"created": created, "updated": updated, "skipped_empty": skipped_empty_title, "skipped_db_collision": skipped_db_collision, "message": msg}
-
-
-# ========== 需求列宽持久化 ==========
-
-COL_WIDTHS_FILE = "column_widths.json"
-
-
-def _col_widths_path(proj):
-    """返回列宽 JSON 文件的完整路径"""
-    d = os.path.join(CONFIG_DIR, proj.display_id)
-    return os.path.join(d, COL_WIDTHS_FILE)
-
-
-@router.get("/column-widths")
-def get_column_widths(project_id: str, db: Session = Depends(get_db)):
-    """读取需求列宽配置"""
-    proj = resolve_project(db, project_id)
-    path = _col_widths_path(proj)
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-@router.put("/column-widths")
-def save_column_widths(project_id: str, data: dict, db: Session = Depends(get_db)):
-    """保存需求列宽配置"""
-    proj = resolve_project(db, project_id)
-    path = _col_widths_path(proj)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return {"ok": True}
-
-
-@router.delete("/column-widths")
-def delete_column_widths(project_id: str, db: Session = Depends(get_db)):
-    """删除需求列宽配置（导入后重置）"""
-    proj = resolve_project(db, project_id)
-    path = _col_widths_path(proj)
-    if os.path.isfile(path):
-        os.remove(path)
-    return {"ok": True}
-
-
-# ========== 视图状态（排序/筛选）持久化 ==========
-
-VIEW_STATE_FILE = "requirement_view.json"
-
-
-def _view_state_path(proj):
-    d = os.path.join(CONFIG_DIR, proj.display_id)
-    return os.path.join(d, VIEW_STATE_FILE)
-
-
-@router.get("/view-state")
-def get_view_state(project_id: str, db: Session = Depends(get_db)):
-    """读取排序和筛选配置"""
-    proj = resolve_project(db, project_id)
-    path = _view_state_path(proj)
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-@router.put("/view-state")
-def save_view_state(project_id: str, data: dict, db: Session = Depends(get_db)):
-    """保存排序和筛选配置"""
-    proj = resolve_project(db, project_id)
-    path = _view_state_path(proj)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    return {"ok": True}

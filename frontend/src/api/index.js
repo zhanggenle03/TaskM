@@ -126,6 +126,14 @@ export const exportRequirementDoc = (projectId, reqId) =>
   })
 export const deleteRequirementImage = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/images/${encodeURIComponent(filename)}`)
 
+// --- Requirement Files ---
+export const uploadRequirementFile = (projectId, reqId, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return fetch(`/api/projects/${projectId}/requirements/${reqId}/files`, { method: 'POST', body: fd }).then(r => r.json())
+}
+export const deleteRequirementFile = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/files/${encodeURIComponent(filename)}`)
+
 // --- Requirement Custom Fields ---
 export const getReqCustomFields = (projectId, params) => http.get(`/projects/${projectId}/requirements/fields`, { params })
 export const createReqCustomField = (projectId, data) => http.post(`/projects/${projectId}/requirements/fields`, data)

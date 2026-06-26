@@ -56,7 +56,6 @@
                   <el-checkbox
                     v-for="s in allStatuses"
                     :key="s.status_id"
-                    :label="s.status_id"
                     :value="s.status_id"
                   >
                     <span class="status-dot" :style="{ background: s.color }"></span>
