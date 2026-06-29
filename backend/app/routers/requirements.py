@@ -195,10 +195,12 @@ def delete_custom_field(
 def filter_stats(
     project_id: str,
     column_filters: Optional[str] = None,  # JSON: {prop: [values]} 跨列联动
+    fuzzy_filters: Optional[str] = None,   # JSON: {prop: {text, mode: 'include'|'exclude'}} 模糊筛选
     db: Session = Depends(get_db),
 ):
     """返回所有可筛选列的独立值及其出现次数（全量数据，不分页）
     若传入 column_filters，则按其他列筛选后再统计（用于跨列联动）。
+    若传入 fuzzy_filters，则按模糊筛选后再统计（用于模糊搜索联动）。
     """
     proj = resolve_project(db, project_id)
     req_q = db.query(Requirement).filter(
@@ -267,6 +269,60 @@ def filter_stats(
                         req_q = req_q.filter(~Requirement.id.in_(subq))
                     else:
                         req_q = req_q.filter(Requirement.id.in_(subq.filter(RequirementCustomValue.value.in_(values))))
+
+    # 模糊筛选（fuzzy_filters）
+    if fuzzy_filters:
+        try:
+            fuzzy_json = json.loads(fuzzy_filters)
+        except (json.JSONDecodeError, TypeError):
+            fuzzy_json = {}
+        for prop, f in fuzzy_json.items():
+            text = (f.get("text") or "").strip()
+            if not text:
+                continue
+            mode = f.get("mode", "include")
+            keywords = [k for k in text.split() if k]
+            if not keywords:
+                continue
+            if prop == "status":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    req_q = req_q.filter(Requirement.status.like(like_val) if mode == 'include' else ~Requirement.status.like(like_val))
+            elif prop == "priority":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    req_q = req_q.filter(Requirement.priority.like(like_val) if mode == 'include' else ~Requirement.priority.like(like_val))
+            elif prop == "display_id":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    req_q = req_q.filter(Requirement.display_id.like(like_val) if mode == 'include' else ~Requirement.display_id.like(like_val))
+            elif prop == "title":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    req_q = req_q.filter(Requirement.title.like(like_val) if mode == 'include' else ~Requirement.title.like(like_val))
+            elif prop == "created_at":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    req_q = req_q.filter(Requirement.created_at.like(like_val) if mode == 'include' else ~Requirement.created_at.like(like_val))
+            elif prop == "updated_at":
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    req_q = req_q.filter(Requirement.updated_at.like(like_val) if mode == 'include' else ~Requirement.updated_at.like(like_val))
+            elif prop.startswith("cf_"):
+                try:
+                    fid = int(prop[3:])
+                except ValueError:
+                    continue
+                for kw in keywords:
+                    like_val = f"%{kw}%"
+                    subq = db.query(RequirementCustomValue.requirement_id).filter(
+                        RequirementCustomValue.field_id == fid,
+                        RequirementCustomValue.value.like(like_val),
+                    )
+                    if mode == 'include':
+                        req_q = req_q.filter(Requirement.id.in_(subq))
+                    else:
+                        req_q = req_q.filter(~Requirement.id.in_(subq))
 
     reqs = req_q.all()
 

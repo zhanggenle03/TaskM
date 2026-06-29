@@ -950,12 +950,18 @@ function toggleFilterCol(colProp, event) {
   const otherFilters = Object.fromEntries(
     Object.entries(columnFilters.value).filter(([k, v]) => k !== colProp && v && v.length)
   )
+  const otherFuzzy = Object.fromEntries(
+    Object.entries(fuzzyFilters.value).filter(([k, v]) => k !== colProp && v && v.text)
+  )
   const params = {}
   if (Object.keys(otherFilters).length) {
     // status/priority 转回英文
     if (otherFilters.status) otherFilters.status = otherFilters.status.map(s => statusNameToValue(s))
     if (otherFilters.priority) otherFilters.priority = otherFilters.priority.map(p => priorityNameToValue(p))
     params.column_filters = JSON.stringify(otherFilters)
+  }
+  if (Object.keys(otherFuzzy).length) {
+    params.fuzzy_filters = JSON.stringify(otherFuzzy)
   }
   getReqFilterStats(projectId, params).then(stats => { filterStats.value = stats }).catch(() => {})
 }
@@ -1735,6 +1741,15 @@ watch(fuzzyFilters, () => {
   saveViewState()
   currentPage.value = 1
   loadRequirements()
+  // 模糊筛选变化时刷新 filter-stats，保持 dropdown 联动
+  const activeFuzzy = Object.fromEntries(
+    Object.entries(fuzzyFilters.value).filter(([_, v]) => v && v.text)
+  )
+  const params = {}
+  if (Object.keys(activeFuzzy).length) {
+    params.fuzzy_filters = JSON.stringify(activeFuzzy)
+  }
+  getReqFilterStats(projectId, params).then(stats => { filterStats.value = stats }).catch(() => {})
 }, { deep: true })
 
 async function loadCustomFields() {
