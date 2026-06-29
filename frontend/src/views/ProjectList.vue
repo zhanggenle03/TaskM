@@ -48,7 +48,7 @@
             <div class="proj-info">
               <div class="proj-info-top">
                 <el-tag v-if="p.display_id" size="small" type="info" effect="plain" style="font-size:10px;padding:0 3px;height:16px;line-height:16px;margin-bottom:1px;border-width:0">{{ p.display_id }}</el-tag>
-                <el-icon v-if="p.pinned" class="pinned-icon"><Rank /></el-icon>
+                <el-tag v-if="p.pinned" class="pinned-tag" size="small" effect="dark">置顶</el-tag>
               </div>
               <div class="proj-name">{{ p.name }}</div>
             </div>
@@ -340,9 +340,15 @@ const onCmd = async (cmd, p) => {
   align-items: center;
   gap: 4px;
 }
-.pinned-icon {
-  font-size: 13px;
-  color: #534ab7;
-  transform: rotate(90deg);
+.pinned-tag {
+  height: 18px;
+  line-height: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+  border: 0;
+  background: #534ab7;
+  color: #fff;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 </style>
