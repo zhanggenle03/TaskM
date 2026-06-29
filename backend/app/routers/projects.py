@@ -237,7 +237,13 @@ def today_checkin_status(date: Optional[str] = None, db: Session = Depends(get_d
 
 
 @router.get("/checkins", response_model=List[CheckinOut])
-def list_all_checkins(year: Optional[int] = None, month: Optional[int] = None, db: Session = Depends(get_db)):
+def list_all_checkins(
+    year: Optional[int] = None,
+    month: Optional[int] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     q = db.query(Checkin).options(
         joinedload(Checkin.projects), joinedload(Checkin.tasks)
     )
@@ -246,6 +252,10 @@ def list_all_checkins(year: Optional[int] = None, month: Optional[int] = None, d
         q = q.filter(extract('year', Checkin.date) == year)
         if month is not None:
             q = q.filter(extract('month', Checkin.date) == month)
+    if start_date is not None:
+        q = q.filter(Checkin.date >= start_date)
+    if end_date is not None:
+        q = q.filter(Checkin.date <= end_date)
     return q.order_by(Checkin.date.desc(), Checkin.created_at.desc()).all()
 
 

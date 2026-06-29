@@ -424,7 +424,7 @@ const disabledCalcDate = (date) => {
   const entryDateStr = getEntryDate()
   return entryDateStr ? dayjs(date).isBefore(dayjs(entryDateStr)) : false
 }
-const runCalc = () => {
+const runCalc = async () => {
   if (!calcRange.value || !calcRange.value[0] || !calcRange.value[1]) {
     ElMessage.warning('请选择日期范围')
     return
@@ -433,6 +433,16 @@ const runCalc = () => {
   const start = dayjs(startStr)
   const end = dayjs(endStr)
   if (end.isBefore(start)) { ElMessage.warning('结束日期不能早于开始日期'); return }
+
+  // 拉取整个日期范围的签到数据
+  const rangeCheckins = await getAllCheckins({ start_date: startStr, end_date: endStr })
+  // 按日期建索引
+  const rangeCheckinsByDate = {}
+  for (const c of rangeCheckins) {
+    const d = dayjs(c.date).format('YYYY-MM-DD')
+    if (!rangeCheckinsByDate[d]) rangeCheckinsByDate[d] = []
+    rangeCheckinsByDate[d].push(c)
+  }
 
   const byMonth = {}
   const byProject = {}
@@ -444,7 +454,7 @@ const runCalc = () => {
     const dateStr = d.format('YYYY-MM-DD')
     const weekday = d.day()
     const extra = getDayExtraInfo(dateStr)
-    const dayCheckins = checkinsByDate.value[dateStr] || []
+    const dayCheckins = rangeCheckinsByDate[dateStr] || []
     const hasCheckin = dayCheckins.length > 0
     const isFuture = d.isAfter(today)
     const monthKey = d.format('YYYY年M月')
