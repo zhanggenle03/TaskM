@@ -13,7 +13,7 @@
 
 import { Solar } from 'lunar-javascript'
 
-const CACHE_TTL = 24 * 60 * 60 * 1000 // 24 小时
+const CACHE_TTL = 30 * 24 * 60 * 60 * 1000 // 30 天（节假日数据每年只变几次）
 const cache = {} // { year: { 'MM-DD': { holiday, name, ... } } }
 const OVERRIDE_KEY = 'taskm_holiday_overrides'
 const ENTRY_DATE_KEY = 'taskm_entry_date'

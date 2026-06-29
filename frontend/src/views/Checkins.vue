@@ -34,7 +34,7 @@
           <div class="cal-weekdays">
             <div v-for="w in weekDays" :key="w" class="cal-weekday">{{ w }}</div>
           </div>
-          <div class="cal-grid">
+          <div v-if="holidayVersion" class="cal-grid">
             <div
               v-for="(day, i) in calendarDays"
               :key="i"
@@ -61,6 +61,10 @@
                 <span v-if="deleteBatchMode && checkinsByDate[day.date]" class="cal-cell-has-data">已签</span>
               </template>
             </div>
+          </div>
+          <!-- 数据加载中 -> 骨架占位 -->
+          <div v-else class="cal-grid cal-grid-loading">
+            <div v-for="i in 42" :key="i" class="cal-cell cal-cell-empty">&nbsp;</div>
           </div>
 
           <!-- 批量签到底部栏 -->
@@ -689,12 +693,12 @@ const load = async () => {
   const [p, c] = await Promise.all([
     getProjects(),
     getAllCheckins({ year: calYear.value, month: calMonth.value }),
+    loadHolidayForYear(calYear.value),
   ])
   projects.value = p
   allCheckins.value = c
   selectedDate.value = todayStr
   loadStatusForDate(todayStr)
-  await loadHolidayForYear(calYear.value)
 }
 onMounted(async () => {
   // 并行：从 settings.json 和 DB 加载节假日覆盖 + 主数据
@@ -708,9 +712,43 @@ onMounted(async () => {
 
 const formatDateFull = (d) => dayjs(d).format('YYYY年M月D日 dddd')
 
-const prevMonth = async () => { if (calMonth.value === 1) { calYear.value--; calMonth.value = 12 } else calMonth.value--; allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value }); await loadHolidayForYear(calYear.value); holidayVersion.value++ }
-const nextMonth = async () => { if (calMonth.value === 12) { calYear.value++; calMonth.value = 1 } else calMonth.value++; allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value }); await loadHolidayForYear(calYear.value); holidayVersion.value++ }
-const goToday = async () => { calYear.value = dayjs().year(); calMonth.value = dayjs().month() + 1; selectedDate.value = todayStr; allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value }); await loadHolidayForYear(calYear.value); holidayVersion.value++ }
+const prevMonth = async () => {
+  const newMonth = calMonth.value === 1 ? 12 : calMonth.value - 1
+  const newYear  = calMonth.value === 1 ? calYear.value - 1 : calYear.value
+  const [newCheckins] = await Promise.all([
+    getAllCheckins({ year: newYear, month: newMonth }),
+    loadHolidayForYear(newYear),
+  ])
+  calYear.value = newYear
+  calMonth.value = newMonth
+  allCheckins.value = newCheckins
+  holidayVersion.value++
+}
+const nextMonth = async () => {
+  const newMonth = calMonth.value === 12 ? 1 : calMonth.value + 1
+  const newYear  = calMonth.value === 12 ? calYear.value + 1 : calYear.value
+  const [newCheckins] = await Promise.all([
+    getAllCheckins({ year: newYear, month: newMonth }),
+    loadHolidayForYear(newYear),
+  ])
+  calYear.value = newYear
+  calMonth.value = newMonth
+  allCheckins.value = newCheckins
+  holidayVersion.value++
+}
+const goToday = async () => {
+  const targetYear  = dayjs().year()
+  const targetMonth = dayjs().month() + 1
+  const [newCheckins] = await Promise.all([
+    getAllCheckins({ year: targetYear, month: targetMonth }),
+    loadHolidayForYear(targetYear),
+  ])
+  calYear.value = targetYear
+  calMonth.value = targetMonth
+  selectedDate.value = todayStr
+  allCheckins.value = newCheckins
+  holidayVersion.value++
+}
 
 // 日历设置
 const showHolidaySettings = ref(false)
@@ -985,6 +1023,7 @@ const submitBatch = async () => {
 .cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; margin-bottom: 8px; }
 .cal-weekday { font-size: 12px; color: #888; padding: 4px 0; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.cal-grid-loading .cal-cell { background: #f6f6f6; border-radius: 8px; }
 .cal-cell { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; font-size: 13px; transition: background .1s; gap: 2px; }
 .cal-cell:hover { background: #f5f4fe; }
 .cal-cell-empty { visibility: hidden; pointer-events: none; }
