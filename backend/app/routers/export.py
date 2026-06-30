@@ -1,6 +1,7 @@
 """任务导出 API 路由"""
 
 import urllib.parse
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -65,7 +66,8 @@ def export_task_doc(
     proj = resolve_project(db, project_id)
     task = resolve_task(db, proj.id, task_id)
 
-    filename = f'{task.title}_导出包.zip'
+    file_ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    filename = f'{task.title}_{file_ts}.zip'
     # 对非 ASCII 字符进行 URL 编码
     encoded_filename = urllib.parse.quote(filename)
 

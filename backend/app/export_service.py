@@ -673,8 +673,9 @@ def generate_export_package(
 
     # ======================== 生成 ZIP ========================
     zip_buffer = io.BytesIO()
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f'{task_attrs["title"]}_说明文档.docx', docx_bytes)
+        zf.writestr(f'{task_attrs["title"]}_说明文档_{ts}.docx', docx_bytes)
 
         # 添加需求文档
         if req_doc_bytes_list:

@@ -1247,8 +1247,11 @@ const submitExport = async () => {
     const res = await exportTaskDoc(projectId, taskId, params)
     // res 是完整 response（含 headers），res.data 是 blob
     const disposition = res.headers?.['content-disposition'] || ''
-    let filename = task.value?.title ? `${task.value.title}_导出包.zip` : 'task_export.zip'
-    const match = disposition.match(/filename="?(.+?)"?$/)
+    const pad = (n) => String(n).padStart(2, '0')
+    const now2 = new Date()
+    const ts2 = `${now2.getFullYear()}${pad(now2.getMonth()+1)}${pad(now2.getDate())}${pad(now2.getHours())}${pad(now2.getMinutes())}${pad(now2.getSeconds())}`
+    let filename = task.value?.title ? `${task.value.title}_${ts2}.zip` : 'task_export.zip'
+    const match = disposition.match(/filename\*=UTF-8''(.+?)(?:;|$)/)
     if (match) {
       filename = decodeURIComponent(match[1])
     }

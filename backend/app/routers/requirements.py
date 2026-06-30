@@ -1562,7 +1562,7 @@ def export_requirement_doc(
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         # 写入 DOCX
-        doc_name = f'{req.title}_需求文档.docx'
+        doc_name = f'{req.title}_需求文档_{datetime.now().strftime("%Y%m%d%H%M%S")}.docx'
         zf.writestr(doc_name, doc_bytes)
 
         # 收集描述中引用的附件文件
@@ -1586,7 +1586,8 @@ def export_requirement_doc(
 
     zip_bytes = zip_buf.getvalue()
 
-    filename = f'{req.title}_需求文档.zip'
+    file_ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    filename = f'{req.title}_{file_ts}.zip'
     encoded_filename = urllib.parse.quote(filename)
 
     return Response(

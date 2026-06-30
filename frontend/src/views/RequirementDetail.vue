@@ -1389,7 +1389,10 @@ const doExportRequirement = async () => {
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${req.value.title}_需求文档.zip`
+    const pad = (n) => String(n).padStart(2, '0')
+    const now = new Date()
+    const ts = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
+    a.download = `${req.value.title}_${ts}.zip`
     a.click()
     window.URL.revokeObjectURL(url)
   } catch (e) {
