@@ -1,6 +1,6 @@
 """
 TaskM 系统托盘模块
-启动后最小化到托盘，右击弹出菜单：打开浏览器 / 退出
+启动后最小化到托盘，右击弹出菜单：打开浏览器 / 打开工作目录 / 退出
 支持开发版和打包版
 
 依赖 pystray + Pillow（可选——缺失时托盘不工作但不影响主程序）
@@ -14,8 +14,13 @@ from typing import Callable
 
 
 # ── 路径 ──
-BACKEND_DIR = Path(__file__).resolve().parent.parent          # backend/
-PROJECT_ROOT = BACKEND_DIR.parent                              # TaskM/
+_BACKEND_DIR = Path(__file__).resolve().parent.parent          # backend/
+if getattr(sys, "frozen", False):
+    # 打包版：sys.executable 指向 exe，其父目录为项目根目录
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    # 开发版：从 __file__ 层级推断项目根目录
+    PROJECT_ROOT = _BACKEND_DIR.parent                          # TaskM/
 
 
 def _is_standalone() -> bool:
@@ -37,7 +42,7 @@ def _get_icon_image():
     """
     from PIL import Image
 
-    candidates = [BACKEND_DIR / "taskm.ico"]
+    candidates = [_BACKEND_DIR / "taskm.ico"]
     if getattr(sys, "frozen", False):
         candidates.append(Path(sys.executable).parent / "taskm.ico")
 
@@ -68,6 +73,13 @@ def _open_browser():
     """打开浏览器"""
     url = _get_frontend_url()
     webbrowser.open(url)
+
+
+def _open_workspace():
+    """在资源管理器中打开工作文件夹并激活窗口"""
+    import ctypes
+    workspace = os.path.normpath(str(PROJECT_ROOT))
+    ctypes.windll.shell32.ShellExecuteW(None, "explore", workspace, None, None, 1)
 
 
 def _quit_app():
@@ -102,6 +114,7 @@ def start_tray(on_setup: Callable | None = None):
     img = _get_icon_image()
     menu = pystray.Menu(
         pystray.MenuItem("打开浏览器", lambda: _open_browser(), default=True),
+        pystray.MenuItem("打开工作目录", lambda: _open_workspace()),
         pystray.MenuItem("退出", lambda: _quit_app()),
     )
 
@@ -121,6 +134,11 @@ def start_tray(on_setup: Callable | None = None):
 def open_browser_action():
     """供外部（前端/API）调用的打开浏览器"""
     _open_browser()
+
+
+def open_workspace_action():
+    """供外部调用的打开工作目录"""
+    _open_workspace()
 
 
 def quit_action():
