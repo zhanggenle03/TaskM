@@ -5,8 +5,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi import Request
 from .database import Base, engine, UPLOAD_DIR
+from .settings_manager import get_port
 
 from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements
+
+
+# ── 从配置读取端口（用于 CORS 白名单） ──
+_BACKEND_PORT = get_port("backend_port", 8000)
+_FRONTEND_PORT = get_port("frontend_port", 5173)
 
 
 @asynccontextmanager
@@ -47,7 +53,7 @@ app = FastAPI(title="TaskM API", version="1.0.0", lifespan=lifespan, debug=True)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=[f"http://localhost:{_FRONTEND_PORT}", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

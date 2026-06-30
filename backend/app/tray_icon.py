@@ -28,10 +28,13 @@ def _is_standalone() -> bool:
 
 
 def _get_frontend_url() -> str:
-    """打包版：8000（前后端同端口）；开发版：5173（Vite 代理）"""
+    """打包版：backend_port（前后端同端口）；开发版：frontend_port（Vite 代理）"""
+    from .settings_manager import get_port
+    bp = get_port("backend_port", 8000)
+    fp = get_port("frontend_port", 5173)
     if _is_standalone():
-        return "http://localhost:8000/"
-    return "http://localhost:5173/"
+        return f"http://localhost:{bp}/"
+    return f"http://localhost:{fp}/"
 
 
 def _get_icon_image():
@@ -85,10 +88,12 @@ def _open_workspace():
 def _quit_app():
     """退出应用：先杀前端端口，再自毁退出"""
     import subprocess
-    # 杀前端端口 5173（开发版 Vite）
+    from .settings_manager import get_port
+    fp = get_port("frontend_port", 5173)
+    # 杀前端端口（开发版 Vite）
     try:
         result = subprocess.run(
-            'netstat -ano | findstr ":5173 " | findstr LISTENING',
+            f'netstat -ano | findstr ":{fp} " | findstr LISTENING',
             shell=True, capture_output=True, text=True,
         )
         pids = set()

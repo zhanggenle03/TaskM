@@ -14,6 +14,8 @@ SETTINGS_FILE = os.path.join(
 DEFAULT_SETTINGS = {
     "max_file_size_mb": 50,
     "autostart": {"mode": "off"},
+    "backend_port": 8000,
+    "frontend_port": 5173,
 }
 
 
@@ -42,3 +44,24 @@ def get_max_file_size() -> int:
     """获取附件大小限制（字节）"""
     settings = load_settings()
     return settings["max_file_size_mb"] * 1024 * 1024
+
+
+def get_port(key: str, default: int = None) -> int:
+    """
+    获取端口配置，优先级：环境变量 → settings.json → 默认值
+    key 可选值: 'backend_port', 'frontend_port'
+    环境变量: TASKM_BACKEND_PORT, TASKM_FRONTEND_PORT
+    """
+    env_map = {
+        "backend_port": "TASKM_BACKEND_PORT",
+        "frontend_port": "TASKM_FRONTEND_PORT",
+    }
+    env_name = env_map.get(key)
+    if env_name:
+        val = os.environ.get(env_name)
+        if val and val.isdigit():
+            return int(val)
+
+    settings = load_settings()
+    fallback = default if default is not None else DEFAULT_SETTINGS.get(key, 8000)
+    return int(settings.get(key, fallback))

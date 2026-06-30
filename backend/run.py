@@ -20,14 +20,22 @@ try:
 except Exception:
     pass
 
+from app.settings_manager import get_port, save_settings
+
 # ── 路径 ──
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)          # TaskM 根目录
 PID_FILE = os.path.join(PROJECT_ROOT, "taskm.pid")   # PID 文件路径
 
 # ── 配置 ──
-BACKEND_PORT = 8000
+BACKEND_PORT = get_port("backend_port", 8000)
 MAX_PORT_WAIT = 3  # 最多等待 3 秒释放端口
+
+# ── 持久化当前端口配置到 settings.json（开发版存双端口） ──
+save_settings({
+    "backend_port": BACKEND_PORT,
+    "frontend_port": get_port("frontend_port", 5173),
+})
 
 
 # ═══════════════════════════════════════════════

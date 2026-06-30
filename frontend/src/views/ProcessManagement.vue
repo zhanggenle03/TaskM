@@ -16,23 +16,53 @@
               <template v-if="isStandalone">
                 <span class="status-item">
                   <span class="status-dot" :class="status.backend ? 'on' : 'off'"></span>
-                  TaskM <span class="status-port">8000</span>
+                  TaskM <span class="status-port">{{ backendPort }}</span>
                 </span>
               </template>
               <template v-else>
                 <span class="status-item">
                   <span class="status-dot" :class="status.backend ? 'on' : 'off'"></span>
-                  后端 <span class="status-port">8000</span>
+                  后端 <span class="status-port">{{ backendPort }}</span>
                 </span>
                 <span class="status-item">
                   <span class="status-dot" :class="status.frontend ? 'on' : 'off'"></span>
-                  前端 <span class="status-port">5173</span>
+                  前端 <span class="status-port">{{ frontendPort }}</span>
                 </span>
               </template>
             </div>
-            <button class="btn btn-danger" style="margin-left:auto" @click="shutdownService" :disabled="shuttingDown || !status.backend">关闭服务</button>
+            <div class="btn-group">
+              <button class="btn" @click="portDialogVisible = true">修改端口</button>
+              <button class="btn btn-danger" @click="shutdownService" :disabled="shuttingDown || !status.backend">关闭服务</button>
+            </div>
           </div>
         </div>
+
+        <!-- 端口配置对话框 -->
+        <el-dialog v-model="portDialogVisible" title="端口配置" width="420px" :close-on-click-modal="false">
+          <div class="port-dialog-body">
+            <template v-if="isStandalone">
+              <div class="port-field">
+                <span class="port-field-label">服务端口</span>
+                <input class="port-input" v-model.number="editBackendPort" type="number" min="1024" max="65535" />
+              </div>
+            </template>
+            <template v-else>
+              <div class="port-field">
+                <span class="port-field-label">后端端口</span>
+                <input class="port-input" v-model.number="editBackendPort" type="number" min="1024" max="65535" />
+              </div>
+              <div class="port-field">
+                <span class="port-field-label">前端端口</span>
+                <input class="port-input" v-model.number="editFrontendPort" type="number" min="1024" max="65535" />
+              </div>
+            </template>
+            <div class="port-hint">修改后需重启服务生效</div>
+          </div>
+          <template #footer>
+            <button class="btn" @click="portDialogVisible = false">取消</button>
+            <button class="btn btn-primary" @click="savePorts" :disabled="portSaving">{{ portSaving ? '保存中...' : '保存' }}</button>
+          </template>
+        </el-dialog>
 
         <!-- 开机自启动 -->
         <div class="setting-item">
@@ -84,6 +114,14 @@ const status = ref({ backend: false, frontend: false })
 const isStandalone = ref(false)
 const autostartEnabled = ref(false)
 
+// ── 端口配置 ──
+const backendPort = ref(8000)
+const frontendPort = ref(5173)
+const editBackendPort = ref(8000)
+const editFrontendPort = ref(5173)
+const portSaving = ref(false)
+const portDialogVisible = ref(false)
+
 // ── 附件大小限制 ──
 const maxFileSizeMB = ref(50)
 const settingsSaving = ref(false)
@@ -110,6 +148,10 @@ async function refreshSettings() {
   try {
     const res = await http.get('/process/settings')
     maxFileSizeMB.value = res.max_file_size_mb ?? 50
+    backendPort.value = res.backend_port ?? 8000
+    frontendPort.value = res.frontend_port ?? 5173
+    editBackendPort.value = backendPort.value
+    editFrontendPort.value = frontendPort.value
   } catch {
     // 默认值
   }
@@ -124,6 +166,30 @@ async function saveFileSize() {
     ElMessage.error('保存失败')
   }
   settingsSaving.value = false
+}
+
+async function savePorts() {
+  const bp = editBackendPort.value
+  const fp = editFrontendPort.value
+  if (bp < 1024 || bp > 65535 || fp < 1024 || fp > 65535) {
+    ElMessage.warning('端口范围：1024~65535')
+    return
+  }
+  portSaving.value = true
+  try {
+    const payload = { backend_port: bp }
+    if (!isStandalone.value) {
+      payload.frontend_port = fp
+    }
+    await http.put('/process/settings', payload)
+    backendPort.value = bp
+    frontendPort.value = fp
+    portDialogVisible.value = false
+    ElMessage.success('端口已保存，重启后生效')
+  } catch {
+    ElMessage.error('保存失败')
+  }
+  portSaving.value = false
 }
 
 async function shutdownService() {
@@ -285,6 +351,14 @@ onMounted(() => {
   padding: 0 8px; border-radius: 30px;
 }
 
+/* ── 按钮组（修改端口 + 关闭服务） ── */
+.btn-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
 /* ── 通用按钮 ── */
 .btn {
   border: 1px solid #d1d9e6;
@@ -305,6 +379,10 @@ onMounted(() => {
   color: #b91c1c; border-color: #fecaca; background: #fef2f2;
 }
 .btn-danger:hover { background: #fee2e2; }
+.btn-primary {
+  color: #fff; border-color: #3b82f6; background: #3b82f6;
+}
+.btn-primary:hover { background: #2563eb; border-color: #2563eb; }
 
 /* ── 自启动状态文字 ── */
 .toggle-status { font-size: 13px; color: #475569; }
@@ -353,4 +431,45 @@ onMounted(() => {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   letter-spacing: 0.2px;
 }
+
+/* ── 端口对话框 ── */
+.port-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 6px 0;
+}
+.port-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.port-field-label {
+  font-size: 14px;
+  color: #334155;
+  min-width: 72px;
+}
+.port-hint {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+.port-input {
+  width: 120px;
+  padding: 4px 10px;
+  border: 1px solid #d1d9e6;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: monospace;
+  text-align: center;
+  color: #1e293b;
+  background: #fff;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.port-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 2px rgba(59,130,246,0.15);
+}
+.port-input::-webkit-inner-spin-button { opacity: 1; }
 </style>

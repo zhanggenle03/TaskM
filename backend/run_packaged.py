@@ -8,9 +8,14 @@ import atexit
 import subprocess
 import threading
 
+from app.settings_manager import get_port, save_settings
+
 # ── 配置 ──
-BACKEND_PORT = 8000
+BACKEND_PORT = get_port("backend_port", 8000)
 MAX_PORT_WAIT = 3  # 最多等待 3 秒释放端口
+
+# ── 持久化当前端口配置到 settings.json（发行版前后端同端口，只存一个） ──
+save_settings({"backend_port": BACKEND_PORT})
 
 
 # ═══════════════════════════════════════════════

@@ -11,9 +11,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from ..settings_manager import load_settings, save_settings
+from ..settings_manager import get_port, load_settings, save_settings
 
 router = APIRouter(prefix="/process", tags=["process"])
+
+# ── 端口配置 ──
+_BACKEND_PORT = get_port("backend_port", 8000)
+_FRONTEND_PORT = get_port("frontend_port", 5173)
 
 # ── 项目根目录 ──
 ROOT = Path(__file__).resolve().parents[3]
@@ -115,8 +119,14 @@ def _generate_autostart_vbs() -> str:
         backend_cmd_inner = f'cd /d {project_root} && {pythonw_path} -X utf8 backend\\run.py'
         backend_cmd_vbs = f'cmd /c "{backend_cmd_inner}"'.replace('"', '""')
 
-        # 前端：cd 到 frontend 目录，置入可靠 Node 到 PATH，启动 npm
-        frontend_cmd_inner = f'cd /d {frontend_dir} && set PATH={node_dir};%PATH% && npm run dev'
+        # 前端：cd 到 frontend 目录，置入可靠 Node 到 PATH，传入端口环境变量，启动 npm
+        frontend_cmd_inner = (
+            f'cd /d {frontend_dir}'
+            f' && set PATH={node_dir};%PATH%'
+            f' && set VITE_API_TARGET=http://localhost:{_BACKEND_PORT}'
+            f' && set VITE_FRONTEND_PORT={_FRONTEND_PORT}'
+            f' && npm run dev'
+        )
         frontend_cmd_vbs = f'cmd /c "{frontend_cmd_inner}"'.replace('"', '""')
 
         # 窗口样式 0 = 隐藏
@@ -193,7 +203,7 @@ class AutostartMode(BaseModel):
 @router.get("/status")
 def get_status():
     """查询各服务运行状态（打包版前后端合并为同一端口）"""
-    backend_up = _port_open(8000)
+    backend_up = _port_open(_BACKEND_PORT)
     if _is_standalone():
         return {
             "backend": backend_up,
@@ -202,7 +212,7 @@ def get_status():
         }
     return {
         "backend": backend_up,
-        "frontend": _port_open(5173),
+        "frontend": _port_open(_FRONTEND_PORT),
         "standalone": False,
     }
 
@@ -243,6 +253,8 @@ class SettingsUpdate(BaseModel):
     max_file_size_mb: int | None = None
     holiday_overrides: dict | None = None
     entry_date: str | None = None
+    backend_port: int | None = None
+    frontend_port: int | None = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -285,6 +297,14 @@ def update_settings(body: SettingsUpdate):
         data["holiday_overrides"] = body.holiday_overrides
     if body.entry_date is not None:
         data["entry_date"] = body.entry_date
+    if body.backend_port is not None:
+        if body.backend_port < 1024 or body.backend_port > 65535:
+            raise HTTPException(400, "backend_port 必须在 1024~65535 之间")
+        data["backend_port"] = body.backend_port
+    if body.frontend_port is not None:
+        if body.frontend_port < 1024 or body.frontend_port > 65535:
+            raise HTTPException(400, "frontend_port 必须在 1024~65535 之间")
+        data["frontend_port"] = body.frontend_port
     return save_settings(data)
 
 
@@ -307,7 +327,7 @@ def update_user_settings(body: UserSettingsUpdate):
 def shutdown():
     """关闭 TaskM 服务（开发版同时 kill 前端端口，2 秒后退出进程）"""
     if not _is_standalone():
-        _kill_port(5173)
+        _kill_port(_FRONTEND_PORT)
     from app.process_manager import shutdown_service
     threading.Timer(2.0, shutdown_service).start()
     return {"status": "shutting_down"}

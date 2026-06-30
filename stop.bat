@@ -4,8 +4,15 @@ title TaskM Stopper
 
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
+
+:: Read current ports from settings.json
 set "BACKEND_PORT=8000"
 set "FRONTEND_PORT=5173"
+for /f "tokens=2 delims=:," %%a in ('findstr /i "backend_port" "%ROOT%\backend\settings.json" 2^>nul') do set "BACKEND_PORT=%%a"
+for /f "tokens=2 delims=:," %%a in ('findstr /i "frontend_port" "%ROOT%\backend\settings.json" 2^>nul') do set "FRONTEND_PORT=%%a"
+set "BACKEND_PORT=%BACKEND_PORT: =%"
+set "FRONTEND_PORT=%FRONTEND_PORT: =%"
+
 set "PID_FILE=%ROOT%\taskm.pid"
 
 echo ========================================
