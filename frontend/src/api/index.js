@@ -244,3 +244,6 @@ export const setBackupSchedule = (data) => http.put('/backup/schedule', data)
 
 export const backupSingleProject = (projectId, includeUploads = true) =>
   http.post('/backup/backup-project', { project_id: projectId, include_uploads: includeUploads })
+
+export const restoreProjectBackup = (filename, mode) =>
+  http.post('/backup/restore-project', { filename, mode })

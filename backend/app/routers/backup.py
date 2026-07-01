@@ -201,6 +201,26 @@ def api_backup_project(body: ProjectExportRequest):
         raise HTTPException(500, f"项目备份失败: {e}")
 
 
+class ProjectRestoreRequest(BaseModel):
+    filename: str
+    mode: str = "overwrite"  # overwrite / new
+
+
+@router.post("/restore-project")
+def api_restore_project(body: ProjectRestoreRequest):
+    """从项目备份 ZIP 还原项目"""
+    try:
+        from ..backup_service import restore_project_backup
+        result = restore_project_backup(body.filename, body.mode)
+        if not result.get("success"):
+            raise HTTPException(400, result.get("error", "还原失败"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"项目还原失败: {e}")
+
+
 # ── 调度配置 ──
 
 @router.get("/schedule")

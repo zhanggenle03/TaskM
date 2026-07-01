@@ -6,6 +6,7 @@ import enum
 import json
 import os
 import shutil
+import sys
 import threading
 import time
 import zipfile
@@ -16,11 +17,15 @@ from typing import Optional
 from sqlalchemy import create_engine, text as sql_text
 from sqlalchemy.orm import Session
 
-from .database import DB_PATH, UPLOAD_DIR, CONFIG_DIR, BASE_DIR
+from .database import DB_PATH, UPLOAD_DIR, CONFIG_DIR, BASE_DIR as APP_BASE_DIR
 from .settings_manager import load_settings, save_settings
 
-# ── 备份存储目录 ──
-BACKUP_DIR = os.path.join(BASE_DIR, "backups")
+# ── 备份存储目录（发行版：用 exe 所在目录，避免 PyInstaller 临时路径） ──
+if getattr(sys, "frozen", False):
+    _BACKUP_BASE = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    _BACKUP_BASE = APP_BASE_DIR
+BACKUP_DIR = os.path.join(_BACKUP_BASE, "backups")
 os.makedirs(BACKUP_DIR, exist_ok=True)
 
 # ── 备份范围 ──
@@ -64,7 +69,7 @@ def create_backup(scope: str = BackupScope.FULL.value) -> str:
             zf.write(DB_PATH, "database/taskm.db")
 
         # ── settings.json ──
-        settings_path = os.path.join(BASE_DIR, "settings.json")
+        settings_path = os.path.join(APP_BASE_DIR, "settings.json")
         if os.path.exists(settings_path):
             zf.write(settings_path, "settings/settings.json")
 
@@ -155,7 +160,8 @@ def restore_backup(backup_path: str, restore_scope: str = "auto") -> dict:
                 restore_scope = "full" if restore_scope == "auto" else restore_scope
 
             # 还原 database
-            if zf.extract("database/taskm.db", BACKUP_DIR):
+            if "database/taskm.db" in [n.replace("\\", "/") for n in zf.namelist()]:
+                zf.extract("database/taskm.db", BACKUP_DIR)
                 db_temp = os.path.join(BACKUP_DIR, "database", "taskm.db")
                 # 备份当前DB做安全快照
                 if os.path.exists(DB_PATH):
@@ -166,12 +172,16 @@ def restore_backup(backup_path: str, restore_scope: str = "auto") -> dict:
                 result["restored"].append("database/taskm.db")
                 # 清理临时目录
                 _clean_temp_db_dir()
+            else:
+                result["error"] = "备份文件中未找到数据库文件（database/taskm.db）"
+                result["success"] = False
+                return result
 
             # 还原 settings
             if "settings/settings.json" in zf.namelist():
                 zf.extract("settings/settings.json", BACKUP_DIR)
                 src = os.path.join(BACKUP_DIR, "settings", "settings.json")
-                dst = os.path.join(BASE_DIR, "settings.json")
+                dst = os.path.join(APP_BASE_DIR, "settings.json")
                 shutil.copy2(src, dst)
                 result["restored"].append("settings/settings.json")
                 # 清理
@@ -185,7 +195,7 @@ def restore_backup(backup_path: str, restore_scope: str = "auto") -> dict:
                         zf.extract(name, BACKUP_DIR)
                         # 移到正确位置
                         src = os.path.join(BACKUP_DIR, name)
-                        dst = os.path.join(BASE_DIR, name)
+                        dst = os.path.join(APP_BASE_DIR, name)
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         shutil.copy2(src, dst)
                         result["restored"].append(name)
@@ -201,7 +211,7 @@ def restore_backup(backup_path: str, restore_scope: str = "auto") -> dict:
                     if name.startswith("uploads/") and not name.endswith("/"):
                         zf.extract(name, BACKUP_DIR)
                         src = os.path.join(BACKUP_DIR, name)
-                        dst = os.path.join(BASE_DIR, name)
+                        dst = os.path.join(APP_BASE_DIR, name)
                         os.makedirs(os.path.dirname(dst), exist_ok=True)
                         shutil.copy2(src, dst)
                         result["restored"].append(name)
@@ -290,7 +300,7 @@ def export_single_project(project_id: int, include_uploads: bool = True) -> Opti
             zf.writestr("project_contacts.json", json.dumps(
                 [{
                     "id": c.id, "name": c.name, "role": c.role,
-                    "contact_info": c.contact_info, "sort_letter": c.sort_letter,
+                    "contact_info": c.contact_info, "sort_letter": getattr(c, "sort_letter", ""),
                     "is_active": c.is_active,
                 } for c in contacts], indent=2, ensure_ascii=False
             ))
@@ -464,9 +474,420 @@ def _pool_dict(p) -> dict:
     """将池模型转为字典"""
     return {
         "id": p.id, "name": p.name, "color": p.color,
-        "sort_order": p.sort_order, "is_default": p.is_default,
+        "sort_order": p.sort_order, "is_default": getattr(p, "is_default", False),
         "is_active": p.is_active,
     }
+
+
+# ═══════════════════════════════════════════════════════════
+#  单项目还原
+# ═══════════════════════════════════════════════════════════
+
+def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
+    """从项目备份 ZIP 中还原项目
+
+    mode: overwrite（覆盖现有项目） / new（新建为新项目）
+    """
+    from .database import SessionLocal
+    from .database import (
+        Project, Task, Communication, Contact, Requirement,
+        StatusPool, CommTypePool, TagPool, ProjectContact,
+        RequirementStatusPool, RequirementPriorityPool,
+        RequirementCustomField, RequirementCustomValue,
+        Checkin, CheckinProject, CheckinTask,
+        Attachment, CommunicationContact, TaskTag, TaskRequirement,
+        generate_project_display_id, generate_task_display_id,
+        generate_requirement_display_id, touch_project,
+    )
+    from sqlalchemy import text as sa_text
+    from datetime import date as dt_date
+
+    filepath = get_backup_path(filename)
+    if not filepath:
+        return {"success": False, "error": "备份文件不存在"}
+
+    result = {"success": True, "mode": mode}
+
+    try:
+        with zipfile.ZipFile(filepath, "r") as zf:
+            namelist = [n.replace("\\", "/") for n in zf.namelist()]
+
+            # ── 读取所有 JSON ──
+            project_data = json.loads(zf.read("project.json"))
+            old_display_id = project_data["display_id"]
+            old_proj_no = old_display_id[1:] if old_display_id.startswith("P") else str(project_data["id"])
+
+            status_pools = json.loads(zf.read("status_pools.json")) if "status_pools.json" in namelist else []
+            comm_type_pools = json.loads(zf.read("comm_type_pools.json")) if "comm_type_pools.json" in namelist else []
+            tag_pools = json.loads(zf.read("tag_pools.json")) if "tag_pools.json" in namelist else []
+            project_contacts = json.loads(zf.read("project_contacts.json")) if "project_contacts.json" in namelist else []
+            req_status_pools = json.loads(zf.read("requirement_status_pools.json")) if "requirement_status_pools.json" in namelist else []
+            req_priority_pools = json.loads(zf.read("requirement_priority_pools.json")) if "requirement_priority_pools.json" in namelist else []
+            req_custom_fields = json.loads(zf.read("requirement_custom_fields.json")) if "requirement_custom_fields.json" in namelist else []
+            tasks = json.loads(zf.read("tasks.json")) if "tasks.json" in namelist else []
+            task_contacts = json.loads(zf.read("task_contacts.json")) if "task_contacts.json" in namelist else []
+            comms = json.loads(zf.read("communications.json")) if "communications.json" in namelist else []
+            comm_contacts = json.loads(zf.read("communication_contacts.json")) if "communication_contacts.json" in namelist else []
+            task_tags = json.loads(zf.read("task_tags.json")) if "task_tags.json" in namelist else []
+            task_reqs = json.loads(zf.read("task_requirements.json")) if "task_requirements.json" in namelist else []
+            atts = json.loads(zf.read("attachments.json")) if "attachments.json" in namelist else []
+            reqs = json.loads(zf.read("requirements.json")) if "requirements.json" in namelist else []
+            req_custom_values = json.loads(zf.read("requirement_custom_values.json")) if "requirement_custom_values.json" in namelist else []
+            checkins = json.loads(zf.read("checkins.json")) if "checkins.json" in namelist else []
+            checkin_projs = json.loads(zf.read("checkin_projects.json")) if "checkin_projects.json" in namelist else []
+            checkin_tasks = json.loads(zf.read("checkin_tasks.json")) if "checkin_tasks.json" in namelist else []
+
+        db: Session = SessionLocal()
+        try:
+            # ── 查找或创建项目 ──
+            project = db.query(Project).filter(
+                Project.display_id == old_display_id
+            ).first()
+
+            if mode == "overwrite" and project:
+                # 删除现有项目（级联删除所有关联数据）
+                db.delete(project)
+                db.commit()
+                project = None
+
+            if not project:
+                # 新建项目
+                prefix = project_data.get("custom_prefix") or ""
+                new_display_id, _ = generate_project_display_id(db, prefix)
+                project = Project(
+                    display_id=new_display_id,
+                    custom_prefix=project_data.get("custom_prefix"),
+                    name=project_data["name"],
+                    description=project_data.get("description", ""),
+                )
+                if project_data.get("start_date"):
+                    try:
+                        project.start_date = dt_date.fromisoformat(project_data["start_date"][:10])
+                    except Exception:
+                        pass
+                db.add(project)
+                db.commit()
+                db.refresh(project)
+                result["new_project_id"] = project.id
+                result["new_display_id"] = project.display_id
+            else:
+                # 覆盖模式下已存在但没删掉的（理论上不会）
+                result["new_project_id"] = project.id
+                result["new_display_id"] = project.display_id
+
+            new_project_id = project.id
+            proj_id_no_p = project.display_id[1:] if project.display_id.startswith("P") else str(project.id)
+
+            # ── ID 映射表（旧ID → 新ID） ──
+            old_status_id_map = {}
+            old_comm_type_id_map = {}
+            old_tag_id_map = {}
+            old_contact_id_map = {}
+            old_req_status_id_map = {}
+            old_req_priority_id_map = {}
+            old_cf_id_map = {}
+            old_task_id_map = {}
+            old_comm_id_map = {}
+            old_req_id_map = {}
+            old_checkin_id_map = {}
+
+            # ── 还原状态池 ──
+            for p in status_pools:
+                new_p = StatusPool(
+                    project_id=new_project_id, name=p["name"],
+                    color=p.get("color", "#5F5E5A"),
+                    sort_order=p.get("sort_order", 0),
+                    is_default=p.get("is_default", False),
+                    is_active=p.get("is_active", True),
+                )
+                db.add(new_p)
+                db.flush()
+                old_status_id_map[p["id"]] = new_p.id
+
+            # ── 还原沟通类型池 ──
+            for p in comm_type_pools:
+                new_p = CommTypePool(
+                    project_id=new_project_id, name=p["name"],
+                    color=p.get("color", "#5F5E5A"),
+                    sort_order=p.get("sort_order", 0),
+                    is_default=p.get("is_default", False),
+                    is_active=p.get("is_active", True),
+                )
+                db.add(new_p)
+                db.flush()
+                old_comm_type_id_map[p["id"]] = new_p.id
+
+            # ── 还原标签池 ──
+            for p in tag_pools:
+                new_p = TagPool(
+                    project_id=new_project_id, name=p["name"],
+                    color=p.get("color", "#5F5E5A"),
+                    sort_order=p.get("sort_order", 0),
+                    is_active=p.get("is_active", True),
+                )
+                db.add(new_p)
+                db.flush()
+                old_tag_id_map[p["id"]] = new_p.id
+
+            # ── 还原项目联系人 ──
+            for c in project_contacts:
+                new_c = ProjectContact(
+                    project_id=new_project_id, name=c["name"],
+                    role=c.get("role", ""),
+                    contact_info=c.get("contact_info", ""),
+                    sort_letter=c.get("sort_letter", ""),
+                    is_active=c.get("is_active", True),
+                )
+                db.add(new_c)
+                db.flush()
+                old_contact_id_map[c["id"]] = new_c.id
+
+            # ── 还原需求状态池 ──
+            for p in req_status_pools:
+                new_p = RequirementStatusPool(
+                    project_id=new_project_id, name=p["name"],
+                    color=p.get("color", "#5F5E5A"),
+                    sort_order=p.get("sort_order", 0),
+                    is_default=p.get("is_default", False),
+                    is_active=p.get("is_active", True),
+                )
+                db.add(new_p)
+                db.flush()
+                old_req_status_id_map[p["id"]] = new_p.id
+
+            # ── 还原需求优先级池 ──
+            for p in req_priority_pools:
+                new_p = RequirementPriorityPool(
+                    project_id=new_project_id, name=p["name"],
+                    color=p.get("color", "#5F5E5A"),
+                    sort_order=p.get("sort_order", 0),
+                    is_default=p.get("is_default", False),
+                    is_active=p.get("is_active", True),
+                )
+                db.add(new_p)
+                db.flush()
+                old_req_priority_id_map[p["id"]] = new_p.id
+
+            # ── 还原自定义字段 ──
+            for f in req_custom_fields:
+                new_f = RequirementCustomField(
+                    project_id=new_project_id,
+                    field_name=f["field_name"],
+                    field_type=f["field_type"],
+                    field_options=f.get("field_options", ""),
+                    sort_order=f.get("sort_order", 0),
+                    is_active=f.get("is_active", True),
+                    is_builtin=f.get("is_builtin", False),
+                )
+                db.add(new_f)
+                db.flush()
+                old_cf_id_map[f["id"]] = new_f.id
+
+            # ── 还原任务 ──
+            for t in tasks:
+                # 新建模式重新生成 display_id
+                if mode == "overwrite":
+                    task_display_id = t.get("display_id") or generate_task_display_id(db, project)
+                else:
+                    task_display_id = generate_task_display_id(db, project)
+                new_t = Task(
+                    project_id=new_project_id,
+                    display_id=task_display_id,
+                    title=t["title"],
+                    description=t.get("description", ""),
+                    status_id=old_status_id_map.get(t.get("status_id")),
+                    priority=t.get("priority", "normal"),
+                    due_date=dt_date.fromisoformat(t["due_date"][:10]) if t.get("due_date") else None,
+                )
+                db.add(new_t)
+                db.flush()
+                old_task_id_map[t["id"]] = new_t.id
+
+            # ── 还原任务对接人 ──
+            for c in task_contacts:
+                new_c = Contact(
+                    task_id=old_task_id_map.get(c["task_id"]),
+                    name=c["name"],
+                    role=c.get("role", ""),
+                    contact_info=c.get("contact_info", ""),
+                    project_contact_id=old_contact_id_map.get(c.get("project_contact_id")),
+                )
+                db.add(new_c)
+                db.flush()
+
+            # ── 还原沟通记录 ──
+            for c in comms:
+                new_c = Communication(
+                    task_id=old_task_id_map.get(c["task_id"]),
+                    contact_id=old_contact_id_map.get(c.get("contact_id")),
+                    content=c["content"],
+                    comm_type=c.get("comm_type", "note"),
+                    old_status_id=old_status_id_map.get(c.get("old_status_id")),
+                    new_status_id=old_status_id_map.get(c.get("new_status_id")),
+                    comm_at=datetime.fromisoformat(c["comm_at"]) if c.get("comm_at") else None,
+                )
+                db.add(new_c)
+                db.flush()
+                old_comm_id_map[c["id"]] = new_c.id
+
+            # ── 还原沟通-对接人关联 ──
+            for link in comm_contacts:
+                new_cc_id = old_comm_id_map.get(link["communication_id"])
+                new_ct_id = old_contact_id_map.get(link["contact_id"])
+                if new_cc_id and new_ct_id:
+                    db.execute(
+                        sa_text(
+                            "INSERT OR IGNORE INTO communication_contacts (communication_id, contact_id) "
+                            "VALUES (:cid, :ctid)"
+                        ),
+                        {"cid": new_cc_id, "ctid": new_ct_id},
+                    )
+
+            # ── 还原任务标签 ──
+            for link in task_tags:
+                new_tid = old_task_id_map.get(link["task_id"])
+                new_tgid = old_tag_id_map.get(link["tag_id"])
+                if new_tid and new_tgid:
+                    db.execute(
+                        sa_text(
+                            "INSERT OR IGNORE INTO task_tags (task_id, tag_id) VALUES (:tid, :tgid)"
+                        ),
+                        {"tid": new_tid, "tgid": new_tgid},
+                    )
+
+            # ── 还原任务需求关联 ──
+            for link in task_reqs:
+                new_tid = old_task_id_map.get(link["task_id"])
+                new_rid = old_req_id_map.get(link["requirement_id"])
+                if new_tid and new_rid:
+                    db.execute(
+                        sa_text(
+                            "INSERT OR IGNORE INTO task_requirements (task_id, requirement_id) VALUES (:tid, :rid)"
+                        ),
+                        {"tid": new_tid, "rid": new_rid},
+                    )
+
+            # ── 还原需求 ──
+            for r in reqs:
+                if mode == "overwrite":
+                    req_display_id = r.get("display_id") or generate_requirement_display_id(db, project)
+                else:
+                    req_display_id = generate_requirement_display_id(db, project)
+                new_r = Requirement(
+                    project_id=new_project_id,
+                    display_id=req_display_id,
+                    title=r["title"],
+                    description=r.get("description", ""),
+                    priority=r.get("priority", "normal"),
+                    status=r.get("status", "todo"),
+                )
+                db.add(new_r)
+                db.flush()
+                old_req_id_map[r["id"]] = new_r.id
+
+            # ── 还原需求自定义值 ──
+            for v in req_custom_values:
+                new_rid = old_req_id_map.get(v["requirement_id"])
+                new_fid = old_cf_id_map.get(v["field_id"])
+                if new_rid and new_fid:
+                    new_v = RequirementCustomValue(
+                        requirement_id=new_rid,
+                        field_id=new_fid,
+                        value=v.get("value", ""),
+                    )
+                    db.add(new_v)
+
+            # ── 还原签到 ──
+            for c in checkins:
+                new_c = Checkin(
+                    date=dt_date.fromisoformat(c["date"][:10]) if c.get("date") else None,
+                    content=c.get("content", ""),
+                    multi_project=c.get("multi_project", False),
+                )
+                db.add(new_c)
+                db.flush()
+                old_checkin_id_map[c["id"]] = new_c.id
+
+            # ── 还原签到-项目关联 ──
+            for link in checkin_projs:
+                new_ckid = old_checkin_id_map.get(link["checkin_id"])
+                if new_ckid:
+                    try:
+                        db.execute(
+                            sa_text(
+                                "INSERT INTO checkin_projects (checkin_id, project_id) VALUES (:ckid, :pid)"
+                            ),
+                            {"ckid": new_ckid, "pid": new_project_id},
+                        )
+                    except Exception:
+                        pass
+
+            # ── 还原签到-任务关联 ──
+            for link in checkin_tasks:
+                new_ckid = old_checkin_id_map.get(link["checkin_id"])
+                new_tid = old_task_id_map.get(link["task_id"])
+                if new_ckid and new_tid:
+                    try:
+                        db.execute(
+                            sa_text(
+                                "INSERT INTO checkin_tasks (checkin_id, task_id) VALUES (:ckid, :tid)"
+                            ),
+                            {"ckid": new_ckid, "tid": new_tid},
+                        )
+                    except Exception:
+                        pass
+
+            # ── 还原附件文件 ──
+            upload_prefix = f"uploads/{old_display_id}/"
+            new_upload_dir = os.path.join(UPLOAD_DIR, project.display_id)
+            file_count = 0
+            for name in namelist:
+                if name.startswith(upload_prefix) and not name.endswith("/"):
+                    # 计算新路径
+                    rel_path = name[len(upload_prefix):]
+                    target = os.path.join(new_upload_dir, rel_path)
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    # 从 ZIP 提取
+                    data = zf.read(name)
+                    with open(target, "wb") as f:
+                        f.write(data)
+                    file_count += 1
+
+            # ── 还原项目配置 ──
+            config_prefix = f"config/{old_display_id}/"
+            new_config_dir = os.path.join(CONFIG_DIR, project.display_id)
+            os.makedirs(new_config_dir, exist_ok=True)
+            for name in namelist:
+                if name.startswith(config_prefix) and not name.endswith("/"):
+                    rel_path = name[len(config_prefix):]
+                    target = os.path.join(new_config_dir, rel_path)
+                    data = zf.read(name)
+                    with open(target, "wb") as f:
+                        f.write(data)
+
+            touch_project(db, new_project_id)
+            db.commit()
+
+            result["project_id"] = new_project_id
+            result["display_id"] = project.display_id
+            result["file_count"] = file_count
+            result["summary"] = (
+                f"项目「{project.name}」还原完成 "
+                f"（{len(status_pools)}状态池+{len(comm_type_pools)}沟通类型+{len(tag_pools)}标签"
+                f"+{len(tasks)}任务+{len(comms)}沟通+{len(reqs)}需求+{len(checkins)}签到）"
+            )
+
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+
+    except Exception as e:
+        result["success"] = False
+        result["error"] = str(e)
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════

@@ -143,22 +143,48 @@
         <!-- 还原备份 -->
         <div class="setting-item">
           <span class="label">还原备份</span>
-          <div class="control">
-            <input ref="restoreInput" type="file" accept=".zip" style="display:none" @change="onRestoreFileChange" />
-            <button class="btn" @click="$refs.restoreInput.click()" :disabled="restoring">
-              {{ restoreFile ? restoreFile.name : '选择备份文件' }}
-            </button>
-            <select class="bk-select" v-model="restoreScope">
-              <option value="auto">自动</option>
-              <option value="full">全部</option>
-              <option value="db_config">数据库+配置</option>
-              <option value="db_only">仅数据库</option>
-            </select>
-            <button class="btn btn-danger" @click="executeRestore" :disabled="!restoreFile || restoring">
+          <div class="tab-bar">
+            <button class="tab-btn" :class="{ active: restoreTab === 'list' }" @click="restoreTab = 'list'">从备份列表</button>
+            <button class="tab-btn" :class="{ active: restoreTab === 'upload' }" @click="restoreTab = 'upload'">上传文件</button>
+          </div>
+          <div class="control" style="margin-top:2px">
+            <template v-if="restoreTab === 'list'">
+              <select class="bk-select" v-model="restoreSelectedFile" style="flex:1;min-width:140px">
+                <option value="">-- 选择备份文件 --</option>
+                <optgroup label="系统备份">
+                  <option v-for="b in systemBackups" :key="b.filename" :value="b.filename">{{ b.filename }}</option>
+                </optgroup>
+                <optgroup label="项目备份">
+                  <option v-for="b in projectBackups" :key="b.filename" :value="b.filename">{{ b.filename }}</option>
+                </optgroup>
+              </select>
+            </template>
+            <template v-else>
+              <input ref="restoreInput" type="file" accept=".zip" style="display:none" @change="onRestoreFileChange" />
+              <button class="btn" @click="$refs.restoreInput.click()" :disabled="restoring">
+                {{ restoreFile ? restoreFile.name : '选择备份文件' }}
+              </button>
+            </template>
+            <template v-if="isProjectBackupSelected">
+              <span class="bk-tag">项目</span>
+              <select class="bk-select" v-model="projectRestoreMode">
+                <option value="overwrite">覆盖</option>
+                <option value="new">新建</option>
+              </select>
+            </template>
+            <template v-else>
+              <select class="bk-select" v-model="restoreScope">
+                <option value="auto">自动</option>
+                <option value="full">全部</option>
+                <option value="db_config">数据库+配置</option>
+                <option value="db_only">仅数据库</option>
+              </select>
+            </template>
+            <button class="btn btn-danger" @click="executeRestore" :disabled="!canRestore || restoring">
               {{ restoring ? '还原中...' : '开始还原' }}
             </button>
           </div>
-          <div class="bk-restore-warn">⚠ 还原将覆盖现有数据，建议先手动备份</div>
+          <div class="bk-restore-warn" v-if="!isProjectBackupSelected">⚠ 还原将覆盖现有数据，建议先手动备份</div>
         </div>
 
       </div>
@@ -283,14 +309,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted, reactive } from 'vue'
+import { ref, onMounted, reactive, computed } from 'vue'
 import http from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   createBackup, listBackups, deleteBackup as apiDeleteBackup,
   getBackupDownloadUrl, restoreBackup,
   exportProjectBackup, getBackupProjects,
-  getBackupSchedule, setBackupSchedule, backupSingleProject,
+  getBackupSchedule, setBackupSchedule, backupSingleProject, restoreProjectBackup,
 } from '../api'
 
 const refreshing = ref(false)
@@ -338,10 +364,29 @@ const bkSchedule = reactive({
 const restoreFile = ref(null)
 const restoreScope = ref('auto')
 const restoring = ref(false)
+const restoreTab = ref('list')
+const restoreSelectedFile = ref('')
+
+const systemBackups = computed(() =>
+  backups.value.filter(b => !b.filename.startsWith('project_'))
+)
+const projectBackups = computed(() =>
+  backups.value.filter(b => b.filename.startsWith('project_'))
+)
+const isProjectBackupSelected = computed(() => {
+  const fn = restoreTab.value === 'list' ? restoreSelectedFile.value : restoreFile.value?.name
+  return fn?.startsWith('project_')
+})
+const canRestore = computed(() => {
+  if (restoreTab.value === 'list') return !!restoreSelectedFile.value
+  return !!restoreFile.value
+})
 const projects = ref([])
 const exportProjectId = ref('')
 const exportIncludeUploads = ref(true)
 const exportingProject = ref(false)
+const projectRestoreMode = ref('overwrite')
+const projectRestoring = ref(false)
 
 function dotClass(val) {
   if (val === null) return 'loading'
@@ -574,40 +619,84 @@ function onRestoreFileChange(e) {
   restoreFile.value = e.target.files?.[0] || null
 }
 
+const restoreInput = ref(null)
+
 async function executeRestore() {
-  if (!restoreFile.value) {
-    ElMessage.warning('请先选择备份文件')
-    return
-  }
-  try {
-    await ElMessageBox.confirm(
-      '⚠️ 还原操作将覆盖当前数据！\n\n建议在还原前先创建一次手动备份。\n确认要继续还原吗？',
-      '危险操作',
-      { confirmButtonText: '确认还原', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch {
-    return
-  }
-  restoring.value = true
-  try {
-    const res = await restoreBackup(restoreFile.value, restoreScope.value)
-    if (res.success) {
-      ElMessage.success(`还原成功！已还原 ${res.restored?.length || 0} 项`)
-      if (res.snapshot) {
-        ElMessage.info(`还原前快照已保存：${res.snapshot}`)
-      }
-    } else {
-      ElMessage.error(`还原失败：${res.error || '未知错误'}`)
+  const isProjectBackup = restoreTab.value === 'list'
+    ? restoreSelectedFile.value?.startsWith('project_')
+    : restoreFile.value?.name?.startsWith('project_')
+
+  if (isProjectBackup) {
+    // ── 项目备份还原 ──
+    const filename = restoreTab.value === 'list'
+      ? restoreSelectedFile.value
+      : restoreFile.value.name
+    if (!filename) {
+      ElMessage.warning('请先选择备份文件')
+      return
     }
-  } catch (err) {
-    ElMessage.error('还原请求失败')
+    try {
+      await ElMessageBox.confirm(
+        projectRestoreMode.value === 'overwrite'
+          ? '⚠️ 将覆盖现有项目！\n\n覆盖模式会查找同 display_id 的项目并完全替换其所有数据。\n确认要继续吗？'
+          : '将新建一个项目导入备份数据。\n确认要继续吗？',
+        '还原项目',
+        { confirmButtonText: '确认还原', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    projectRestoring.value = true
+    try {
+      const res = await restoreProjectBackup(filename, projectRestoreMode.value)
+      ElMessage.success(res.summary || '项目还原成功')
+      refreshBackups()
+    } catch {
+      ElMessage.error('项目还原失败')
+    }
+    projectRestoring.value = false
+  } else {
+    // ── 系统备份还原 ──
+    if (restoreTab.value === 'list') {
+      ElMessage.warning('系统备份暂不支持从列表选择还原，请切换到「上传文件」模式')
+      return
+    }
+    if (!restoreFile.value) {
+      ElMessage.warning('请先选择备份文件')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(
+        '⚠️ 还原操作将覆盖当前数据！\n\n建议在还原前先创建一次手动备份。\n确认要继续吗？',
+        '危险操作',
+        { confirmButtonText: '确认还原', cancelButtonText: '取消', type: 'warning' }
+      )
+    } catch {
+      return
+    }
+    restoring.value = true
+    try {
+      const res = await restoreBackup(restoreFile.value, restoreScope.value)
+      if (res.success) {
+        ElMessage.success(`还原成功！已还原 ${res.restored?.length || 0} 项`)
+        if (res.snapshot) {
+          ElMessage.info(`还原前快照已保存：${res.snapshot}`)
+        }
+      } else {
+        ElMessage.error(`还原失败：${res.error || '未知错误'}`)
+      }
+    } catch (err) {
+      ElMessage.error('还原请求失败')
+    }
+    restoring.value = false
+    restoreFile.value = null
+    if (restoreInput.value) restoreInput.value.value = ''
   }
-  restoring.value = false
-  restoreFile.value = null
-  if (restoreInput.value) restoreInput.value.value = ''
 }
 
-const restoreInput = ref(null)
+function isProjectBackup(filename) {
+  return filename?.startsWith('project_')
+}
 
 async function refreshProjects() {
   try {
@@ -765,6 +854,25 @@ onMounted(() => {
 /* ── 还原警告 ── */
 .bk-restore-warn { font-size: 11px; color: #d97706; margin-top: 2px; }
 
+/* ── 标签切换栏 ── */
+.tab-bar { display: flex; gap: 2px; }
+.tab-btn {
+  border: 1px solid #d1d9e6; background: #fafbfc;
+  padding: 0 10px; border-radius: 30px; font-size: 11px;
+  cursor: pointer; color: #64748b; line-height: 22px;
+  font-family: inherit; transition: 0.15s;
+}
+.tab-btn:hover { background: #eef2f6; }
+.tab-btn.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+
+/* ── 项目备份标记 ── */
+.bk-tag {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  color: #3b82f6; background: #eff6ff;
+  padding: 0 6px; border-radius: 20px; line-height: 20px;
+  white-space: nowrap;
+}
+
 .workspace-path {
   display: inline-flex; align-items: center; gap: 6px;
   background: #f8fafc; border: 1px solid #e2e8f0;
@@ -836,6 +944,8 @@ onMounted(() => {
 }
 .bk-dlg-sep { font-size: 12px; color: #94a3b8; }
 .bk-dlg-hint { font-size: 11px; color: #94a3b8; }
+.bk-restore-info { font-size: 12px; color: #475569; }
+.bk-restore-info code { font-size: 11px; background: #f1f5f9; padding: 1px 6px; border-radius: 4px; }
 
 /* ── 弹窗内备份列表 ── */
 .bk-list {
