@@ -247,3 +247,6 @@ export const backupSingleProject = (projectId, includeUploads = true) =>
 
 export const restoreProjectBackup = (filename, mode) =>
   http.post('/backup/restore-project', { filename, mode })
+
+export const restoreByName = (filename, restoreScope) =>
+  http.post('/backup/restore-by-name', { filename, restore_scope: restoreScope })

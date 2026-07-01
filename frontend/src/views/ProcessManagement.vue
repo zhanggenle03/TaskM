@@ -316,7 +316,7 @@ import {
   createBackup, listBackups, deleteBackup as apiDeleteBackup,
   getBackupDownloadUrl, restoreBackup,
   exportProjectBackup, getBackupProjects,
-  getBackupSchedule, setBackupSchedule, backupSingleProject, restoreProjectBackup,
+  getBackupSchedule, setBackupSchedule, backupSingleProject, restoreProjectBackup, restoreByName,
 } from '../api'
 
 const refreshing = ref(false)
@@ -658,9 +658,35 @@ async function executeRestore() {
   } else {
     // ── 系统备份还原 ──
     if (restoreTab.value === 'list') {
-      ElMessage.warning('系统备份暂不支持从列表选择还原，请切换到「上传文件」模式')
+      // 从列表还原
+      try {
+        await ElMessageBox.confirm(
+          '⚠️ 还原操作将覆盖当前数据！\n\n建议在还原前先创建一次手动备份。\n确认要继续吗？',
+          '危险操作',
+          { confirmButtonText: '确认还原', cancelButtonText: '取消', type: 'warning' }
+        )
+      } catch {
+        return
+      }
+      restoring.value = true
+      try {
+        const res = await restoreByName(restoreSelectedFile.value, restoreScope.value)
+        if (res.success) {
+          ElMessage.success(`还原成功！已还原 ${res.restored?.length || 0} 项`)
+          if (res.snapshot) {
+            ElMessage.info(`还原前快照已保存：${res.snapshot}`)
+          }
+        } else {
+          ElMessage.error(`还原失败：${res.error || '未知错误'}`)
+        }
+      } catch (err) {
+        ElMessage.error('还原请求失败')
+      }
+      restoring.value = false
+      restoreSelectedFile.value = ''
       return
     }
+    // 上传文件还原（原有逻辑）
     if (!restoreFile.value) {
       ElMessage.warning('请先选择备份文件')
       return

@@ -35,6 +35,12 @@ class RestoreRequest(BaseModel):
     restore_scope: str = "auto"  # auto / full / db_config / db_only
 
 
+class RestoreByFilenameRequest(BaseModel):
+    """从备份列表直接还原"""
+    filename: str
+    restore_scope: str = "auto"
+
+
 class ProjectExportRequest(BaseModel):
     project_id: int
     include_uploads: bool = True
@@ -127,6 +133,16 @@ async def api_restore_backup(
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
+
+
+@router.post("/restore-by-name")
+def api_restore_by_name(body: RestoreByFilenameRequest):
+    """从备份目录中的文件直接还原（无需上传）"""
+    fp = get_backup_path(body.filename)
+    if not fp:
+        raise HTTPException(404, "备份文件不存在")
+    result = restore_backup(fp, body.restore_scope)
+    return result
 
 
 @router.post("/export-project")
