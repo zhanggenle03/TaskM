@@ -549,6 +549,9 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                 db.delete(project)
                 db.commit()
                 project = None
+            elif mode == "new":
+                # 新建模式：忽略同名已有项目，强制创建新项目
+                project = None
 
             if not project:
                 # 新建项目
@@ -588,6 +591,7 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
             old_comm_type_id_map = {}
             old_tag_id_map = {}
             old_contact_id_map = {}
+            old_task_contact_id_map = {}  # 任务对接人（Contact表）
             old_req_status_id_map = {}
             old_req_priority_id_map = {}
             old_cf_id_map = {}
@@ -724,12 +728,13 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                 )
                 db.add(new_c)
                 db.flush()
+                old_task_contact_id_map[c["id"]] = new_c.id
 
             # ── 还原沟通记录 ──
             for c in comms:
                 new_c = Communication(
                     task_id=old_task_id_map.get(c["task_id"]),
-                    contact_id=old_contact_id_map.get(c.get("contact_id")),
+                    contact_id=old_task_contact_id_map.get(c.get("contact_id")),
                     content=c["content"],
                     comm_type=c.get("comm_type", "note"),
                     old_status_id=old_status_id_map.get(c.get("old_status_id")),
@@ -743,7 +748,7 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
             # ── 还原沟通-对接人关联 ──
             for link in comm_contacts:
                 new_cc_id = old_comm_id_map.get(link["communication_id"])
-                new_ct_id = old_contact_id_map.get(link["contact_id"])
+                new_ct_id = old_task_contact_id_map.get(link["contact_id"])
                 if new_cc_id and new_ct_id:
                     db.execute(
                         sa_text(
