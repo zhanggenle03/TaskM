@@ -552,8 +552,13 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
 
             if not project:
                 # 新建项目
-                prefix = project_data.get("custom_prefix") or ""
-                new_display_id, _ = generate_project_display_id(db, prefix)
+                if mode == "new":
+                    # 新建模式：生成新 display_id
+                    prefix = project_data.get("custom_prefix") or ""
+                    new_display_id, _ = generate_project_display_id(db, prefix)
+                else:
+                    # 覆盖模式：保留原 display_id
+                    new_display_id = old_display_id
                 project = Project(
                     display_id=new_display_id,
                     custom_prefix=project_data.get("custom_prefix"),
@@ -635,9 +640,14 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                     project_id=new_project_id, name=c["name"],
                     role=c.get("role", ""),
                     contact_info=c.get("contact_info", ""),
-                    sort_letter=c.get("sort_letter", ""),
                     is_active=c.get("is_active", True),
                 )
+                # sort_letter 可能不存在（旧版数据库无此字段）
+                if c.get("sort_letter"):
+                    try:
+                        new_c.sort_letter = c["sort_letter"]
+                    except Exception:
+                        pass
                 db.add(new_c)
                 db.flush()
                 old_contact_id_map[c["id"]] = new_c.id
