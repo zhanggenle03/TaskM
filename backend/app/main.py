@@ -7,7 +7,7 @@ from fastapi import Request
 from .database import Base, engine, UPLOAD_DIR
 from .settings_manager import get_port
 
-from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements
+from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements, backup
 
 
 # ── 从配置读取端口（用于 CORS 白名单） ──
@@ -37,12 +37,25 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[lifespan] 应用自启动失败: {e}", flush=True)
 
+    # 启动备份调度线程
+    try:
+        from .backup_service import start_background_scheduler
+        start_background_scheduler()
+    except Exception as e:
+        print(f"[lifespan] 备份调度线程启动失败: {e}", flush=True)
+
     yield
 
     # ── 关闭时 ──
     try:
         from .process_manager import on_shutdown
         on_shutdown()
+    except Exception:
+        pass
+    # 停止备份调度线程
+    try:
+        from .backup_service import stop_background_scheduler
+        stop_background_scheduler()
     except Exception:
         pass
 
@@ -66,6 +79,7 @@ app.include_router(process.router, prefix="/api")
 app.include_router(project_contacts.router, prefix="/api")
 app.include_router(export_router.router, prefix="/api")
 app.include_router(requirements.router, prefix="/api")
+app.include_router(backup.router, prefix="/api")
 
 # 挂载上传目录为静态文件（供富文本图片等访问）
 import os

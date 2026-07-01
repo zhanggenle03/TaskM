@@ -202,3 +202,45 @@ export const getReqViewState = (projectId) =>
 
 export const saveReqViewState = (projectId, data) =>
   http.put(`/projects/${projectId}/requirements/view-state`, data, { _silentError: true })
+
+// --- Backup & Restore ---
+export const createBackup = (scope) => http.post('/backup/create', { scope })
+
+export const listBackups = () => http.get('/backup/list')
+
+export const downloadBackup = (filename) =>
+  http.get(`/backup/download/${encodeURIComponent(filename)}`, {
+    responseType: 'blob',
+    rawResponse: true,
+  })
+export const getBackupDownloadUrl = (filename) => `/api/backup/download/${encodeURIComponent(filename)}`
+
+export const deleteBackup = (filename) =>
+  http.delete(`/backup/delete/${encodeURIComponent(filename)}`)
+
+export const restoreBackup = (file, restoreScope) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('restore_scope', restoreScope)
+  fd.append('confirm', 'true')
+  return http.post('/backup/restore', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+}
+
+export const exportProjectBackup = (projectId, includeUploads = true) =>
+  http.post('/backup/export-project', { project_id: projectId, include_uploads: includeUploads }, {
+    responseType: 'blob',
+    rawResponse: true,
+    timeout: 120000,
+  })
+
+export const getBackupProjects = () => http.get('/backup/projects')
+
+export const getBackupSchedule = () => http.get('/backup/schedule')
+
+export const setBackupSchedule = (data) => http.put('/backup/schedule', data)
+
+export const backupSingleProject = (projectId, includeUploads = true) =>
+  http.post('/backup/backup-project', { project_id: projectId, include_uploads: includeUploads })
