@@ -15,18 +15,21 @@
             <div class="status-group">
               <template v-if="isStandalone">
                 <span class="status-item">
-                  <span class="status-dot" :class="status.backend ? 'on' : 'off'"></span>
+                  <span class="status-dot" :class="dotClass(status.backend)"></span>
                   TaskM <span class="status-port">{{ backendPort }}</span>
+                  <span v-if="status.backend === null" class="status-text-loading">检测中</span>
                 </span>
               </template>
               <template v-else>
                 <span class="status-item">
-                  <span class="status-dot" :class="status.backend ? 'on' : 'off'"></span>
+                  <span class="status-dot" :class="dotClass(status.backend)"></span>
                   后端 <span class="status-port">{{ backendPort }}</span>
+                  <span v-if="status.backend === null" class="status-text-loading">检测中</span>
                 </span>
                 <span class="status-item">
-                  <span class="status-dot" :class="status.frontend ? 'on' : 'off'"></span>
+                  <span class="status-dot" :class="dotClass(status.frontend)"></span>
                   前端 <span class="status-port">{{ frontendPort }}</span>
+                  <span v-if="status.frontend === null" class="status-text-loading">检测中</span>
                 </span>
               </template>
             </div>
@@ -110,7 +113,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 const refreshing = ref(false)
 const saving = ref(false)
-const status = ref({ backend: false, frontend: false })
+const status = ref({ backend: null, frontend: null })
 const isStandalone = ref(false)
 const autostartEnabled = ref(false)
 
@@ -132,6 +135,11 @@ const workspacePath = ref('')
 
 // ── 关闭服务 ──
 const shuttingDown = ref(false)
+
+function dotClass(val) {
+  if (val === null) return 'loading'
+  return val ? 'on' : 'off'
+}
 
 async function openWorkspace() {
   openingWorkspace.value = true
@@ -345,6 +353,12 @@ onMounted(() => {
 }
 .status-dot.on { background: #22c55e; }
 .status-dot.off { background: #ef4444; }
+.status-dot.loading { background: #94a3b8; animation: pulse-dot 1.2s ease-in-out infinite; }
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.4; transform: scale(0.85); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+.status-text-loading { font-size: 12px; color: #94a3b8; }
 .status-port {
   font-family: monospace; font-size: 12px;
   color: #64748b; background: #f1f4f9;
