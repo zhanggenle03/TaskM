@@ -139,6 +139,7 @@ export const getReqCustomFields = (projectId, params) => http.get(`/projects/${p
 export const createReqCustomField = (projectId, data) => http.post(`/projects/${projectId}/requirements/fields`, data)
 export const updateReqCustomField = (projectId, fieldId, data) => http.put(`/projects/${projectId}/requirements/fields/${fieldId}`, data)
 export const deleteReqCustomField = (projectId, fieldId, config) => http.delete(`/projects/${projectId}/requirements/fields/${fieldId}`, config)
+export const getReqCustomFieldValues = (projectId, fieldId) => http.get(`/projects/${projectId}/requirements/fields/${fieldId}/existing-values`)
 
 // --- Dashboard ---
 export const getDashboardStats = (projectId) => http.get(`/projects/${projectId}/requirements/stats/dashboard`)

@@ -189,6 +189,56 @@ def delete_custom_field(
     return {"message": "ok"}
 
 
+@router.get("/fields/{field_id}/existing-values")
+def get_custom_field_existing_values(
+    project_id: str,
+    field_id: int,
+    db: Session = Depends(get_db),
+):
+    """获取自定义字段在需求列表中已存在的值列表（去重），供自动填充选项使用。"""
+    proj = resolve_project(db, project_id)
+    field = db.query(RequirementCustomField).filter(
+        RequirementCustomField.id == field_id,
+        RequirementCustomField.project_id == proj.id
+    ).first()
+    if not field:
+        raise HTTPException(404, "自定义字段不存在")
+
+    # 查询该字段所有非空的值
+    rows = db.query(RequirementCustomValue.value).filter(
+        RequirementCustomValue.field_id == field_id,
+        RequirementCustomValue.value.isnot(None),
+        RequirementCustomValue.value != "",
+    ).distinct().all()
+
+    values_set: set[str] = set()
+    for (val,) in rows:
+        if not val:
+            continue
+        if field.field_type == "multi_dropdown":
+            # multi_dropdown 值存为 Python 列表字符串，如 "['标签A', '标签B']"
+            raw = val.strip()
+            parsed_items = []
+            if raw.startswith("[") and raw.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(raw)
+                    if isinstance(parsed, (list, tuple)):
+                        parsed_items = [str(item).strip() for item in parsed if str(item).strip()]
+                except (ValueError, SyntaxError):
+                    pass
+            if not parsed_items:
+                parsed_items = [s.strip() for s in raw.split(",") if s.strip()]
+            for item in parsed_items:
+                if item:
+                    values_set.add(item)
+        else:
+            values_set.add(val.strip())
+
+    # 返回排序后的列表
+    result = sorted(values_set)
+    return result
+
+
 # ========== 筛选面板统计 ==========
 
 @router.get("/filter-stats")

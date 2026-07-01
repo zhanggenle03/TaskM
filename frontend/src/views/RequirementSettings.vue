@@ -185,9 +185,14 @@
               <el-color-picker v-model="opt.color" size="small" />
               <el-button size="small" text type="danger" @click="optionRows.splice(i, 1)"><el-icon><Delete /></el-icon></el-button>
             </div>
-            <el-button size="small" type="primary" plain @click="optionRows.push({label: '', color: DEFAULT_OPTION_COLOR()})">
-              <el-icon><Plus /></el-icon> 添加选项
-            </el-button>
+            <div class="option-actions">
+              <el-button size="small" type="primary" plain @click="optionRows.push({label: '', color: DEFAULT_OPTION_COLOR()})">
+                <el-icon><Plus /></el-icon> 添加选项
+              </el-button>
+              <el-button size="small" plain @click="autoDetectOptions">
+                <el-icon><Search /></el-icon> 自动识别
+              </el-button>
+            </div>
           </div>
         </el-form-item>
       </el-form>
@@ -224,6 +229,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getReqCustomFields, createReqCustomField, updateReqCustomField, deleteReqCustomField,
+  getReqCustomFieldValues,
   getReqStatusPools, createReqStatusPool, updateReqStatusPool, deleteReqStatusPool,
   getReqPriorityPools, createReqPriorityPool, updateReqPriorityPool, deleteReqPriorityPool,
 } from '../api/index.js'
@@ -354,6 +360,33 @@ async function submitField() {
     await load()
   } finally {
     fieldLoading.value = false
+  }
+}
+
+async function autoDetectOptions() {
+  if (!editingField.value) {
+    ElMessage.info('请先保存字段，然后编辑时使用自动识别')
+    return
+  }
+  try {
+    const values = await getReqCustomFieldValues(projectId, editingField.value.id)
+    if (!values || values.length === 0) {
+      ElMessage.info('未识别到已有的值')
+      return
+    }
+    // 去重合并：跳过已有 label 相同的选项
+    const existingLabels = new Set(optionRows.value.map(r => r.label.trim()).filter(Boolean))
+    let added = 0
+    for (const v of values) {
+      if (!existingLabels.has(v)) {
+        optionRows.value.push({ label: v, color: DEFAULT_OPTION_COLOR() })
+        existingLabels.add(v)
+        added++
+      }
+    }
+    ElMessage.success(`已自动添加 ${added} 个选项`)
+  } catch {
+    ElMessage.error('自动识别失败')
   }
 }
 
@@ -596,4 +629,5 @@ async function onPriorityDrop(i) {
 .item-name { font-size: 14px; font-weight: 500; min-width: 80px; }
 .option-list { display: flex; flex-direction: column; gap: 6px; }
 .option-row { display: flex; align-items: center; gap: 8px; }
+.option-actions { display: flex; align-items: center; gap: 8px; }
 </style>
