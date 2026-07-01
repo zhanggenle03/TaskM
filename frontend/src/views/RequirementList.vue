@@ -2078,6 +2078,16 @@ onMounted(async () => {
     if (query.status) initial.status = [query.status]
     if (query.priority) initial.priority = [query.priority]
     columnFilters.value = initial
+  } else if (query.column_filters) {
+    try {
+      const cf = JSON.parse(query.column_filters)
+      columnFilters.value = { ...cf }
+    } catch { /* ignore */ }
+  } else if (query.fuzzy_filters) {
+    try {
+      const ff = JSON.parse(query.fuzzy_filters)
+      fuzzyFilters.value = { ...ff }
+    } catch { /* ignore */ }
   }
 
   // 从服务端恢复排序和筛选状态
@@ -2090,7 +2100,7 @@ onMounted(async () => {
       if (vs.columnFilters && !Object.keys(columnFilters.value).length) {
         columnFilters.value = vs.columnFilters || {}
       }
-      if (vs.fuzzyFilters) {
+      if (vs.fuzzyFilters && Object.keys(vs.fuzzyFilters).length && !Object.keys(fuzzyFilters.value).length) {
         fuzzyFilters.value = vs.fuzzyFilters || {}
       }
     }

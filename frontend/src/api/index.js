@@ -147,6 +147,9 @@ export const getKanbanConfig = (projectId) => http.get(`/projects/${projectId}/t
 export const putKanbanConfig = (projectId, data) => http.put(`/projects/${projectId}/tasks/kanban-config`, data)
 export const getTaskSortConfig = (projectId) => http.get(`/projects/${projectId}/tasks/sort-config`, { _silentError: true })
 export const putTaskSortConfig = (projectId, data) => http.put(`/projects/${projectId}/tasks/sort-config`, data)
+// --- Dashboard 需求字段选择配置 ---
+export const getReqKanbanConfig = (projectId) => http.get(`/projects/${projectId}/requirements/kanban-config`, { _silentError: true })
+export const putReqKanbanConfig = (projectId, data) => http.put(`/projects/${projectId}/requirements/kanban-config`, data)
 
 // --- Requirement Status Pools ---
 export const getReqStatusPools = (projectId, params) => http.get(`/projects/${projectId}/requirements/status-pools`, { params })

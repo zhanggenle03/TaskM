@@ -106,8 +106,18 @@
           <el-empty v-else description="暂无数据" :image-size="36" />
         </div>
         <div class="sidebar-chart-item">
-          <div class="sidebar-chart-title">需求优先级分布</div>
-          <v-chart v-if="priorityChartData.length" :option="priorityBarOption" autoresize class="sidebar-chart-box" @click="handlePriorityClick" />
+          <div class="sidebar-chart-title-row">
+            <span class="sidebar-chart-title">需求{{ selectedFieldLabel }}分布</span>
+            <el-select v-model="chartField" size="small" style="width: 120px" @change="onChartFieldChange">
+              <el-option
+                v-for="opt in chartFieldOptions"
+                :key="opt.key"
+                :label="opt.label"
+                :value="opt.key"
+              />
+            </el-select>
+          </div>
+          <v-chart ref="distChartRef" v-if="distributionChartData.length" :option="distributionBarOption" autoresize class="sidebar-chart-box" />
           <el-empty v-else description="暂无数据" :image-size="36" />
         </div>
       </div>
@@ -116,13 +126,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Refresh, Setting, User, Calendar, Timer } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import VChart from 'vue-echarts'
 import * as echarts from 'echarts'
-import { getDashboardStats, getProject, getKanbanTasks, getKanbanConfig, putKanbanConfig, getStatuses } from '../api/index.js'
+import { getDashboardStats, getProject, getKanbanTasks, getKanbanConfig, putKanbanConfig, getStatuses, getReqKanbanConfig, putReqKanbanConfig } from '../api/index.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -135,6 +145,10 @@ const refreshing = ref(false)
 const lastUpdateTime = ref(dayjs().format('HH:mm:ss'))
 const autoRefresh = ref(0)
 let refreshTimer = null
+
+// 需求分布图表字段选择
+const chartField = ref('priority')  // 当前选中的字段 key
+const chartFieldOptions = ref([])   // 下拉选项 [{key, label}]
 
 // 状态池列表（独立于任务存在，用于配置弹窗和栏位初始化）
 const statusesList = ref([])
@@ -225,13 +239,52 @@ function handleStatusClick(params) {
   router.push({ name: 'requirements', params: { projectId }, query: { status: params.name } })
 }
 
-function handlePriorityClick(params) {
-  router.push({ name: 'requirements', params: { projectId }, query: { priority: params.name } })
-}
-
 // ---- 右侧图表 ----
 const statusChartData = computed(() => dashboardData.value.status_distribution || [])
-const priorityChartData = computed(() => dashboardData.value.priority_distribution || [])
+
+// 分布图表 ref，用于全局点击（无论点在柱子还是空白区）
+const distChartRef = ref(null)
+let distChartZrHandler = null
+
+// 根据像素坐标找到最近分类名并跳转
+function navigateByChartPixel(event) {
+  const chart = distChartRef.value?.chart
+  if (!chart || !event) return
+  const pos = [event.offsetX, event.offsetY]
+  // 只在 grid 区域内响应
+  if (!chart.containPixel('grid', pos)) return
+  // 将像素转为数据坐标
+  const point = chart.convertFromPixel({ seriesIndex: 0 }, pos)
+  if (!point || point[0] == null) return
+  const idx = Math.round(point[0])
+  const option = chart.getOption()
+  const categories = option.xAxis?.[0]?.data
+  if (!categories || !categories[idx]) return
+  const name = String(categories[idx])
+  if (!name) return
+
+  const key = chartField.value
+  if (key === 'priority') {
+    router.push({ name: 'requirements', params: { projectId }, query: { priority: name } })
+  } else if (key === 'status') {
+    router.push({ name: 'requirements', params: { projectId }, query: { status: name } })
+  } else if (key.startsWith('cf_')) {
+    const filters = {}
+    filters[key] = { text: name, mode: 'include' }
+    router.push({ name: 'requirements', params: { projectId }, query: { fuzzy_filters: JSON.stringify(filters) } })
+  }
+}
+
+// 根据 chartField 动态读取对应的分布数据
+const distributionChartData = computed(() => {
+  const data = dashboardData.value
+  const key = chartField.value
+  if (key === 'priority') return data.priority_distribution || []
+  if (key === 'status') return data.status_distribution || []
+  // 自定义字段 distribution
+  const extra = data.extra_distributions || {}
+  return extra[key] || []
+})
 
 const statusPieOption = computed(() => ({
   tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
@@ -240,25 +293,43 @@ const statusPieOption = computed(() => ({
     type: 'pie', radius: ['35%', '60%'], center: ['50%', '50%'],
     avoidLabelOverlap: true,
     itemStyle: { borderRadius: 6, borderColor: '#fff', borderWidth: 2 },
-    label: { show: true, formatter: '{b}\n{c}', fontSize: 11 },
+    label: { show: true, formatter: '{b}\n{c}', fontSize: 11, triggerEvent: true },
     emphasis: { label: { show: true, fontSize: 14, fontWeight: 'bold' } },
     data: statusChartData.value.map(d => ({ name: d.name, value: d.value })),
   }]
 }))
 
-const priorityBarOption = computed(() => {
-  const order = ['低', '普通', '高', '紧急']
-  const sorted = [...priorityChartData.value].sort(
-    (a, b) => order.indexOf(a.name) - order.indexOf(b.name)
-  )
+const distributionBarOption = computed(() => {
+  const data = distributionChartData.value
+  // 优先级自定义排序，其他字段按值降序排列
+  let sorted
+  if (chartField.value === 'priority') {
+    const order = ['低', '普通', '高', '紧急']
+    sorted = [...data].sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name))
+  } else {
+    sorted = [...data].sort((a, b) => b.value - a.value)
+  }
   return {
     tooltip: { trigger: 'axis' },
     grid: { left: 40, right: 20, top: 20, bottom: 30 },
-    xAxis: { type: 'category', data: sorted.map(d => d.name), axisLabel: { fontSize: 11 } },
+    xAxis: { type: 'category', data: sorted.map(d => d.name), triggerEvent: true, axisLabel: { fontSize: 11 } },
     yAxis: { type: 'value', minInterval: 1 },
     series: [{ type: 'bar', data: sorted.map(d => d.value), itemStyle: { borderRadius: [4, 4, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#534ab7' }, { offset: 1, color: '#7c73e6' }]) }, barWidth: '50%' }],
   }
 })
+
+// 当前选中字段的显示名称
+const selectedFieldLabel = computed(() => {
+  const opt = chartFieldOptions.value.find(o => o.key === chartField.value)
+  return opt ? opt.label : '字段'
+})
+
+// 切换字段 → 持久化
+async function onChartFieldChange() {
+  try {
+    await putReqKanbanConfig(projectId, { dashboard_chart_field: chartField.value })
+  } catch {}
+}
 
 // ---- 数据加载 ----
 async function loadData() {
@@ -273,11 +344,37 @@ async function loadData() {
     statusesList.value = statuses || []
     lastUpdateTime.value = dayjs().format('HH:mm:ss')
 
+    // 设置图表字段下拉选项
+    chartFieldOptions.value = stats?.available_chart_fields || []
+
+    // 加载已保存的图表字段选择
+    try {
+      const saved = await getReqKanbanConfig(projectId)
+      if (saved?.dashboard_chart_field) {
+        // 验证该字段仍可用
+        const valid = chartFieldOptions.value.some(o => o.key === saved.dashboard_chart_field)
+        if (valid) {
+          chartField.value = saved.dashboard_chart_field
+        }
+      }
+    } catch {}
+
     // 首次加载时初始化栏配置（不受任务数影响）
     if (!columnDefs.value.length) {
       initColumnDefs()
     }
+
+    // 绑定分布图表 zrender 全局点击（柱子/标签/空白区均可触发）
+    await nextTick()
+    bindDistChartClick()
   } catch {}
+}
+
+function bindDistChartClick() {
+  const chart = distChartRef.value?.chart
+  if (!chart || distChartZrHandler) return
+  distChartZrHandler = (event) => navigateByChartPixel(event)
+  chart.getZr().on('click', distChartZrHandler)
 }
 
 async function refreshData() {
@@ -310,6 +407,14 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   clearInterval(refreshTimer)
+  // 清理 zrender 全局点击监听
+  if (distChartZrHandler) {
+    const chart = distChartRef.value?.chart
+    if (chart) {
+      chart.getZr().off('click', distChartZrHandler)
+    }
+    distChartZrHandler = null
+  }
 })
 </script>
 
@@ -383,6 +488,12 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 600;
   color: #555;
+  flex-shrink: 0;
+}
+.sidebar-chart-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 12px;
   flex-shrink: 0;
 }

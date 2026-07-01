@@ -230,8 +230,17 @@ def put_kanban_config(project_id: str, body: dict, db: Session = Depends(get_db)
     proj = resolve_project(db, project_id)
     p = _kanban_config_path(proj)
     os.makedirs(os.path.dirname(p), exist_ok=True)
+    # 读取现有配置，合并新数据，保留其他 key（如 dashboard_chart_field）
+    existing = {}
+    if os.path.isfile(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                existing = json.load(f)
+        except:
+            pass
+    existing.update(body)
     with open(p, "w", encoding="utf-8") as f:
-        json.dump(body, f, ensure_ascii=False, indent=2)
+        json.dump(existing, f, ensure_ascii=False, indent=2)
     return {"ok": True}
 
 

@@ -426,11 +426,19 @@ class ProjectProgress(BaseModel):
     value: int
     color: str
 
+class DistributionItem(BaseModel):
+    name: str
+    value: int
+
 class DashboardData(BaseModel):
     status_distribution: List[StatusDistribution] = []
     priority_distribution: List[PriorityDistribution] = []
     project_progress: List[ProjectProgress] = []
     trend: List[TrendPoint] = []
+    extra_distributions: dict[str, list[DistributionItem]] = {}
+    """自定义字段分布，key=字段名, value=分布列表"""
+    available_chart_fields: list[dict] = []
+    """可用于图表展示的字段列表 [{key, label}]"""
 
 
 # ---- Requirement Status Pool ----

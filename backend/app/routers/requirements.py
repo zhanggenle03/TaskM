@@ -5,7 +5,7 @@ from sqlalchemy import func, case, select, or_
 from typing import List, Optional, Dict
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-import json, os, uuid, io, urllib.parse, re
+import json, os, uuid, io, urllib.parse, re, ast
 from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -23,7 +23,7 @@ from ..schemas import (
     RequirementStatusPoolCreate, RequirementStatusPoolUpdate, RequirementStatusPoolOut,
     RequirementPriorityPoolCreate, RequirementPriorityPoolUpdate, RequirementPriorityPoolOut,
     StatusDistribution, PriorityDistribution, TrendPoint,
-    ProjectProgress, DashboardData,
+    ProjectProgress, DashboardData, DistributionItem,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/requirements", tags=["requirements"])
@@ -460,12 +460,107 @@ def dashboard_stats(
             count=count,
         ))
 
+    # 5. 自定义字段分布（dropdown/multi_dropdown 类型）
+    custom_fields = db.query(RequirementCustomField).filter(
+        RequirementCustomField.project_id == proj.id,
+        RequirementCustomField.is_active == True,
+        RequirementCustomField.field_type.in_(["dropdown", "multi_dropdown"]),
+        # 排除与内置字段同名的自定义字段，避免下拉框重复
+        ~RequirementCustomField.field_name.in_(list(BUILTIN_FIELD_NAMES)),
+    ).all()
+
+    extra_distributions: dict[str, list[DistributionItem]] = {}
+    available_chart_fields: list[dict] = [
+        {"key": "priority", "label": "优先级"},
+        {"key": "status", "label": "状态"},
+    ]
+
+    # 获取所有需求的 custom_values，按 field_id 分组
+    all_cvs = db.query(RequirementCustomValue).options(
+        joinedload(RequirementCustomValue.field)
+    ).filter(
+        RequirementCustomValue.field_id.in_([f.id for f in custom_fields]),
+    ).all()
+    cv_by_field: dict[int, list[str]] = defaultdict(list)
+    for cv in all_cvs:
+        values = cv.value or ""
+        if cv.field.field_type == "multi_dropdown":
+            # multi_dropdown 值存为 Python 列表字符串，如 "['标签A', '标签B']"
+            raw = values.strip()
+            parsed_items = []
+            # 优先用 ast.literal_eval 解析（最可靠）
+            if raw.startswith("[") and raw.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(raw)
+                    if isinstance(parsed, (list, tuple)):
+                        parsed_items = [str(item).strip() for item in parsed if str(item).strip()]
+                except (ValueError, SyntaxError):
+                    pass
+            # 降级：逗号拆分（兼容其他存储格式）
+            if not parsed_items:
+                parsed_items = [s.strip() for s in raw.split(",") if s.strip()]
+            for item in parsed_items:
+                cv_by_field[cv.field_id].append(item)
+        else:
+            cv_by_field[cv.field_id].append(values)
+
+    for f in custom_fields:
+        available_chart_fields.append({"key": f"cf_{f.id}", "label": f.field_name})
+        counter: dict[str, int] = defaultdict(int)
+        for val in cv_by_field.get(f.id, []):
+            if val.strip():
+                counter[val.strip()] += 1
+        extra_distributions[f"cf_{f.id}"] = [
+            DistributionItem(name=k, value=v) for k, v in counter.items()
+        ]
+
     return DashboardData(
         status_distribution=status_distribution,
         priority_distribution=priority_distribution,
         project_progress=project_progress,
         trend=trend_data,
+        extra_distributions=extra_distributions,
+        available_chart_fields=available_chart_fields,
     )
+
+
+# ----  Dashboard 看板配置（kanban.json） ----
+
+def _dashboard_kanban_config_path(proj):
+    d = os.path.join(CONFIG_DIR, proj.display_id)
+    return os.path.join(d, "kanban.json")
+
+
+@router.get("/kanban-config")
+def get_req_kanban_config(project_id: str, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    p = _dashboard_kanban_config_path(proj)
+    if not os.path.isfile(p):
+        return {}
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+@router.put("/kanban-config")
+def put_req_kanban_config(project_id: str, body: dict, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    p = _dashboard_kanban_config_path(proj)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    # 读取现有配置，合并新数据，保留已有 key（如 task kanban 的列配置）
+    existing = {}
+    if os.path.isfile(p):
+        try:
+            with open(p, encoding="utf-8") as f:
+                existing = json.load(f)
+        except:
+            pass
+    existing.update(body)
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(existing, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
 
 
 # ========== 辅助函数 ==========
