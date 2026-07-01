@@ -248,5 +248,15 @@ export const backupSingleProject = (projectId, includeUploads = true) =>
 export const restoreProjectBackup = (filename, mode) =>
   http.post('/backup/restore-project', { filename, mode })
 
+export const restoreProjectBackupUpload = (file, mode) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('mode', mode)
+  return http.post('/backup/restore-project-upload', fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+}
+
 export const restoreByName = (filename, restoreScope) =>
   http.post('/backup/restore-by-name', { filename, restore_scope: restoreScope })

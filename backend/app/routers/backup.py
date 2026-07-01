@@ -224,10 +224,38 @@ class ProjectRestoreRequest(BaseModel):
 
 @router.post("/restore-project")
 def api_restore_project(body: ProjectRestoreRequest):
-    """从项目备份 ZIP 还原项目"""
+    """从项目备份 ZIP 还原项目（按文件名）"""
     try:
         from ..backup_service import restore_project_backup
         result = restore_project_backup(body.filename, body.mode)
+        if not result.get("success"):
+            raise HTTPException(400, result.get("error", "还原失败"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"项目还原失败: {e}")
+
+
+@router.post("/restore-project-upload")
+async def api_restore_project_upload(
+    file: UploadFile = File(...),
+    mode: str = Form("overwrite"),
+):
+    """上传项目备份 ZIP 并还原"""
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(400, "请上传 .zip 备份文件")
+
+    # 先保存到备份目录
+    safe_name = file.filename.replace("\\", "/").split("/")[-1]
+    saved_path = os.path.join(BACKUP_DIR, safe_name)
+    try:
+        content = await file.read()
+        with open(saved_path, "wb") as f:
+            f.write(content)
+
+        from ..backup_service import restore_project_backup
+        result = restore_project_backup(safe_name, mode)
         if not result.get("success"):
             raise HTTPException(400, result.get("error", "还原失败"))
         return result

@@ -316,7 +316,7 @@ import {
   createBackup, listBackups, deleteBackup as apiDeleteBackup,
   getBackupDownloadUrl, restoreBackup,
   exportProjectBackup, getBackupProjects,
-  getBackupSchedule, setBackupSchedule, backupSingleProject, restoreProjectBackup, restoreByName,
+  getBackupSchedule, setBackupSchedule, backupSingleProject, restoreProjectBackup, restoreProjectBackupUpload, restoreByName,
 } from '../api'
 
 const refreshing = ref(false)
@@ -648,13 +648,24 @@ async function executeRestore() {
     }
     projectRestoring.value = true
     try {
-      const res = await restoreProjectBackup(filename, projectRestoreMode.value)
+      let res
+      if (restoreTab.value === 'list') {
+        res = await restoreProjectBackup(filename, projectRestoreMode.value)
+      } else {
+        res = await restoreProjectBackupUpload(restoreFile.value, projectRestoreMode.value)
+      }
       ElMessage.success(res.summary || '项目还原成功')
       refreshBackups()
-    } catch {
-      ElMessage.error('项目还原失败')
+    } catch (err) {
+      const msg = err?.response?.data?.detail || '项目还原失败'
+      ElMessage.error(typeof msg === 'string' ? msg : JSON.stringify(msg))
     }
     projectRestoring.value = false
+    restoreSelectedFile.value = ''
+    if (restoreTab.value === 'upload') {
+      restoreFile.value = null
+      if (restoreInput.value) restoreInput.value.value = ''
+    }
   } else {
     // ── 系统备份还原 ──
     if (restoreTab.value === 'list') {
