@@ -1229,8 +1229,11 @@ const bqBorderColorMap = Object.fromEntries(BQ_PRESETS.map(p => [p.value, p.bord
  */
 const bqColorStore = reactive({})
 
-/** 规范化文本：去空白，截断为稳定键 */
-const _bqKey = (text) => (text || '').replace(/\s+/g, '').slice(0, 80)
+/** 规范化文本：去空白 + 零宽字符 + 控制字符，截断为稳定键 */
+const _bqKey = (text) => (text || '')
+  .replace(/[\s\uFEFF\u200B-\u200D\u2060\u200E\u200F]/g, '')
+  .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+  .slice(0, 80)
 
 /** 将 bqColorStore 的颜色同步到编辑器 DOM 中所有 blockquote（Slate 重建 DOM 后恢复） */
 const syncBqColorsToDom = () => {
@@ -1244,13 +1247,21 @@ const syncBqColorsToDom = () => {
     const bqs = container.querySelectorAll('blockquote')
     for (const bq of bqs) {
       const text = (bq.textContent || '').trim()
-      // 精确匹配优先
+      // 精确匹配优先（_bqKey 已清洗零宽字符）
       let key = _bqKey(text)
       let entry = bqColorStore[key]
       // 模糊匹配：查找 store 中以 bq 文本开头或 bq 文本以 store key 开头的项
       if (!entry && text.length > 3) {
         for (const [k, v] of Object.entries(bqColorStore)) {
           if (k.startsWith(key) || key.startsWith(k)) { entry = v; break }
+        }
+      }
+      // 兼容兜底：旧版 store key 可能残留零宽字符，用清洗后的 key 再查一遍
+      if (!entry) {
+        const cleanStoreKey = _bqKey(key)
+        for (const [k, v] of Object.entries(bqColorStore)) {
+          const cleanK = _bqKey(k)
+          if (cleanK === cleanStoreKey || cleanK.startsWith(cleanStoreKey) || cleanStoreKey.startsWith(cleanK)) { entry = v; break }
         }
       }
       if (entry) {
@@ -1284,6 +1295,14 @@ const injectBqColorsToHtml = (html) => {
     if (!entry && text.length > 3) {
       for (const [k, v] of Object.entries(bqColorStore)) {
         if (k.startsWith(key) || key.startsWith(k)) { entry = v; break }
+      }
+    }
+    // 兼容兜底：旧版 store key 可能残留零宽字符
+    if (!entry) {
+      const cleanStoreKey = _bqKey(key)
+      for (const [k, v] of Object.entries(bqColorStore)) {
+        const cleanK = _bqKey(k)
+        if (cleanK === cleanStoreKey || cleanK.startsWith(cleanStoreKey) || cleanStoreKey.startsWith(cleanK)) { entry = v; break }
       }
     }
     if (entry) {
