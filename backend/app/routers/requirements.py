@@ -1536,6 +1536,7 @@ def update_requirement(
         req.status = data.status
 
     # 更新自定义字段值
+    _custom_values_changed = False
     if data.custom_values is not None:
         for field_id_str, value in data.custom_values.items():
             try:
@@ -1549,8 +1550,10 @@ def update_requirement(
             if existing:
                 if value is not None and value != "":
                     existing.value = str(value)
+                    _custom_values_changed = True
                 else:
                     db.delete(existing)
+                    _custom_values_changed = True
             else:
                 if value is not None and value != "":
                     cv = RequirementCustomValue(
@@ -1559,6 +1562,11 @@ def update_requirement(
                         value=str(value),
                     )
                     db.add(cv)
+                    _custom_values_changed = True
+
+    # 自定义字段变动时手动刷新 updated_at（ORM onupdate 无法感知关联表变动）
+    if _custom_values_changed:
+        req.updated_at = datetime.now()
 
     db.commit()
     db.refresh(req)
