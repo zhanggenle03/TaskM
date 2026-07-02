@@ -909,50 +909,85 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
 #  定时备份调度
 # ═══════════════════════════════════════════════════════════
 
+# ── 频率 → 间隔映射 ──
+FREQUENCY_TO_HOURS = {
+    "daily": 24,
+    "weekly": 168,
+    "monthly": 720,
+    "manual": 0,
+}
+
 DEFAULT_SCHEDULE = {
     "enabled": False,
     "frequency": "daily",      # daily / weekly / monthly / manual
     "scope": "full",
     "max_keep": 10,
-    "hour": 3,                 # 凌晨 3 点
-    "day_of_week": 0,          # 周一（weekly）
-    "day_of_month": 1,         # 1 号（monthly）
+    "interval_hours": 24,      # 由 frequency 自动映射，也可手工设置
+    "last_backup_at": None,    # ISO 格式的上次备份时间戳
 }
 
 
+def _migrate_schedule(schedule: dict) -> dict:
+    """向后兼容：旧配置含 hour/day_of_week/day_of_month → 迁移到 interval_hours"""
+    if "interval_hours" in schedule:
+        return schedule  # 已是最新格式
+    freq = schedule.get("frequency", "daily")
+    schedule["interval_hours"] = FREQUENCY_TO_HOURS.get(freq, 24)
+    schedule["last_backup_at"] = None
+    # 清理旧字段
+    schedule.pop("hour", None)
+    schedule.pop("day_of_week", None)
+    schedule.pop("day_of_month", None)
+    return schedule
+
+
 def get_backup_schedule() -> dict:
-    """读取备份调度配置"""
+    """读取备份调度配置（自动迁移旧格式）"""
     settings = load_settings()
-    return settings.get("backup_schedule", dict(DEFAULT_SCHEDULE))
+    raw = settings.get("backup_schedule", dict(DEFAULT_SCHEDULE))
+    return _migrate_schedule(raw)
 
 
 def set_backup_schedule(schedule: dict) -> dict:
     """保存备份调度配置"""
     current = get_backup_schedule()
     current.update(schedule)
+    # 根据 frequency 自动更新 interval_hours（除非调用方显式传入了 interval_hours）
+    freq = current.get("frequency", "daily")
+    if "interval_hours" not in schedule:
+        current["interval_hours"] = FREQUENCY_TO_HOURS.get(freq, 24)
+    # 清理旧字段（防残留）
+    current.pop("hour", None)
+    current.pop("day_of_week", None)
+    current.pop("day_of_month", None)
     save_settings({"backup_schedule": current})
     return current
 
 
-def _should_run_now(schedule: dict) -> bool:
-    """检查当前时间是否到达了备份时刻"""
+def _is_overdue(schedule: dict) -> bool:
+    """检查上次备份是否已过期（距上次备份 >= interval_hours）"""
     if not schedule.get("enabled"):
         return False
+    interval = schedule.get("interval_hours", 24)
+    if interval <= 0:
+        return False  # manual 不自动触发
+    last_str = schedule.get("last_backup_at")
+    if not last_str:
+        return True  # 从未备份 → 立即执行
+    try:
+        last_dt = datetime.fromisoformat(last_str)
+    except (ValueError, TypeError):
+        return True
+    return (datetime.now() - last_dt) >= timedelta(hours=interval)
 
-    now = datetime.now()
-    frequency = schedule.get("frequency", "manual")
-    hour = schedule.get("hour", 3)
 
-    if frequency == "manual":
-        return False
-    if frequency == "daily":
-        return now.hour == hour
-    if frequency == "weekly":
-        return now.hour == hour and now.weekday() == schedule.get("day_of_week", 0)
-    if frequency == "monthly":
-        return now.hour == hour and now.day == schedule.get("day_of_month", 1)
-
-    return False
+def update_last_backup_at(timestamp: str | None = None):
+    """更新上次备份时间戳（备份成功后调用）"""
+    if timestamp is None:
+        timestamp = datetime.now().isoformat()
+    schedule = get_backup_schedule()
+    schedule["last_backup_at"] = timestamp
+    save_settings({"backup_schedule": schedule})
 
 
 def _cleanup_old_backups(max_keep: int):
@@ -967,36 +1002,42 @@ def _cleanup_old_backups(max_keep: int):
 
 
 def _run_scheduled_backup():
-    """执行一次定时备份"""
+    """执行一次定时备份，成功后更新 last_backup_at"""
     schedule = get_backup_schedule()
     if not schedule.get("enabled"):
         return
     try:
         filepath = create_backup(schedule.get("scope", "full"))
         _cleanup_old_backups(schedule.get("max_keep", 10))
+        update_last_backup_at()
         print(f"[backup] 定时备份完成: {filepath}", flush=True)
     except Exception as e:
         print(f"[backup] 定时备份失败: {e}", flush=True)
 
 
 def start_background_scheduler(interval_seconds: int = 3600):
-    """启动后台备份调度线程（每小时检查一次）"""
+    """启动后台备份调度线程（每小时检查一次，启动时先检查是否过期）"""
     global _background_thread, _stop_event
     if _background_thread and _background_thread.is_alive():
         return
 
     _stop_event.clear()
 
+    # 启动时立即检查：如果距上次备份已超过间隔，补执行
+    try:
+        if _is_overdue(get_backup_schedule()):
+            print("[backup] 启动检测：备份已过期，立即执行", flush=True)
+            _run_scheduled_backup()
+    except Exception as e:
+        print(f"[backup] 启动时补偿检查失败: {e}", flush=True)
+
     def _loop():
-        last_check_date = None
         while not _stop_event.is_set():
-            now = datetime.now()
-            # 每天只检查/执行一次
-            check_date = now.strftime("%Y-%m-%d")
-            if check_date != last_check_date:
-                if _should_run_now(get_backup_schedule()):
+            try:
+                if _is_overdue(get_backup_schedule()):
                     _run_scheduled_backup()
-                last_check_date = check_date
+            except Exception as e:
+                print(f"[backup] 调度检查异常: {e}", flush=True)
             _stop_event.wait(interval_seconds)
 
     _background_thread = threading.Thread(target=_loop, daemon=True, name="backup-scheduler")

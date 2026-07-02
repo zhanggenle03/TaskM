@@ -51,9 +51,7 @@ class ScheduleUpdate(BaseModel):
     frequency: str | None = None       # daily/weekly/monthly/manual
     scope: str | None = None            # full/db_config/db_only
     max_keep: int | None = None
-    hour: int | None = None
-    day_of_week: int | None = None
-    day_of_month: int | None = None
+    interval_hours: int | None = None
 
 
 # ── API ──
@@ -291,16 +289,8 @@ def api_set_schedule(body: ScheduleUpdate):
         if body.max_keep < 1 or body.max_keep > 100:
             raise HTTPException(400, "max_keep 必须在 1~100 之间")
         data["max_keep"] = body.max_keep
-    if body.hour is not None:
-        if body.hour < 0 or body.hour > 23:
-            raise HTTPException(400, "hour 必须在 0~23 之间")
-        data["hour"] = body.hour
-    if body.day_of_week is not None:
-        if body.day_of_week < 0 or body.day_of_week > 6:
-            raise HTTPException(400, "day_of_week 必须在 0(周一)~6(周日) 之间")
-        data["day_of_week"] = body.day_of_week
-    if body.day_of_month is not None:
-        if body.day_of_month < 1 or body.day_of_month > 28:
-            raise HTTPException(400, "day_of_month 必须在 1~28 之间")
-        data["day_of_month"] = body.day_of_month
+    if body.interval_hours is not None:
+        if body.interval_hours < 1 or body.interval_hours > 720:
+            raise HTTPException(400, "interval_hours 必须在 1~720 之间")
+        data["interval_hours"] = body.interval_hours
     return set_backup_schedule(data)

@@ -199,12 +199,13 @@
         </div>
         <div class="bk-dlg-row">
           <span class="bk-dlg-label">频率</span>
-          <select class="bk-select" v-model="bkSchedule.frequency">
-            <option value="daily">每天</option>
-            <option value="weekly">每周</option>
-            <option value="monthly">每月</option>
+          <select class="bk-select" v-model="bkSchedule.frequency" @change="onFrequencyChange">
+            <option value="daily">每天（24 小时）</option>
+            <option value="weekly">每周（168 小时）</option>
+            <option value="monthly">每月（720 小时）</option>
             <option value="manual">手动（不自动）</option>
           </select>
+          <span class="bk-dlg-hint">{{ intervalHint }}</span>
         </div>
         <div class="bk-dlg-row">
           <span class="bk-dlg-label">范围</span>
@@ -213,30 +214,6 @@
             <option value="db_config">数据库+配置</option>
             <option value="db_only">仅数据库</option>
           </select>
-        </div>
-        <div class="bk-dlg-row">
-          <span class="bk-dlg-label">执行时间</span>
-          <select class="bk-select" v-model.number="bkSchedule.hour">
-            <option v-for="h in 24" :key="h-1" :value="h-1">{{ String(h-1).padStart(2,'0') }}:00</option>
-          </select>
-          <template v-if="bkSchedule.frequency === 'weekly'">
-            <span class="bk-dlg-sep">· 周</span>
-            <select class="bk-select" v-model.number="bkSchedule.day_of_week">
-              <option :value="0">一</option>
-              <option :value="1">二</option>
-              <option :value="2">三</option>
-              <option :value="3">四</option>
-              <option :value="4">五</option>
-              <option :value="5">六</option>
-              <option :value="6">日</option>
-            </select>
-          </template>
-          <template v-if="bkSchedule.frequency === 'monthly'">
-            <span class="bk-dlg-sep">· 第</span>
-            <select class="bk-select" v-model.number="bkSchedule.day_of_month">
-              <option v-for="d in 28" :key="d" :value="d">{{ d }} 日</option>
-            </select>
-          </template>
         </div>
         <div class="bk-dlg-row">
           <span class="bk-dlg-label">保留</span>
@@ -357,9 +334,8 @@ const bkSchedule = reactive({
   frequency: 'daily',
   scope: 'full',
   max_keep: 10,
-  hour: 3,
-  day_of_week: 0,
-  day_of_month: 1,
+  interval_hours: 24,
+  last_backup_at: null,
 })
 const restoreFile = ref(null)
 const restoreScope = ref('auto')
@@ -387,6 +363,18 @@ const exportIncludeUploads = ref(true)
 const exportingProject = ref(false)
 const projectRestoreMode = ref('overwrite')
 const projectRestoring = ref(false)
+
+const intervalHint = computed(() => {
+  if (bkSchedule.frequency === 'manual') return '仅手动触发'
+  const h = bkSchedule.interval_hours || 24
+  if (h >= 24) return `距上次备份 ≥ ${h / 24} 天时自动执行`
+  return `距上次备份 ≥ ${h} 小时时自动执行`
+})
+
+function onFrequencyChange() {
+  const map = { daily: 24, weekly: 168, monthly: 720, manual: 0 }
+  bkSchedule.interval_hours = map[bkSchedule.frequency] || 24
+}
 
 function dotClass(val) {
   if (val === null) return 'loading'
@@ -574,9 +562,7 @@ async function saveScheduleFromDialog() {
       frequency: bkSchedule.frequency,
       scope: bkSchedule.scope,
       max_keep: bkSchedule.max_keep,
-      hour: bkSchedule.hour,
-      day_of_week: bkSchedule.day_of_week,
-      day_of_month: bkSchedule.day_of_month,
+      interval_hours: bkSchedule.interval_hours,
     })
     scheduleDialogVisible.value = false
     ElMessage.success('定时备份设置已保存')

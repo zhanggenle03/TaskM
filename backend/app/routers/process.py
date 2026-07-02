@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -54,10 +55,11 @@ def _port_open(port: int) -> bool:
 
 
 def _kill_port(port: int):
-    """根据端口号杀死监听进程及其子进程树（Windows）"""
+    """根据端口号杀死监听进程及其子进程树（Windows）—— 同时查找 LISTENING 和 TIME_WAIT"""
     try:
+        # 查找 LISTENING 或 TIME_WAIT 状态的端口
         result = subprocess.run(
-            f'netstat -ano | findstr ":{port} " | findstr LISTENING',
+            f'netstat -ano | findstr ":{port} " | findstr /V "ESTABLISHED"',
             shell=True, capture_output=True, text=True,
         )
         pids = set()
@@ -328,6 +330,16 @@ def shutdown():
     """关闭 TaskM 服务（开发版同时 kill 前端端口，2 秒后退出进程）"""
     if not _is_standalone():
         _kill_port(_FRONTEND_PORT)
+
     from app.process_manager import shutdown_service
-    threading.Timer(2.0, shutdown_service).start()
+
+    def _delayed_shutdown():
+        """延迟执行：先强制释放后端端口，再自毁退出"""
+        # 杀后端端口（解决 os._exit 可能残留 socket 的问题）
+        bp = get_port("backend_port", 8000)
+        _kill_port(bp)
+        time.sleep(0.5)
+        shutdown_service()
+
+    threading.Timer(2.0, _delayed_shutdown).start()
     return {"status": "shutting_down"}
