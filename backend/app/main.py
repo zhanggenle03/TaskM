@@ -44,6 +44,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[lifespan] 备份调度线程启动失败: {e}", flush=True)
 
+    # 预取并缓存节假日数据（后台线程，不阻塞启动；用户打开工作记录前已就绪）
+    try:
+        from .holiday_service import prefetch_on_startup
+        prefetch_on_startup()
+        print("[lifespan] 节假日缓存预取已启动", flush=True)
+    except Exception as e:
+        print(f"[lifespan] 节假日预取启动失败: {e}", flush=True)
+
     yield
 
     # ── 关闭时 ──

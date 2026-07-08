@@ -99,6 +99,7 @@ export const updateUserSettings = (data) => http.put('/process/settings/user', d
 
 // --- Holiday Overrides ---
 export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })
+export const getHolidays = (year) => http.get('/projects/holidays', { params: { year }, _silentError: true, timeout: 5000 })
 export const setHolidayOverride = (data) => http.put('/projects/holiday-overrides', data)
 export const deleteHolidayOverrides = (dates) => http.delete('/projects/holiday-overrides', { params: { dates }, _silentError: true })
 

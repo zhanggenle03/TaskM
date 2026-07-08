@@ -19,6 +19,7 @@ backend/settings.json
 backend/uploads/
 backend/config/
 backend/backups/
+backend/holiday_cache.json
 
 # --- Node / Vue 前端 ---
 frontend/node_modules/

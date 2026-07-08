@@ -3,6 +3,7 @@ import os
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
+from ..holiday_service import get_year
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -106,6 +107,13 @@ def delete_holiday_overrides(dates: List[str], db: Session = Depends(get_db)):
     count = db.query(HolidayOverride).filter(HolidayOverride.date.in_(date_objs)).delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": count}
+
+
+# ---- 节假日数据（服务端缓存，应用启动即预取） ----
+@router.get("/holidays")
+def get_holidays(year: int):
+    """返回某年法定节假日数据（timor.tech 格式），未缓存时为 null。"""
+    return {"year": year, "holiday": get_year(year)}
 
 @router.get("", response_model=List[ProjectOut])
 def list_projects(

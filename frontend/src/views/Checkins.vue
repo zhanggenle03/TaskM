@@ -407,7 +407,9 @@ const weekDays = ['一', '二', '三', '四', '五', '六', '日']
 const todayStr = dayjs().format('YYYY-MM-DD')
 
 // 节假日数据
-const holidayVersion = ref(0)
+// 初始即为 1：日历立即渲染（基于已缓存/周末推断数据），
+// 待节假日数据（服务端/本地/接口）到达后再 ++ 刷新徽标，不再卡在骨架占位。
+const holidayVersion = ref(1)
 const loadHolidayForYear = async (year) => {
   await loadHolidayData(year)
   // 也预加载前后一年，方便月份切换

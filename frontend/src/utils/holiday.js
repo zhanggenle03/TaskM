@@ -18,6 +18,22 @@ const cache = {} // { year: { 'MM-DD': { holiday, name, ... } } }
 const OVERRIDE_KEY = 'taskm_holiday_overrides'
 const ENTRY_DATE_KEY = 'taskm_entry_date'
 
+// 模块加载时同步预热：将 localStorage 中仍有效的年份缓存一次性载入内存，
+// 使日历首次渲染（远早于服务端响应）即可显示正确的法定节假日徽标。
+;(function primeHolidayCache() {
+  for (let y = 2000; y <= 2100; y++) {
+    const key = `taskm_holiday_${y}`
+    const stored = localStorage.getItem(key)
+    if (!stored) continue
+    try {
+      const parsed = JSON.parse(stored)
+      if (parsed && parsed.data && Date.now() - (parsed.ts || 0) < CACHE_TTL) {
+        cache[y] = parsed.data
+      }
+    } catch { /* ignore */ }
+  }
+})()
+
 // 缓存：一次解析后的覆盖数据（按年份分组），避免重复 JSON.parse
 let _parsedOverrides = null
 let _parsedOverridesYear = null
@@ -211,12 +227,48 @@ function getYearOverridesIndexed(year) {
 }
 
 /**
+ * 从服务端缓存加载某年法定节假日数据（应用启动即已预取）
+ */
+async function loadHolidayFromServer(year) {
+  try {
+    const { getHolidays } = await import('../api/index.js')
+    const res = await getHolidays(year)
+    return res && res.holiday ? res.holiday : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 持久化某年数据到 localStorage（便于离线 / 下次秒开）
+ */
+function persistHoliday(year, data) {
+  try {
+    localStorage.setItem(`taskm_holiday_${year}`, JSON.stringify({ ts: Date.now(), data }))
+  } catch { /* ignore */ }
+}
+
+/**
  * 加载指定年份的法定节假日数据
+ * 取数顺序：内存缓存 → 服务端缓存（应用启动即预取）→ localStorage → 直连 timor.tech（带超时兜底）
+ * 任何外部请求都设置了超时，绝不永久卡住 UI。
  */
 export async function loadHolidayData(year) {
   if (cache[year]) return cache[year]
 
-  // 尝试从 localStorage 读取
+  // 1) 服务端缓存（最快，通常应用启动后已就绪）
+  try {
+    const fromServer = await loadHolidayFromServer(year)
+    if (fromServer) {
+      cache[year] = fromServer
+      persistHoliday(year, fromServer)
+      return fromServer
+    }
+  } catch (e) {
+    console.warn('从服务端加载节假日失败，回退本地缓存:', e)
+  }
+
+  // 2) localStorage 缓存
   const stored = localStorage.getItem(`taskm_holiday_${year}`)
   if (stored) {
     try {
@@ -228,20 +280,20 @@ export async function loadHolidayData(year) {
     } catch { /* ignore */ }
   }
 
-  // 从 API 获取
+  // 3) 直连 timor.tech（带 6s 超时兜底，失败则放弃，保留周末推断）
   try {
-    const res = await fetch(`https://timor.tech/api/holiday/year/${year}`)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 6000)
+    const res = await fetch(`https://timor.tech/api/holiday/year/${year}`, { signal: controller.signal })
+    clearTimeout(timer)
     const json = await res.json()
     if (json.code === 0 && json.holiday) {
       cache[year] = json.holiday
-      localStorage.setItem(`taskm_holiday_${year}`, JSON.stringify({
-        ts: Date.now(),
-        data: json.holiday,
-      }))
+      persistHoliday(year, json.holiday)
       return json.holiday
     }
   } catch (e) {
-    console.warn('获取节假日数据失败:', e)
+    console.warn('获取节假日数据失败（已超时/放弃）:', e)
   }
   return null
 }
