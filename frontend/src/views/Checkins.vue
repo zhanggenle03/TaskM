@@ -378,7 +378,7 @@ dayjs.locale('zh-cn')
 import {
   getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
 } from '../api'
-import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer, loadAllOverridesFromDb } from '../utils/holiday'
+import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer } from '../utils/holiday'
 
 const projects = ref([])
 const allCheckins = ref([])
@@ -410,6 +410,9 @@ const todayStr = dayjs().format('YYYY-MM-DD')
 // 初始即为 1：日历立即渲染（基于已缓存/周末推断数据），
 // 待节假日数据（服务端/本地/接口）到达后再 ++ 刷新徽标，不再卡在骨架占位。
 const holidayVersion = ref(1)
+// 数据库签到数据就绪标志：网格照常秒开，但"出勤/请假/加班"状态徽标与出勤统计
+// 在签到数据返回前保持中性，避免首屏把过去工作日全算成"请假"的一闪假状态。
+const dataReady = ref(false)
 const loadHolidayForYear = async (year) => {
   await loadHolidayData(year)
   // 也预加载前后一年，方便月份切换
@@ -585,6 +588,7 @@ const monthExtraInfo = computed(() => {
 const calendarDays = computed(() => {
   // eslint-disable-next-line no-unused-expressions
   holidayVersion.value // 依赖版本号，数据加载后重新计算
+  dataReady.value      // 签到数据未就绪时状态徽标保持中性
   const entryDateStr = getEntryDate() // 入职日期
   const firstDay = dayjs(`${calYear.value}-${calMonth.value}-01`)
   const daysInMonth = firstDay.daysInMonth()
@@ -613,7 +617,7 @@ const calendarDays = computed(() => {
     else effectiveIsRest = false
 
     let statusType = null
-    if (!isFuture && !beforeEntry) {
+    if (dataReady.value && !isFuture && !beforeEntry) {
       if (effectiveIsRest) {
         if (hasCheckin) statusType = 'overtime'
       } else {
@@ -642,6 +646,11 @@ const calendarDays = computed(() => {
 const monthStats = computed(() => {
   // eslint-disable-next-line no-unused-expressions
   holidayVersion.value // 依赖版本号，自定义覆盖更新后重新计算
+  dataReady.value      // 签到数据未就绪时返回中性占位，避免首屏闪现"全缺勤"
+  if (!dataReady.value) {
+    const daysInMonth = dayjs(`${calYear.value}-${calMonth.value}-01`).daysInMonth()
+    return { workDays: 0, leaveDays: 0, overtimeDays: 0, requiredWorkDays: 0, absences: 0, total: daysInMonth, isCurrent: false, loading: true }
+  }
   const year = calYear.value
   const month = calMonth.value
   const daysInMonth = dayjs(`${year}-${month}-01`).daysInMonth()
@@ -709,14 +718,15 @@ const load = async () => {
   ])
   projects.value = p
   allCheckins.value = c
+  dataReady.value = true // 签到数据已就绪，状态徽标与出勤统计可正常显示
   selectedDate.value = todayStr
   loadStatusForDate(todayStr)
 }
 onMounted(async () => {
-  // 并行：从 settings.json 和 DB 加载节假日覆盖 + 主数据
+  // 并行：从 settings.json/DB 加载节假日覆盖 + 主数据
+  // 注：loadUserSettingsFromServer 已包含全量覆盖加载，无需再调用 loadAllOverridesFromDb（重复 DB 请求）
   await Promise.all([
     loadUserSettingsFromServer(),
-    loadAllOverridesFromDb(),
     load(),
   ])
   holidayVersion.value++
