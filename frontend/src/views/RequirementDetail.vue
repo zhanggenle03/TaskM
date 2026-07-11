@@ -263,7 +263,7 @@ import { Boot, SlateEditor, SlateTransforms, SlateRange } from '@wangeditor/edit
 import {
   getRequirement, updateRequirement, deleteRequirement, deleteRequirementImage,
   getReqCustomFields, getReqStatusPools, getReqPriorityPools,
-  exportRequirementDoc, uploadRequirementFile, deleteRequirementFile,
+  exportRequirementDoc, uploadRequirementImage, uploadRequirementFile, deleteRequirementFile,
 } from '../api/index.js'
 
 // ── 引用块颜色选择器 ──
@@ -1142,7 +1142,6 @@ const scheduleSaveDraft = () => {
 
 const editorConfig = {
   placeholder: '开始编写需求文档…',
-  minHeight: 300,
   hoverbarKeys: {
     text: { menuKeys: [] },
     // 编辑模式下悬浮链接显示编辑/取消/查看菜单
@@ -1158,8 +1157,8 @@ const editorConfig = {
         const fd = new FormData()
         fd.append('file', file)
         try {
-          const r = await (await fetch(`/api/projects/${projectId.value}/requirements/${req.value.id}/images`, { method: 'POST', body: fd })).json()
-          if (r.url) {
+          const r = await uploadRequirementImage(projectId.value, req.value.id, file)
+          if (r?.url) {
             insertFn(r.url)
             // 自动插入图注段落（居中、灰、斜体），编号按当前图片数
             try {
@@ -1884,6 +1883,10 @@ const onImgMouseUp = () => { isDragging.value = false }
 /* 图片默认居中 */
 .editor-body :deep(.w-e-text-container [data-slate-editor] img) {
   display: block; margin: 8px auto; max-width: 100%;
+}
+/* 编辑区最小高度（wangEditor v5 的 editorConfig 不支持 minHeight，需用 CSS） */
+.editor-body :deep(.w-e-text-container) {
+  min-height: 300px;
 }
 /* 图注：居中、灰、斜体 */
 .editor-body :deep(.w-e-text-container [data-slate-editor] .req-caption) {

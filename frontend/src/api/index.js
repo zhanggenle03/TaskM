@@ -126,12 +126,17 @@ export const exportRequirementDoc = (projectId, reqId) =>
     _silentError: true,
   })
 export const deleteRequirementImage = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/images/${encodeURIComponent(filename)}`)
+export const uploadRequirementImage = (projectId, reqId, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http.post(`/projects/${projectId}/requirements/${reqId}/images`, fd)
+}
 
 // --- Requirement Files ---
 export const uploadRequirementFile = (projectId, reqId, file) => {
   const fd = new FormData()
   fd.append('file', file)
-  return fetch(`/api/projects/${projectId}/requirements/${reqId}/files`, { method: 'POST', body: fd }).then(r => r.json())
+  return http.post(`/projects/${projectId}/requirements/${reqId}/files`, fd)
 }
 export const deleteRequirementFile = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/files/${encodeURIComponent(filename)}`)
 
