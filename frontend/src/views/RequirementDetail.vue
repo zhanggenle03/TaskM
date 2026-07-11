@@ -68,7 +68,10 @@
 
         <!-- 富文本编辑器 -->
         <div class="section-title">
-          <el-icon><EditPen /></el-icon> 详细描述
+          <span class="st-title"><el-icon><EditPen /></el-icon> 详细描述</span>
+          <el-button size="small" text type="primary" @click="tocVisible = !tocVisible">
+            <el-icon><List /></el-icon> 目录
+          </el-button>
         </div>
         <div class="editor-wrapper" :class="{ 'editor-readonly': !isEditing }">
           <Toolbar
@@ -87,6 +90,25 @@
             @onChange="onEditorChange"
           />
         </div>
+
+        <!-- 目录大纲面板 -->
+        <transition name="el-fade-in">
+          <div v-if="tocVisible && tocItems.length" class="toc-panel">
+            <div class="toc-header">
+              <span>目录</span>
+              <el-button text size="small" @click="tocVisible = false">收起</el-button>
+            </div>
+            <div class="toc-list">
+              <div
+                v-for="(t, i) in tocItems"
+                :key="i"
+                class="toc-item"
+                :class="'lv' + t.level"
+                @click="scrollToHeading(i)"
+              >{{ t.text }}</div>
+            </div>
+          </div>
+        </transition>
       </div>
 
       <!-- 右侧信息栏 -->
@@ -233,7 +255,7 @@
 import { ref, shallowRef, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowRight } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, List } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
@@ -854,6 +876,8 @@ const toolbarConfig = {
     '|',
     'bulletedList', 'numberedList', 'blockquote', 'bqColorSelect',
     '|',
+    'insertTable',
+    '|',
     'divider',
     '|',
     'clearStyle',
@@ -1054,6 +1078,66 @@ const onEditorChange = (editor) => {
   }
   // Slate 重建 DOM 后恢复引用块颜色（数据源为 bqColorStore，不依赖 DOM 残留属性）
   syncBqColorsToDom()
+  // 自动草稿：防抖暂存到 localStorage（仅编辑态）
+  scheduleSaveDraft()
+  // 重建目录大纲
+  scheduleBuildToc()
+}
+
+// ── 目录大纲（TOC） ──
+const tocVisible = ref(false)
+const tocItems = ref([])
+let _tocEls = []
+const buildToc = () => {
+  const container = editorRef.value?.getEditableContainer?.() ||
+    document.querySelector('.w-e-text-container [data-slate-editor]')
+  if (!container) return
+  const hs = container.querySelectorAll('h1, h2, h3')
+  _tocEls = Array.from(hs)
+  tocItems.value = _tocEls.map((el, i) => ({
+    level: Number(el.tagName[1]),
+    text: (el.textContent || '').trim() || `（无标题 ${i + 1}）`,
+  }))
+}
+let _tocTimer = null
+const scheduleBuildToc = () => {
+  clearTimeout(_tocTimer)
+  _tocTimer = setTimeout(buildToc, 300)
+}
+const scrollToHeading = (idx) => {
+  const el = _tocEls[idx]
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// ── 自动草稿（localStorage 防丢失） ──
+const DRAFT_PREFIX = 'taskm_req_draft_'
+const _fmtDraftTime = (ts) => {
+  const d = new Date(ts)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+const saveDraft = (html) => {
+  if (!req.value?.id) return
+  try {
+    localStorage.setItem(DRAFT_PREFIX + req.value.id, JSON.stringify({ html, ts: Date.now() }))
+  } catch {}
+}
+const loadDraft = (id) => {
+  try {
+    const raw = localStorage.getItem(DRAFT_PREFIX + id)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+const clearDraft = (id) => {
+  try { localStorage.removeItem(DRAFT_PREFIX + id) } catch {}
+}
+let _draftTimer = null
+const scheduleSaveDraft = () => {
+  if (!isEditing.value || !req.value?.id) return
+  clearTimeout(_draftTimer)
+  _draftTimer = setTimeout(() => saveDraft(descDraft.value), 800)
 }
 
 const editorConfig = {
@@ -1065,7 +1149,6 @@ const editorConfig = {
     link: { menuKeys: ['reqEditLink', 'reqUnLink', 'reqViewLink'] },
     image: { menuKeys: [] },
     pre: { menuKeys: [] },
-    table: { menuKeys: [] },
     divider: { menuKeys: [] },
   },
   MENU_CONF: {
@@ -1116,6 +1199,8 @@ const exitEdit = async () => {
       // 不保存：重置内容为上次保存的版本
       descDraft.value = req.value.description || ''
       hasUnsaved.value = false
+      // 清除本地草稿，避免下次进入又提示恢复
+      clearDraft(req.value.id)
       // 恢复引用块颜色（重设 HTML 触发 Slate 反序列化会剥离内联样式）
       setTimeout(() => restoreBqColors(), 400)
     }
@@ -1172,6 +1257,8 @@ const load = async (id) => {
     statusPools.value = sp || []
     priorityPools.value = pp || []
     const desc = reqRes.description || ''
+    // 检测本地未保存草稿（防丢失）：比已保存内容新则提示恢复
+    const draft = loadDraft(rId)
     // 切换需求（组件实例复用）：清空上一需求残留的引用块颜色 store，否则会串色
     Object.keys(bqColorStore).forEach(k => delete bqColorStore[k])
     // 先设 descDraft，再设 req，确保编辑器创建时 v-model 已是目标内容
@@ -1195,9 +1282,27 @@ const load = async (id) => {
     }
     // 用新需求的 HTML 重建引用块颜色 store 并同步到编辑器 DOM
     // （Slate 反序列化会剥离 data-bq-color，需在内容渲染后重新注入）
-    setTimeout(() => restoreBqColors(), 300)
+    setTimeout(() => {
+      restoreBqColors()
+      // 编辑内容渲染后（含草稿恢复）重建目录大纲
+      buildToc()
+    }, 300)
     // 编辑器 DOM 就绪后修复链接 href（补全缺少的协议）
     nextTick(fixLinkHrefs)
+    // 若存在比已保存内容更新的本地草稿，提示恢复
+    if (draft && draft.html !== desc) {
+      ElMessageBox.confirm(
+        `检测到该需求有未保存的本地草稿（${_fmtDraftTime(draft.ts)}），是否恢复？恢复后将覆盖当前已保存内容。`,
+        '恢复草稿',
+        { confirmButtonText: '恢复草稿', cancelButtonText: '丢弃草稿', type: 'warning' }
+      ).then(() => {
+        descDraft.value = draft.html
+        hasUnsaved.value = true
+        setTimeout(() => { restoreBqColors(); buildToc() }, 300)
+      }).catch(() => {
+        clearDraft(rId)
+      })
+    }
   } catch {
     ElMessage.error('加载需求失败')
   } finally {
@@ -1387,6 +1492,8 @@ const doSaveDesc = async () => {
     const finalHtml = fixLinkHrefsInHtml(injectBqColorsToHtml(descDraft.value))
     await updateRequirement(projectId.value, req.value.id, { description: finalHtml })
     req.value.description = finalHtml
+    // 保存成功后清除本地草稿
+    clearDraft(req.value.id)
     // 不再更新 descDraft，避免触发 WangEditor 重新渲染导致
     // 内联样式（引用块颜色）被 Slate 反序列化时剥离
     hasUnsaved.value = false
@@ -1657,7 +1764,7 @@ const onImgMouseUp = () => { isDragging.value = false }
 
 /* ── 页面布局 ── */
 .page-body { display: flex; gap: 24px; align-items: flex-start; }
-.body-main { flex: 1; min-width: 0; }
+.body-main { flex: 1; min-width: 0; position: relative; }
 .detail-side { width: 260px; flex-shrink: 0; display: flex; flex-direction: column; gap: 12px; }
 
 /* ── 标题行 ── */
@@ -1673,15 +1780,17 @@ const onImgMouseUp = () => { isDragging.value = false }
 /* ── 描述编辑区 ── */
 .section-title {
   font-size: 14px; font-weight: 500;
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 10px; margin-top: 20px; color: #444;
 }
+.section-title .st-title { display: flex; align-items: center; gap: 6px; }
 
 /* 富文本编辑器外层 */
 .editor-wrapper {
-  border: 1px solid #d0cff0; border-radius: 8px; overflow: hidden;
+  border: 1px solid #d0cff0; border-radius: 8px; overflow: auto;
   box-shadow: 0 2px 16px rgba(83,74,183,0.08);
   background: #fff;
+  max-height: calc(100vh - 200px);
 }
 .editor-readonly :deep(.w-e-text-container) {
   cursor: default;
@@ -1694,6 +1803,7 @@ const onImgMouseUp = () => { isDragging.value = false }
   border-radius: 4px;
 }
 .editor-toolbar {
+  position: sticky; top: 0; z-index: 10;
   border-bottom: 1px solid #e8e8e8;
   background: #fafafa;
 }
@@ -1752,21 +1862,21 @@ const onImgMouseUp = () => { isDragging.value = false }
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h1) {
   counter-increment: h1c; counter-reset: h2c h3c;
-  font-size: 18px; font-weight: 700; color: #1f1f1f; margin: 18px 0 8px;
+  font-size: 18px; font-weight: 700; color: #1f1f1f; margin: 18px 0 8px; scroll-margin-top: 56px;
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h1)::before {
   content: counter(h1c, cjk-ideographic) "、"; font-weight: 700;
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h2) {
   counter-increment: h2c; counter-reset: h3c;
-  font-size: 16px; font-weight: 700; color: #1f1f1f; margin: 14px 0 6px;
+  font-size: 16px; font-weight: 700; color: #1f1f1f; margin: 14px 0 6px; scroll-margin-top: 56px;
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h2)::before {
   content: counter(h1c) "." counter(h2c) " "; font-weight: 700;
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h3) {
   counter-increment: h3c;
-  font-size: 14px; font-weight: 600; color: #333; margin: 12px 0 4px;
+  font-size: 14px; font-weight: 600; color: #333; margin: 12px 0 4px; scroll-margin-top: 56px;
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h3)::before {
   content: counter(h1c) "." counter(h2c) "." counter(h3c) " "; font-weight: 600;
@@ -1779,6 +1889,28 @@ const onImgMouseUp = () => { isDragging.value = false }
 .editor-body :deep(.w-e-text-container [data-slate-editor] .req-caption) {
   display: block; text-align: center; color: #888; font-size: 12px; font-style: italic;
 }
+
+/* ── 目录大纲（TOC） ── */
+.toc-panel {
+  position: absolute; top: 100px; right: 12px; width: 240px;
+  max-height: calc(100vh - 280px); overflow: auto;
+  background: #fff; border: 1px solid #e8e8e4; border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.12); z-index: 50; padding: 6px;
+}
+.toc-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 2px 8px 6px; font-size: 13px; font-weight: 600; color: #444;
+  border-bottom: 1px solid #f0f0f0;
+}
+.toc-list { padding: 4px 0; max-height: calc(100vh - 340px); overflow: auto; }
+.toc-item {
+  padding: 4px 8px; font-size: 13px; color: #333; cursor: pointer;
+  border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.toc-item:hover { background: #f5f4ff; color: #534ab7; }
+.toc-item.lv1 { font-weight: 600; padding-left: 8px; }
+.toc-item.lv2 { padding-left: 22px; }
+.toc-item.lv3 { padding-left: 36px; color: #666; }
 
 /* ── 图片预览弹窗 ── */
 .preview-header { display: flex; align-items: center; gap: 10px; }

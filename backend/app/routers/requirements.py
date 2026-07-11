@@ -1927,13 +1927,26 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             self._heading_level = None   # 当前标题级别（1-6），None 表示非标题
             self._h_counters = [0, 0, 0]  # 多级标题计数器 h1/h2/h3
             self._in_caption = False      # 当前文本是否处于图注（span.req-caption）内
+            # 表格支持
+            self._in_td = False           # 当前是否在 <td>/<th> 内
+            self._cell_runs = []          # 当前单元格段落的 run 列表
+            self._cell_paragraphs = []    # 当前单元格的段落列表（每个段落 = run 列表）
+            self._cell_is_header = False  # 当前单元格是否为表头
+            self._cur_row = None          # 当前行（单元格列表）
+            self._table = None            # 顶层表格缓冲 [row, ...]
+            self._table_depth = 0         # 表格嵌套深度（仅渲染顶层）
 
         def _push_run(self, text='', bold=False, italic=False, underline=False, strikethrough=False,
                       color=None, bg_color=None, link_url='', font_name=None):
             if text:
-                self._p_texts.append((text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name))
+                if self._in_td:
+                    self._cell_runs.append((text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name))
+                else:
+                    self._p_texts.append((text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name))
 
         def _flush_paragraph(self):
+            if self._in_td:
+                return
             if not self._p_texts and not self._skip_p:
                 return
             if self._skip_p:
@@ -2052,6 +2065,53 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                     _set_run_font(run, size=size, bold=True, font_name=fn)
             self._p_texts = []
 
+        def _flush_cell_paragraph(self):
+            """将当前单元格累积的 run 提交为一个段落（单元格内多段用 <p> 分隔）"""
+            if self._cell_runs:
+                self._cell_paragraphs.append(self._cell_runs)
+                self._cell_runs = []
+
+        def _flush_table(self):
+            """将缓冲的表格数据渲染为 python-docx 表格"""
+            rows = self._table or []
+            if not rows:
+                return
+            n_cols = max((len(r) for r in rows), default=0)
+            if n_cols == 0:
+                return
+            n_rows = len(rows)
+            table = self.doc.add_table(rows=n_rows, cols=n_cols)
+            try:
+                table.style = 'Table Grid'
+            except Exception:
+                pass
+            table.autofit = True
+            for i, row in enumerate(rows):
+                for j in range(n_cols):
+                    cell_paragraphs, is_header = row[j] if j < len(row) else ([], False)
+                    cell = table.cell(i, j)
+                    first = True
+                    for para_runs in (cell_paragraphs or []):
+                        p = cell.paragraphs[0] if first else cell.add_paragraph()
+                        first = False
+                        for (text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name) in para_runs:
+                            if not text:
+                                continue
+                            run = p.add_run(text)
+                            if bold or is_header:
+                                run.bold = True
+                            if italic:
+                                run.italic = True
+                            if underline:
+                                run.underline = True
+                            if strikethrough:
+                                run.font.strike = True
+                            if color:
+                                rgb = _color_to_rgb(color)
+                                if rgb:
+                                    run.font.color.rgb = rgb
+                            _set_run_font(run, size=BODY_SIZE, font_name=font_name or FONT_FAMILY)
+
         def _get_style_color(self, attrs_dict):
             """从 style 中提取 color 和 background-color"""
             style = attrs_dict.get('style', '')
@@ -2098,7 +2158,28 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
         def handle_starttag(self, tag, attrs):
             attrs_dict = dict(attrs)
             if tag in ('p', 'div'):
+                if self._in_td:
+                    self._flush_cell_paragraph()
+                else:
+                    self._flush_paragraph()
+                self.stack.append(tag)
+            elif tag == 'table':
                 self._flush_paragraph()
+                self._table_depth += 1
+                if self._table_depth == 1:
+                    self._table = []
+                    self._cur_row = None
+                self.stack.append(tag)
+            elif tag == 'tbody':
+                self.stack.append(tag)
+            elif tag == 'tr':
+                self._cur_row = []
+                self.stack.append(tag)
+            elif tag in ('td', 'th'):
+                self._in_td = True
+                self._cell_runs = []
+                self._cell_paragraphs = []
+                self._cell_is_header = (tag == 'th')
                 self.stack.append(tag)
             elif tag in ('h1','h2','h3','h4','h5','h6'):
                 self._flush_paragraph()
@@ -2235,6 +2316,8 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             elif tag == 'br':
                 self._push_run('\n')
             elif tag == 'img':
+                if self._in_td:
+                    return
                 self._add_image(attrs_dict)
             elif tag == 'span':
                 self.stack.append(('span', attrs_dict))
@@ -2248,7 +2331,31 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
 
         def handle_endtag(self, tag):
             if tag in ('p', 'div'):
-                self._flush_paragraph()
+                if self._in_td:
+                    self._flush_cell_paragraph()
+                else:
+                    self._flush_paragraph()
+                self._pop_stack(tag)
+            elif tag == 'table':
+                self._table_depth -= 1
+                if self._table_depth == 0:
+                    self._flush_table()
+                    self._table = None
+                self._pop_stack(tag)
+            elif tag == 'tbody':
+                self._pop_stack(tag)
+            elif tag == 'tr':
+                if self._cur_row:
+                    self._table.append(self._cur_row)
+                self._cur_row = None
+                self._pop_stack(tag)
+            elif tag in ('td', 'th'):
+                self._flush_cell_paragraph()
+                self._cur_row.append((self._cell_paragraphs, self._cell_is_header))
+                self._in_td = False
+                self._cell_runs = []
+                self._cell_paragraphs = []
+                self._cell_is_header = False
                 self._pop_stack(tag)
             elif tag in ('h1','h2','h3','h4','h5','h6'):
                 self._flush_heading()
@@ -2330,7 +2437,7 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                         if c: color = c
                         if bg: bg_color = bg
                         cls = attrs.get('class', '') or ''
-                        if 'req-caption' in cls:
+                        if 'req-caption' in cls and not self._in_td:
                             self._in_caption = True
                             color = '#888888'
                     elif item[0] == 'code':
