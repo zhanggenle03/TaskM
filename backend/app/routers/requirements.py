@@ -2009,13 +2009,13 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             self._p_texts = []
 
         def _heading_label(self, level):
-            """根据当前多级计数器生成标题编号文本：一、/ 1.1 / 1.1.1"""
+            """根据当前多级计数器生成标题编号文本：一、/ 1.1 / (n)"""
             c = self._h_counters
             if level == 1:
                 return _cn(c[0]) + '、'
             if level == 2:
                 return f'{c[0]}.{c[1]} '
-            return f'{c[0]}.{c[1]}.{c[2]} '
+            return f'({c[2]}) '
 
         def _flush_heading(self):
             """将当前累积文本作为多级编号标题输出（黑体、加粗）"""

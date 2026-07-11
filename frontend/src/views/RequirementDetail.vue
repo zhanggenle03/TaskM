@@ -105,7 +105,7 @@
                 class="toc-item"
                 :class="'lv' + t.level"
                 @click="scrollToHeading(i)"
-              >{{ t.text }}</div>
+              ><span class="toc-label">{{ t.label }}</span>{{ t.text }}</div>
             </div>
           </div>
         </transition>
@@ -1082,22 +1082,91 @@ const onEditorChange = (editor) => {
   scheduleSaveDraft()
   // 重建目录大纲
   scheduleBuildToc()
+  // 编辑态：确保光标不被固定工具栏遮挡，并即时清理已删除的附件文件
+  if (isEditing.value) {
+    ensureCaretVisible()
+    scheduleSyncDeletedFiles()
+  }
+}
+
+// ── 光标可见性：固定工具栏会遮挡顶部，输入时若光标落在工具栏覆盖区则滚动露出 ──
+const ensureCaretVisible = () => {
+  const wrapper = document.querySelector('.editor-wrapper')
+  if (!wrapper) return
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return
+  const rect = sel.getRangeAt(0).getBoundingClientRect()
+  const wRect = wrapper.getBoundingClientRect()
+  if (!rect.height && !rect.width) return
+  const relTop = rect.top - wRect.top
+  const toolbarH = 46
+  // 光标顶部被工具栏遮挡 → 上滚使光标露在工具栏下方
+  if (relTop < toolbarH + 4) {
+    wrapper.scrollTop -= (toolbarH + 4 - relTop)
+  } else if (relTop + rect.height > wRect.bottom - 8) {
+    // 光标在容器底部外 → 下滚使其可见
+    wrapper.scrollTop += (relTop + rect.height - (wRect.bottom - 8))
+  }
+}
+
+// ── 附件即时清理：编辑中删除图片/附件节点时，防抖删除后端物理文件 ──
+// 防抖 1.2s：若用户在删除后立即 Ctrl+Z 撤销，回调时图片已恢复，不会误删（避免破图）
+let _delTimer = null
+const scheduleSyncDeletedFiles = () => {
+  clearTimeout(_delTimer)
+  _delTimer = setTimeout(syncDeletedFiles, 1200)
+}
+const syncDeletedFiles = () => {
+  if (!req.value?.id) return
+  const curImgs = new Set(extractImgFilenames(descDraft.value))
+  for (const fn of origImgFilenames) {
+    if (!curImgs.has(fn)) {
+      deleteRequirementImage(projectId.value, req.value.id, fn).catch(() => {})
+      origImgFilenames.delete(fn)
+    }
+  }
+  const curFiles = new Set(extractReqFilenames(descDraft.value))
+  for (const fn of origReqFiles) {
+    if (!curFiles.has(fn)) {
+      deleteRequirementFile(projectId.value, req.value.id, fn).catch(() => {})
+      origReqFiles.delete(fn)
+    }
+  }
 }
 
 // ── 目录大纲（TOC） ──
 const tocVisible = ref(false)
 const tocItems = ref([])
 let _tocEls = []
+// 1-99 阿拉伯数字转中文（目录/标题一级编号使用，与后端 _cn 一致）
+const cnNum = (n) => {
+  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九']
+  if (n <= 10) return n === 10 ? '十' : d[n]
+  if (n < 20) return '十' + d[n % 10]
+  const t = Math.floor(n / 10)
+  const o = n % 10
+  return d[t] + '十' + (o ? d[o] : '')
+}
 const buildToc = () => {
   const container = editorRef.value?.getEditableContainer?.() ||
     document.querySelector('.w-e-text-container [data-slate-editor]')
   if (!container) return
   const hs = container.querySelectorAll('h1, h2, h3')
   _tocEls = Array.from(hs)
-  tocItems.value = _tocEls.map((el, i) => ({
-    level: Number(el.tagName[1]),
-    text: (el.textContent || '').trim() || `（无标题 ${i + 1}）`,
-  }))
+  // 维护与编辑器/导出一致的计数器：h1=一、/ h2=1.1 / h3=(n)
+  let c1 = 0, c2 = 0, c3 = 0
+  tocItems.value = _tocEls.map((el, i) => {
+    const lv = Number(el.tagName[1])
+    let label = ''
+    if (lv === 1) { c1 += 1; c2 = 0; c3 = 0; label = cnNum(c1) + '、' }
+    else if (lv === 2) { c2 += 1; c3 = 0; label = `${c1}.${c2} ` }
+    else { c3 += 1; label = `(${c3}) ` }
+    return {
+      level: lv,
+      label,
+      text: (el.textContent || '').trim() || `（无标题 ${i + 1}）`,
+    }
+  })
 }
 let _tocTimer = null
 const scheduleBuildToc = () => {
@@ -1146,7 +1215,8 @@ const editorConfig = {
     text: { menuKeys: [] },
     // 编辑模式下悬浮链接显示编辑/取消/查看菜单
     link: { menuKeys: ['reqEditLink', 'reqUnLink', 'reqViewLink'] },
-    image: { menuKeys: [] },
+    // 图片悬浮菜单：支持删除/编辑/查看（删除时即时清理后端文件，见 onEditorChange）
+    image: { menuKeys: ['deleteImage', 'editImage', 'viewImage'] },
     pre: { menuKeys: [] },
     divider: { menuKeys: [] },
   },
@@ -1790,6 +1860,8 @@ const onImgMouseUp = () => { isDragging.value = false }
   box-shadow: 0 2px 16px rgba(83,74,183,0.08);
   background: #fff;
   max-height: calc(100vh - 200px);
+  /* TOC 跳转/光标定位时为固定工具栏预留顶部空间 */
+  scroll-padding-top: 48px;
 }
 .editor-readonly :deep(.w-e-text-container) {
   cursor: default;
@@ -1878,7 +1950,7 @@ const onImgMouseUp = () => { isDragging.value = false }
   font-size: 14px; font-weight: 600; color: #333; margin: 12px 0 4px; scroll-margin-top: 56px;
 }
 .editor-body :deep(.w-e-text-container [data-slate-editor] h3)::before {
-  content: counter(h1c) "." counter(h2c) "." counter(h3c) " "; font-weight: 600;
+  content: "(" counter(h3c) ") "; font-weight: 600;
 }
 /* 图片默认居中 */
 .editor-body :deep(.w-e-text-container [data-slate-editor] img) {
@@ -1910,6 +1982,8 @@ const onImgMouseUp = () => { isDragging.value = false }
   padding: 4px 8px; font-size: 13px; color: #333; cursor: pointer;
   border-radius: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.toc-item .toc-label { color: #534ab7; font-weight: 600; margin-right: 2px; }
+.toc-item.lv3 .toc-label { color: #888; }
 .toc-item:hover { background: #f5f4ff; color: #534ab7; }
 .toc-item.lv1 { font-weight: 600; padding-left: 8px; }
 .toc-item.lv2 { padding-left: 22px; }
