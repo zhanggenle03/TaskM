@@ -982,7 +982,7 @@ const handleLinkBoundaryClick = () => {
   })
 }
 
-/** selectionchange 时同步更新 lastTouchedBlockquote */
+/** selectionchange 时同步更新 lastTouchedBlockquote，并让固定工具栏/底部空白跟随光标 */
 const handleSelectionChange = () => {
   try {
     const sel = window.getSelection()
@@ -994,6 +994,8 @@ const handleSelectionChange = () => {
       const allBq = bq.parentElement?.querySelectorAll('blockquote')
       if (allBq) { for (const el of allBq) { if (el !== bq) el.removeAttribute('data-bq-active') } }
     }
+    // 光标移动（方向键/点击/Tab 等）时同样保持可见并保有底部空白
+    ensureCaretVisible()
   } catch {}
 }
 
@@ -1091,7 +1093,7 @@ const onEditorChange = (editor) => {
   }
 }
 
-// ── 光标可见性：固定工具栏会遮挡顶部，输入时若光标落在工具栏覆盖区则滚动露出 ──
+// ── 光标可见性：固定工具栏遮挡顶部则上滚露出；并始终保持光标下方留有 1.5 行空白 ──
 let _caretRaf = null
 const ensureCaretVisible = () => {
   // 下一帧再计算：回车后新段落刚插入，需等浏览器完成布局，光标 rect 才准确
@@ -1102,23 +1104,39 @@ const ensureCaretVisible = () => {
     const sel = window.getSelection()
     if (!sel || !sel.rangeCount) return
     const range = sel.getRangeAt(0)
+    // 选区不在编辑器内（如聚焦了弹窗/其它输入框）则不处理
+    if (!wrapper.contains(range.startContainer)) return
     let rect = range.getBoundingClientRect()
     // 回车后空段落 rect 尺寸可能为 0，改用光标所在块元素兜底
+    let el = null
     if (!rect || (rect.height === 0 && rect.width === 0)) {
       const node = range.startContainer
-      const el = node && node.nodeType === 3 ? node.parentElement : node
+      el = node && node.nodeType === 3 ? node.parentElement : node
       if (el && el.getBoundingClientRect) rect = el.getBoundingClientRect()
     }
     if (!rect || (rect.height === 0 && rect.width === 0)) return
+    // 行高：从光标所在块元素取计算样式（p 为 1.6×14≈22.4），兜底 22
+    if (!el) {
+      const node = range.startContainer
+      el = node && node.nodeType === 3 ? node.parentElement : node
+    }
+    let lineH = 22
+    if (el && el.nodeType === 1) {
+      const lh = parseFloat(getComputedStyle(el).lineHeight)
+      if (!isNaN(lh) && lh > 0) lineH = lh
+    }
     const wRect = wrapper.getBoundingClientRect()
     const relTop = rect.top - wRect.top
+    const relBottom = rect.bottom - wRect.top
     const toolbarH = 46
-    // 光标顶部被工具栏遮挡 → 上滚使光标露在工具栏下方
+    const bottomPad = Math.round(lineH * 1.5) // 始终在光标下方保留 1.5 行空白
+    // 顶部：光标被固定工具栏遮挡 → 上滚使其露在工具栏下方
     if (relTop < toolbarH + 4) {
       wrapper.scrollTop -= (toolbarH + 4 - relTop)
-    } else if (relTop + rect.height > wRect.bottom - 8) {
-      // 光标在容器底部外 → 下滚使其可见
-      wrapper.scrollTop += (relTop + rect.height - (wRect.bottom - 8))
+    }
+    // 底部：光标下方不足 1.5 行时，下滚补齐（始终保有空白，避免贴边）
+    if (relBottom > wRect.height - bottomPad) {
+      wrapper.scrollTop += (relBottom - (wRect.height - bottomPad))
     }
   })
 }
