@@ -1172,6 +1172,8 @@ const load = async (id) => {
     statusPools.value = sp || []
     priorityPools.value = pp || []
     const desc = reqRes.description || ''
+    // 切换需求（组件实例复用）：清空上一需求残留的引用块颜色 store，否则会串色
+    Object.keys(bqColorStore).forEach(k => delete bqColorStore[k])
     // 先设 descDraft，再设 req，确保编辑器创建时 v-model 已是目标内容
     descDraft.value = desc
     req.value = reqRes
@@ -1191,6 +1193,9 @@ const load = async (id) => {
       status: statusEnToZh[reqRes.status] || reqRes.status,
       priority: priorityEnToZh[reqRes.priority] || reqRes.priority,
     }
+    // 用新需求的 HTML 重建引用块颜色 store 并同步到编辑器 DOM
+    // （Slate 反序列化会剥离 data-bq-color，需在内容渲染后重新注入）
+    setTimeout(() => restoreBqColors(), 300)
     // 编辑器 DOM 就绪后修复链接 href（补全缺少的协议）
     nextTick(fixLinkHrefs)
   } catch {
