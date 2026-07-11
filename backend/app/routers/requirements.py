@@ -1926,7 +1926,6 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             self._code_mode = False    # 在 <pre>/<code> 内部
             self._heading_level = None   # 当前标题级别（1-6），None 表示非标题
             self._h_counters = [0, 0, 0]  # 多级标题计数器 h1/h2/h3
-            self._in_caption = False      # 当前文本是否处于图注（span.req-caption）内
             # 表格支持
             self._in_td = False           # 当前是否在 <td>/<th> 内
             self._cell_runs = []          # 当前单元格段落的 run 列表
@@ -1951,18 +1950,6 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 return
             if self._skip_p:
                 self._skip_p = False
-                return
-
-            # 图注：居中、灰色、斜体小字
-            if self._in_caption:
-                self._in_caption = False
-                p = self.doc.add_paragraph()
-                p.alignment = 1
-                for text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name in self._p_texts:
-                    run = p.add_run(text)
-                    _set_run_font(run, size=SMALL_SIZE, color=_color_to_rgb('#888888'))
-                    run.italic = True
-                self._p_texts = []
                 return
 
 
@@ -2436,10 +2423,6 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                         c, bg = self._get_style_color(attrs)
                         if c: color = c
                         if bg: bg_color = bg
-                        cls = attrs.get('class', '') or ''
-                        if 'req-caption' in cls and not self._in_td:
-                            self._in_caption = True
-                            color = '#888888'
                     elif item[0] == 'code':
                         font_name = 'Courier New'
                         bg_color = '#cccccc'

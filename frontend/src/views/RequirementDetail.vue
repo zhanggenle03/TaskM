@@ -1230,16 +1230,6 @@ const editorConfig = {
           const r = await uploadRequirementImage(projectId.value, req.value.id, file)
           if (r?.url) {
             insertFn(r.url)
-            // 自动插入图注段落（居中、灰、斜体），编号按当前图片数
-            try {
-              const editor = editorRef.value
-              const html = editor.getHtml() || ''
-              const count = (html.match(/<img/g) || []).length
-              editor.insertNode({
-                type: 'paragraph',
-                children: [{ type: 'span', class: 'req-caption', children: [{ text: `图${count}：` }] }],
-              })
-            } catch (e) {}
           }
         } catch { ElMessage.error('图片上传失败') }
       },
@@ -1960,11 +1950,6 @@ const onImgMouseUp = () => { isDragging.value = false }
 .editor-body :deep(.w-e-text-container) {
   min-height: 300px;
 }
-/* 图注：居中、灰、斜体 */
-.editor-body :deep(.w-e-text-container [data-slate-editor] .req-caption) {
-  display: block; text-align: center; color: #888; font-size: 12px; font-style: italic;
-}
-
 /* ── 目录大纲（TOC） ── */
 .toc-panel {
   position: absolute; top: 100px; right: 12px; width: 240px;
