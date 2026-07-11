@@ -14,6 +14,10 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from ..settings_manager import get_port, load_settings, save_settings
 
+# 后端以 pythonw（无控制台）运行，所有 shell 子进程必须加此标志，
+# 否则会弹出短暂可见的 cmd 窗口（"闪一下 CMD" 的根因）。
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW",0x08000000)
+
 router = APIRouter(prefix="/process", tags=["process"])
 
 # ── 端口配置 ──
@@ -62,6 +66,7 @@ def _kill_port(port: int):
         result = subprocess.run(
             f'netstat -ano | findstr ":{port} " | findstr /V "ESTABLISHED"',
             shell=True, capture_output=True, text=True,
+            creationflags=CREATE_NO_WINDOW,
         )
         pids = set()
         for line in result.stdout.strip().splitlines():
@@ -69,7 +74,8 @@ def _kill_port(port: int):
             if parts:
                 pids.add(parts[-1])
         for pid in pids:
-            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
+            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True,
+                           creationflags=CREATE_NO_WINDOW)
     except Exception:
         pass
 
@@ -366,21 +372,37 @@ def update_user_settings(body: UserSettingsUpdate):
     return save_settings(data)
 
 
-@router.post("/shutdown")
-def shutdown():
-    """关闭 TaskM 服务（开发版同时 kill 前端端口，2 秒后退出进程）"""
+def trigger_shutdown():
+    """统一的关闭流程：开发版先杀前端，2 秒后杀后端进程树并自毁。
+
+    设置页「关闭服务」与托盘「退出」都走这里，保证行为一致：
+    先释放前端端口（仅开发版），延迟 2 秒让前端有时间渲染遮罩，
+    再杀掉整个后端进程树（含可能派生的子进程）并自毁退出。
+
+    PID 文件在关闭一开始就清除（与 stop.bat 行为一致），
+    不依赖后续进程树是否成功自杀，避免时序问题导致残留。
+    """
+    # 立即清理 PID 文件——关闭流程已启动，进程注定退出，
+    # 先删文件可确保与 stop.bat 一样"关闭即清 PID"，绝不留残留。
+    from app.process_manager import remove_pid
+    remove_pid()
+
     if not _is_standalone():
+        # 开发版：立即释放 Vite 前端端口（5173）及其进程树
         _kill_port(_FRONTEND_PORT)
 
     from app.process_manager import shutdown_service
 
     def _delayed_shutdown():
-        """延迟执行：先强制释放后端端口，再自毁退出"""
-        # 杀后端端口（解决 os._exit 可能残留 socket 的问题）
-        bp = get_port("backend_port", 8000)
-        _kill_port(bp)
-        time.sleep(0.5)
+        # 杀掉整个后端进程树并自毁；shutdown_service 会先清理 PID 文件，
+        # 因此无需再单独杀后端端口（端口随进程退出自然释放）。
         shutdown_service()
 
     threading.Timer(2.0, _delayed_shutdown).start()
+
+
+@router.post("/shutdown")
+def shutdown():
+    """关闭 TaskM 服务（开发版同时 kill 前端端口，2 秒后退出进程）"""
+    trigger_shutdown()
     return {"status": "shutting_down"}

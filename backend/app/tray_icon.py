@@ -86,27 +86,13 @@ def _open_workspace():
 
 
 def _quit_app():
-    """退出应用：先杀前端端口，再自毁退出"""
-    import subprocess
-    from .settings_manager import get_port
-    fp = get_port("frontend_port", 5173)
-    # 杀前端端口（开发版 Vite）
-    try:
-        result = subprocess.run(
-            f'netstat -ano | findstr ":{fp} " | findstr LISTENING',
-            shell=True, capture_output=True, text=True,
-        )
-        pids = set()
-        for line in result.stdout.strip().splitlines():
-            parts = line.strip().split()
-            if parts:
-                pids.add(parts[-1])
-        for pid in pids:
-            subprocess.run(f"taskkill /F /T /PID {pid}", shell=True, capture_output=True)
-    except Exception:
-        pass
-    from .process_manager import shutdown_service
-    shutdown_service()
+    """退出应用：统一走 trigger_shutdown（2 秒后杀进程树自毁）。
+
+    与设置页「关闭服务」行为一致——先释放前端端口（仅开发版），
+    延迟 2 秒让前端检测到后端消失并弹出遮罩，再杀掉整个后端进程树。
+    """
+    from .routers.process import trigger_shutdown
+    trigger_shutdown()
 
 
 def start_tray(on_setup: Callable | None = None):

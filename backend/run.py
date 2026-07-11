@@ -8,6 +8,10 @@ import atexit
 import subprocess
 import threading
 
+# 后端以 pythonw（无控制台）运行，所有 shell 子进程必须加此标志，
+# 否则会弹出短暂可见的 cmd 窗口（"闪一下 CMD" 的根因）。
+CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW",0x08000000)
+
 # ── 强制 UTF-8 模式 ──
 # pythonw.exe 启动时默认编码是 mbcs/GBK，会导致 openpyxl 读取含中文表头的
 # Excel 文件时返回含 surrogate 的字符串，进而污染 JSON 响应。
@@ -141,6 +145,7 @@ def release_port_by_netstat(port):
         r = subprocess.run(
             f'for /f "tokens=5" %p in (\'netstat -ano ^| findstr ":{port} " ^| findstr "LISTENING"\') do @echo %p',
             shell=True, capture_output=True, text=True, timeout=5,
+            creationflags=CREATE_NO_WINDOW,
         )
         pids = set()
         for line in r.stdout.strip().splitlines():

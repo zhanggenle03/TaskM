@@ -1,5 +1,19 @@
 <template>
   <div class="settings-page">
+    <!-- 服务已关闭遮罩 -->
+    <div v-if="serviceStopped" class="service-stopped-overlay">
+      <div class="service-stopped-card">
+        <div class="service-stopped-icon">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round">
+            <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        </div>
+        <h2 class="service-stopped-title">TaskM 服务已关闭</h2>
+        <p class="service-stopped-desc">后端服务进程已停止运行。你可以关闭此窗口，或重新启动 TaskM 程序。</p>
+        <button class="btn btn-primary" @click="closeWindow">关闭窗口</button>
+      </div>
+    </div>
+
     <h1 class="page-title">通用设置</h1>
 
     <div class="cards-row">
@@ -285,7 +299,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, reactive, computed } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
 import http from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -319,6 +333,7 @@ const workspacePath = ref('')
 
 // ── 关闭服务 ──
 const shuttingDown = ref(false)
+const serviceStopped = ref(false)
 
 // ── 备份与恢复 ──
 const manualBackupScope = ref('full')
@@ -453,14 +468,18 @@ async function shutdownService() {
   try {
     await http.post('/process/shutdown')
     ElMessage.success('服务已关闭')
-    status.value.backend = false
-    status.value.frontend = false
-    setTimeout(() => { window.close() }, 800)
   } catch {
-    status.value.backend = false
-    status.value.frontend = false
+    ElMessage.error('关闭请求发送失败，但服务可能已停止')
   }
+  status.value.backend = false
+  status.value.frontend = false
+  serviceStopped.value = true
   shuttingDown.value = false
+}
+
+// 用户主动关闭窗口（仅对脚本打开的窗口有效；手动打开的标签需用户自行关闭）
+function closeWindow() {
+  window.close()
 }
 
 async function refreshStatus() {
@@ -776,7 +795,43 @@ onMounted(() => {
   refreshBackups()
   loadSchedule()
   refreshProjects()
+  startWatchdog()
 })
+
+onUnmounted(() => {
+  stopWatchdog()
+})
+
+// ── 后端存活看门狗 ──
+// 定时探测后端状态：后端被托盘「退出」或异常退出后，即使前端没有主动点
+// 「关闭服务」，也能自动弹出「服务已关闭」遮罩，保持与设置页一致。
+let watchdogTimer = null
+
+async function watchdogTick() {
+  if (serviceStopped.value) return
+  try {
+    const res = await http.get('/process/status')
+    if (res.backend === false) {
+      status.value = res
+      serviceStopped.value = true
+    }
+  } catch {
+    // 后端已不可达（端口释放/进程退出）→ 视为已停止
+    serviceStopped.value = true
+  }
+}
+
+function startWatchdog() {
+  stopWatchdog()
+  watchdogTimer = setInterval(watchdogTick, 1500)
+}
+
+function stopWatchdog() {
+  if (watchdogTimer) {
+    clearInterval(watchdogTimer)
+    watchdogTimer = null
+  }
+}
 </script>
 
 <style scoped>
@@ -1024,4 +1079,33 @@ onMounted(() => {
   cursor: pointer; white-space: nowrap;
 }
 .bk-check-label input { margin: 0; }
+/* ── 服务已关闭遮罩 ── */
+.service-stopped-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  background: rgba(248, 250, 252, 0.96);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.service-stopped-card {
+  background: #fff;
+  border: 1px solid #e9edf2;
+  border-radius: 14px;
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.12);
+  padding: 36px 40px 32px;
+  max-width: 380px;
+  text-align: center;
+}
+.service-stopped-icon {
+  width: 72px; height: 72px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: #f1f5f9;
+  display: flex; align-items: center; justify-content: center;
+}
+.service-stopped-title { font-size: 18px; font-weight: 600; color: #1e293b; margin: 0 0 10px; }
+.service-stopped-desc { font-size: 13px; color: #64748b; line-height: 1.6; margin: 0 0 22px; }
+
 </style>
