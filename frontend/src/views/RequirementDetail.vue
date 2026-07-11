@@ -1078,6 +1078,8 @@ const onEditorChange = (editor) => {
   }
   // Slate 重建 DOM 后恢复引用块颜色（数据源为 bqColorStore，不依赖 DOM 残留属性）
   syncBqColorsToDom()
+  // 重新计算标题多级编号（写入 data-heading-num，仅显示）
+  updateHeadingNumbers()
   // 自动草稿：防抖暂存到 localStorage（仅编辑态）
   scheduleSaveDraft()
   // 重建目录大纲
@@ -1090,23 +1092,35 @@ const onEditorChange = (editor) => {
 }
 
 // ── 光标可见性：固定工具栏会遮挡顶部，输入时若光标落在工具栏覆盖区则滚动露出 ──
+let _caretRaf = null
 const ensureCaretVisible = () => {
-  const wrapper = document.querySelector('.editor-wrapper')
-  if (!wrapper) return
-  const sel = window.getSelection()
-  if (!sel || !sel.rangeCount) return
-  const rect = sel.getRangeAt(0).getBoundingClientRect()
-  const wRect = wrapper.getBoundingClientRect()
-  if (!rect.height && !rect.width) return
-  const relTop = rect.top - wRect.top
-  const toolbarH = 46
-  // 光标顶部被工具栏遮挡 → 上滚使光标露在工具栏下方
-  if (relTop < toolbarH + 4) {
-    wrapper.scrollTop -= (toolbarH + 4 - relTop)
-  } else if (relTop + rect.height > wRect.bottom - 8) {
-    // 光标在容器底部外 → 下滚使其可见
-    wrapper.scrollTop += (relTop + rect.height - (wRect.bottom - 8))
-  }
+  // 下一帧再计算：回车后新段落刚插入，需等浏览器完成布局，光标 rect 才准确
+  if (_caretRaf) cancelAnimationFrame(_caretRaf)
+  _caretRaf = requestAnimationFrame(() => {
+    const wrapper = document.querySelector('.editor-wrapper')
+    if (!wrapper) return
+    const sel = window.getSelection()
+    if (!sel || !sel.rangeCount) return
+    const range = sel.getRangeAt(0)
+    let rect = range.getBoundingClientRect()
+    // 回车后空段落 rect 尺寸可能为 0，改用光标所在块元素兜底
+    if (!rect || (rect.height === 0 && rect.width === 0)) {
+      const node = range.startContainer
+      const el = node && node.nodeType === 3 ? node.parentElement : node
+      if (el && el.getBoundingClientRect) rect = el.getBoundingClientRect()
+    }
+    if (!rect || (rect.height === 0 && rect.width === 0)) return
+    const wRect = wrapper.getBoundingClientRect()
+    const relTop = rect.top - wRect.top
+    const toolbarH = 46
+    // 光标顶部被工具栏遮挡 → 上滚使光标露在工具栏下方
+    if (relTop < toolbarH + 4) {
+      wrapper.scrollTop -= (toolbarH + 4 - relTop)
+    } else if (relTop + rect.height > wRect.bottom - 8) {
+      // 光标在容器底部外 → 下滚使其可见
+      wrapper.scrollTop += (relTop + rect.height - (wRect.bottom - 8))
+    }
+  })
 }
 
 // ── 附件即时清理：编辑中删除图片/附件节点时，防抖删除后端物理文件 ──
@@ -1147,26 +1161,35 @@ const cnNum = (n) => {
   const o = n % 10
   return d[t] + '十' + (o ? d[o] : '')
 }
+
+// ── 标题多级编号：遍历编辑器内的 h1/h2/h3，计算「一、/1.1 /(n)」写入 data-heading-num ──
+// 存储的 HTML 来自 Slate model，不携带该属性，故不污染数据库；每次渲染后重算即可（与后端 _heading_label 一致）
+const updateHeadingNumbers = (container) => {
+  container = container || editorRef.value?.getEditableContainer?.() ||
+    document.querySelector('.w-e-text-container [data-slate-editor]')
+  if (!container) return
+  const hs = container.querySelectorAll('h1, h2, h3')
+  let c1 = 0, c2 = 0, c3 = 0
+  hs.forEach((el) => {
+    const lv = Number(el.tagName[1])
+    if (lv === 1) { c1 += 1; c2 = 0; c3 = 0; el.dataset.headingNum = cnNum(c1) + '、' }
+    else if (lv === 2) { c2 += 1; c3 = 0; el.dataset.headingNum = `${c1}.${c2} ` }
+    else { c3 += 1; el.dataset.headingNum = `(${c3}) ` }
+  })
+}
 const buildToc = () => {
   const container = editorRef.value?.getEditableContainer?.() ||
     document.querySelector('.w-e-text-container [data-slate-editor]')
   if (!container) return
+  // 确保编号最新（与编辑器显示共用同一计算）
+  updateHeadingNumbers(container)
   const hs = container.querySelectorAll('h1, h2, h3')
   _tocEls = Array.from(hs)
-  // 维护与编辑器/导出一致的计数器：h1=一、/ h2=1.1 / h3=(n)
-  let c1 = 0, c2 = 0, c3 = 0
-  tocItems.value = _tocEls.map((el, i) => {
-    const lv = Number(el.tagName[1])
-    let label = ''
-    if (lv === 1) { c1 += 1; c2 = 0; c3 = 0; label = cnNum(c1) + '、' }
-    else if (lv === 2) { c2 += 1; c3 = 0; label = `${c1}.${c2} ` }
-    else { c3 += 1; label = `(${c3}) ` }
-    return {
-      level: lv,
-      label,
-      text: (el.textContent || '').trim() || `（无标题 ${i + 1}）`,
-    }
-  })
+  tocItems.value = _tocEls.map((el, i) => ({
+    level: Number(el.tagName[1]),
+    label: el.dataset.headingNum || '',
+    text: (el.textContent || '').trim() || `（无标题 ${i + 1}）`,
+  }))
 }
 let _tocTimer = null
 const scheduleBuildToc = () => {
@@ -1917,30 +1940,20 @@ const onImgMouseUp = () => { isDragging.value = false }
   padding: 2px 6px;
   font-family: inherit;
 }
-/* ── 标题多级自动编号（仅显示，不影响存储的 HTML） ── */
-.editor-body :deep(.w-e-text-container [data-slate-editor]) {
-  counter-reset: h1c h2c h3c;
-}
+/* ── 标题多级自动编号（JS 写入 data-heading-num，仅显示，不影响存储的 HTML） ── */
 .editor-body :deep(.w-e-text-container [data-slate-editor] h1) {
-  counter-increment: h1c; counter-reset: h2c h3c;
   font-size: 18px; font-weight: 700; color: #1f1f1f; margin: 18px 0 8px; scroll-margin-top: 56px;
 }
-.editor-body :deep(.w-e-text-container [data-slate-editor] h1)::before {
-  content: counter(h1c, cjk-ideographic) "、"; font-weight: 700;
-}
 .editor-body :deep(.w-e-text-container [data-slate-editor] h2) {
-  counter-increment: h2c; counter-reset: h3c;
   font-size: 16px; font-weight: 700; color: #1f1f1f; margin: 14px 0 6px; scroll-margin-top: 56px;
 }
-.editor-body :deep(.w-e-text-container [data-slate-editor] h2)::before {
-  content: counter(h1c) "." counter(h2c) " "; font-weight: 700;
-}
 .editor-body :deep(.w-e-text-container [data-slate-editor] h3) {
-  counter-increment: h3c;
   font-size: 14px; font-weight: 600; color: #333; margin: 12px 0 4px; scroll-margin-top: 56px;
 }
+.editor-body :deep(.w-e-text-container [data-slate-editor] h1)::before,
+.editor-body :deep(.w-e-text-container [data-slate-editor] h2)::before,
 .editor-body :deep(.w-e-text-container [data-slate-editor] h3)::before {
-  content: "(" counter(h3c) ") "; font-weight: 600;
+  content: attr(data-heading-num); font-weight: 700; margin-right: 2px;
 }
 /* 图片默认居中 */
 .editor-body :deep(.w-e-text-container [data-slate-editor] img) {
