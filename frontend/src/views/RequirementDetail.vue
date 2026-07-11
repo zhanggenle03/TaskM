@@ -850,6 +850,8 @@ const toolbarConfig = {
     '|',
     'color', 'bgColor',
     '|',
+    'header1', 'header2', 'header3',
+    '|',
     'bulletedList', 'numberedList', 'blockquote', 'bqColorSelect',
     '|',
     'divider',
@@ -1074,7 +1076,19 @@ const editorConfig = {
         fd.append('file', file)
         try {
           const r = await (await fetch(`/api/projects/${projectId.value}/requirements/${req.value.id}/images`, { method: 'POST', body: fd })).json()
-          if (r.url) insertFn(r.url)
+          if (r.url) {
+            insertFn(r.url)
+            // 自动插入图注段落（居中、灰、斜体），编号按当前图片数
+            try {
+              const editor = editorRef.value
+              const html = editor.getHtml() || ''
+              const count = (html.match(/<img/g) || []).length
+              editor.insertNode({
+                type: 'paragraph',
+                children: [{ type: 'span', class: 'req-caption', children: [{ text: `图${count}：` }] }],
+              })
+            } catch (e) {}
+          }
         } catch { ElMessage.error('图片上传失败') }
       },
     },
@@ -1131,6 +1145,7 @@ onBeforeUnmount(() => {
         document.querySelector('.w-e-text-container')
       if (container) {
         container.removeEventListener('mousedown', handleEditorMouseDown)
+        container.removeEventListener('mouseup', handleLinkBoundaryClick)
         container.removeEventListener('dblclick', onEditorDblClick)
         container.removeEventListener('click', handleEditorClick)
       }
@@ -1725,6 +1740,39 @@ const onImgMouseUp = () => { isDragging.value = false }
   border-radius: 3px;
   padding: 2px 6px;
   font-family: inherit;
+}
+/* ── 标题多级自动编号（仅显示，不影响存储的 HTML） ── */
+.editor-body :deep(.w-e-text-container [data-slate-editor]) {
+  counter-reset: h1c h2c h3c;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] h1) {
+  counter-increment: h1c; counter-reset: h2c h3c;
+  font-size: 18px; font-weight: 700; color: #1f1f1f; margin: 18px 0 8px;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] h1)::before {
+  content: counter(h1c, cjk-ideographic) "、"; font-weight: 700;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] h2) {
+  counter-increment: h2c; counter-reset: h3c;
+  font-size: 16px; font-weight: 700; color: #1f1f1f; margin: 14px 0 6px;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] h2)::before {
+  content: counter(h1c) "." counter(h2c) " "; font-weight: 700;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] h3) {
+  counter-increment: h3c;
+  font-size: 14px; font-weight: 600; color: #333; margin: 12px 0 4px;
+}
+.editor-body :deep(.w-e-text-container [data-slate-editor] h3)::before {
+  content: counter(h1c) "." counter(h2c) "." counter(h3c) " "; font-weight: 600;
+}
+/* 图片默认居中 */
+.editor-body :deep(.w-e-text-container [data-slate-editor] img) {
+  display: block; margin: 8px auto; max-width: 100%;
+}
+/* 图注：居中、灰、斜体 */
+.editor-body :deep(.w-e-text-container [data-slate-editor] .req-caption) {
+  display: block; text-align: center; color: #888; font-size: 12px; font-style: italic;
 }
 
 /* ── 图片预览弹窗 ── */

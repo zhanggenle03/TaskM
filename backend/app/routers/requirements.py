@@ -1828,6 +1828,21 @@ def _darken_color(hex_color: str, factor: float = 0.6) -> str:
     except ValueError:
         return '#888888'
 
+def _cn(n):
+    """阿拉伯数字转中文数字（1-99），用于标题一级编号 一、二、三"""
+    if n <= 0:
+        return '0'
+    digits = '零一二三四五六七八九'
+    if n < 10:
+        return digits[n]
+    if n < 20:
+        return '十' + (digits[n % 10] if n % 10 else '')
+    if n < 100:
+        t, o = divmod(n, 10)
+        return digits[t] + '十' + (digits[o] if o else '')
+    return str(n)
+
+
 def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_pools: dict = None, img_base_dir: str = None):
     """
     将 WangEditor 生成的 HTML 描述渲染到 docx 文档中，
@@ -1838,7 +1853,7 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
     from html.parser import HTMLParser
     from docx.shared import RGBColor, Inches, Pt as PtSize
     from docx.enum.text import WD_ALIGN_PARAGRAPH
-    from ..export_service import FONT_FAMILY, BODY_SIZE, SMALL_SIZE, _set_run_font, _add_hyperlink, _apply_numbering
+    from ..export_service import FONT_FAMILY, FONT_FAMILY_HEADING, BODY_SIZE, SMALL_SIZE, HEADING1_SIZE, HEADING2_SIZE, _set_run_font, _add_hyperlink, _apply_numbering
 
     # 建立列表编号定义（bullet + decimal）
     numbering_part = doc.part.numbering_part
@@ -1909,6 +1924,9 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             self._list_num_id = None
             self._skip_p = False
             self._code_mode = False    # 在 <pre>/<code> 内部
+            self._heading_level = None   # 当前标题级别（1-6），None 表示非标题
+            self._h_counters = [0, 0, 0]  # 多级标题计数器 h1/h2/h3
+            self._in_caption = False      # 当前文本是否处于图注（span.req-caption）内
 
         def _push_run(self, text='', bold=False, italic=False, underline=False, strikethrough=False,
                       color=None, bg_color=None, link_url='', font_name=None):
@@ -1921,6 +1939,19 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             if self._skip_p:
                 self._skip_p = False
                 return
+
+            # 图注：居中、灰色、斜体小字
+            if self._in_caption:
+                self._in_caption = False
+                p = self.doc.add_paragraph()
+                p.alignment = 1
+                for text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name in self._p_texts:
+                    run = p.add_run(text)
+                    _set_run_font(run, size=SMALL_SIZE, color=_color_to_rgb('#888888'))
+                    run.italic = True
+                self._p_texts = []
+                return
+
 
             p = (self._bq_cell.add_paragraph() if self._in_bq and self._bq_cell
                  else self.doc.add_paragraph())
@@ -1962,6 +1993,63 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                             shd.set(qn('w:val'), 'clear')
                             rPr.append(shd)
                     _set_run_font(run, **kwargs)
+            self._p_texts = []
+
+        def _heading_label(self, level):
+            """根据当前多级计数器生成标题编号文本：一、/ 1.1 / 1.1.1"""
+            c = self._h_counters
+            if level == 1:
+                return _cn(c[0]) + '、'
+            if level == 2:
+                return f'{c[0]}.{c[1]} '
+            return f'{c[0]}.{c[1]}.{c[2]} '
+
+        def _flush_heading(self):
+            """将当前累积文本作为多级编号标题输出（黑体、加粗）"""
+            if not self._p_texts:
+                self._p_texts = []
+                return
+            level = self._heading_level or 3
+            # 更新多级计数器（进入更高级别时重置更深层）
+            if level == 1:
+                self._h_counters[0] += 1
+                self._h_counters[1] = 0
+                self._h_counters[2] = 0
+            elif level == 2:
+                self._h_counters[1] += 1
+                self._h_counters[2] = 0
+            elif level == 3:
+                self._h_counters[2] += 1
+
+            if level == 1:
+                size = HEADING1_SIZE
+            elif level == 2:
+                size = HEADING2_SIZE
+            else:
+                size = PtSize(13)
+            fn = FONT_FAMILY_HEADING
+
+            p = self.doc.add_paragraph()
+            pPr = p._p.get_or_add_pPr()
+            spacing = OxmlElement('w:spacing')
+            spacing.set(qn('w:before'), '200')
+            spacing.set(qn('w:after'), '120')
+            spacing.set(qn('w:line'), '300')
+            spacing.set(qn('w:lineRule'), 'auto')
+            pPr.append(spacing)
+
+            # 仅 1-3 级带自动编号前缀
+            if 1 <= level <= 3:
+                label = self._heading_label(level)
+                run = p.add_run(label)
+                _set_run_font(run, size=size, bold=True, font_name=fn)
+
+            for text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name in self._p_texts:
+                if link_url:
+                    _add_hyperlink(p, text, link_url, size=size)
+                else:
+                    run = p.add_run(text)
+                    _set_run_font(run, size=size, bold=True, font_name=fn)
             self._p_texts = []
 
         def _get_style_color(self, attrs_dict):
@@ -2014,6 +2102,7 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 self.stack.append(tag)
             elif tag in ('h1','h2','h3','h4','h5','h6'):
                 self._flush_paragraph()
+                self._heading_level = int(tag[1])
                 self.stack.append(tag)
             elif tag in ('b','strong','em','i','u','s','del','strike'):
                 self.stack.append(tag)
@@ -2148,7 +2237,7 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             elif tag == 'img':
                 self._add_image(attrs_dict)
             elif tag == 'span':
-                self.stack.append(('span', attrs_dict.get('style', '')))
+                self.stack.append(('span', attrs_dict))
             elif tag == 'pre':
                 self._flush_paragraph()
                 self._code_mode = True
@@ -2162,7 +2251,8 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 self._flush_paragraph()
                 self._pop_stack(tag)
             elif tag in ('h1','h2','h3','h4','h5','h6'):
-                self._flush_paragraph()
+                self._flush_heading()
+                self._heading_level = None
                 self._pop_stack(tag)
             elif tag in ('b','strong','em','i','u','s','del','strike'):
                 self._pop_stack(tag)
@@ -2235,9 +2325,14 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                         elif link_url and not re.match(r'^[a-zA-Z][a-zA-Z0-9+\-.]*://', link_url) and not link_url.startswith('/'):
                             link_url = 'https://' + link_url
                     elif item[0] == 'span':
-                        c, bg = self._get_style_color(dict(style=item[1]))
+                        attrs = item[1]
+                        c, bg = self._get_style_color(attrs)
                         if c: color = c
                         if bg: bg_color = bg
+                        cls = attrs.get('class', '') or ''
+                        if 'req-caption' in cls:
+                            self._in_caption = True
+                            color = '#888888'
                     elif item[0] == 'code':
                         font_name = 'Courier New'
                         bg_color = '#cccccc'
