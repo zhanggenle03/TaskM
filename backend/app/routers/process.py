@@ -27,9 +27,10 @@ PID_FILE = ROOT / "taskm.pid"
 # ── 自启动路径 ──
 AUTOSTART_DIR = ROOT
 STARTUP_FOLDER = Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
-STARTUP_SCRIPT_NAME = "TaskM_Autostart.vbs"
+STARTUP_SCRIPT_NAME = "TaskM.lnk"
+LAUNCHER_NAME = "autostart_launcher.pyw"
 AUTOSTART_SETTINGS_KEY = "autostart"
-AUTOSTART_LEGACY_LNK = "TaskM.lnk"  # 旧版快捷方式，清理用
+AUTOSTART_LEGACY_VBS = "TaskM_Autostart.vbs"  # 旧版 VBS，清理用
 
 
 # ── 辅助方法 ──
@@ -107,75 +108,121 @@ def _detect_components():
     return pythonw_path, node_dir
 
 
-def _generate_autostart_vbs() -> str:
-    """生成自启动 VBS 脚本（WScript 静默运行，无控制台窗口）"""
-    if _is_standalone():
-        exe = str(Path(sys.executable).resolve())
-        return f'CreateObject("WScript.Shell").Run "{exe}", 0, False\r\n'
-    else:
-        pythonw_path, node_dir = _detect_components()
-        project_root = str(ROOT)
-        frontend_dir = str(ROOT / "frontend")
+def _write_launcher_pyw() -> str:
+    """生成自启动 .pyw 启动器（仅开发版）。
 
-        # 后端：cd 到项目根目录再启动 pythonw
-        backend_cmd_inner = f'cd /d {project_root} && {pythonw_path} -X utf8 backend\\run.py'
-        backend_cmd_vbs = f'cmd /c "{backend_cmd_inner}"'.replace('"', '""')
+    普通 Python 脚本，用 CREATE_NO_WINDOW 无窗口拉起前后端，
+    不含 VBS/隐藏式脚本特征，不会触发杀软启发式。
+    """
+    pythonw_path, node_dir = _detect_components()
+    launcher = (
+        "import os\n"
+        "import subprocess\n"
+        "\n"
+        "CREATE_NO_WINDOW = 0x08000000\n"
+        f"ROOT = r'{ROOT}'\n"
+        f"PYTHONW = r'{pythonw_path}'\n"
+        f"NODE_DIR = r'{node_dir}'\n"
+        f"BACKEND_PORT = {_BACKEND_PORT}\n"
+        f"FRONTEND_PORT = {_FRONTEND_PORT}\n"
+        "\n"
+        "def main():\n"
+        "    # 后端\n"
+        "    subprocess.Popen(\n"
+        "        f'{PYTHONW} -X utf8 backend\\\\run.py',\n"
+        "        cwd=ROOT,\n"
+        "        shell=True,\n"
+        "        creationflags=CREATE_NO_WINDOW,\n"
+        "    )\n"
+        "    # 前端\n"
+        "    env = os.environ.copy()\n"
+        "    env['PATH'] = NODE_DIR + ';' + env.get('PATH', '')\n"
+        "    env['VITE_API_TARGET'] = f'http://localhost:{BACKEND_PORT}'\n"
+        "    env['VITE_FRONTEND_PORT'] = str(FRONTEND_PORT)\n"
+        "    subprocess.Popen(\n"
+        "        'npm run dev',\n"
+        "        cwd=os.path.join(ROOT, 'frontend'),\n"
+        "        shell=True,\n"
+        "        creationflags=CREATE_NO_WINDOW,\n"
+        "        env=env,\n"
+        "    )\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+    return launcher
 
-        # 前端：cd 到 frontend 目录，置入可靠 Node 到 PATH，传入端口环境变量，启动 npm
-        frontend_cmd_inner = (
-            f'cd /d {frontend_dir}'
-            f' && set PATH={node_dir};%PATH%'
-            f' && set VITE_API_TARGET=http://localhost:{_BACKEND_PORT}'
-            f' && set VITE_FRONTEND_PORT={_FRONTEND_PORT}'
-            f' && npm run dev'
-        )
-        frontend_cmd_vbs = f'cmd /c "{frontend_cmd_inner}"'.replace('"', '""')
 
-        # 窗口样式 0 = 隐藏
-        return (
-            f'CreateObject("WScript.Shell").Run "{backend_cmd_vbs}", 0, False\r\n'
-            f'CreateObject("WScript.Shell").Run "{frontend_cmd_vbs}", 0, False\r\n'
-        )
+def _create_shortcut(target_path: str, arguments: str, working_dir: str) -> Path:
+    """用 pywin32 创建指向启动文件夹的 .lnk 快捷方式。
+
+    快捷方式不是脚本代码，不含 VBS/隐藏式启动特征，不会触发杀软启发式。
+    """
+    import win32com.client  # 项目已依赖 pywin32
+    lnk_path = STARTUP_FOLDER / STARTUP_SCRIPT_NAME
+    STARTUP_FOLDER.mkdir(parents=True, exist_ok=True)
+    shell = win32com.client.Dispatch("WScript.Shell")
+    shortcut = shell.CreateShortcut(str(lnk_path))
+    shortcut.TargetPath = target_path
+    shortcut.Arguments = arguments
+    shortcut.WorkingDirectory = working_dir
+    shortcut.WindowStyle = 7  # 7 = 最小化（启动时不抢焦点）
+    shortcut.Save()
+    return lnk_path
 
 
 def _check_startup_script() -> bool:
-    """检查启动文件夹中是否有自启动脚本"""
+    """检查启动文件夹中是否有自启动快捷方式"""
     return (STARTUP_FOLDER / STARTUP_SCRIPT_NAME).exists()
 
 
 def _enable_autostart():
-    """在启动文件夹创建自启动 VBS 脚本"""
-    # 清理旧版 .bat 残留
-    old_bat = STARTUP_FOLDER / "TaskM_Autostart.bat"
-    if old_bat.exists():
-        try: old_bat.unlink()
-        except Exception: pass
-    dst = STARTUP_FOLDER / STARTUP_SCRIPT_NAME
-    STARTUP_FOLDER.mkdir(parents=True, exist_ok=True)
-    dst.write_text(_generate_autostart_vbs(), encoding="utf-8")
-    print(f"[autostart] Created {dst}", flush=True)
+    """在启动文件夹创建自启动 .lnk 快捷方式（替代旧 VBS，避免报毒）"""
+    if _is_standalone():
+        # 打包版：直接指向 exe（无控制台）
+        exe = str(Path(sys.executable).resolve())
+        _create_shortcut(exe, "", str(ROOT))
+        print(f"[autostart] Created lnk -> {exe}", flush=True)
+    else:
+        # 开发版：写 .pyw 启动器 + 建指向 pythonw 的快捷方式
+        launcher_path = ROOT / LAUNCHER_NAME
+        launcher_path.write_text(_write_launcher_pyw(), encoding="utf-8")
+        pythonw_path, _ = _detect_components()
+        _create_shortcut(pythonw_path, f'"{launcher_path}"', str(ROOT))
+        print(f"[autostart] Created lnk -> {pythonw_path} {launcher_path}", flush=True)
+    # 清理旧版残留（VBS/.bat/旧 .lnk）
+    _cleanup_legacy()
 
 
 def _disable_autostart():
-    """删除启动文件夹中的自启动脚本"""
-    script = STARTUP_FOLDER / STARTUP_SCRIPT_NAME
-    if script.exists():
-        script.unlink()
-        print(f"[autostart] Removed {script}", flush=True)
-    # 也清理旧 .bat
-    old_bat = STARTUP_FOLDER / "TaskM_Autostart.bat"
-    if old_bat.exists():
-        try: old_bat.unlink()
+    """删除启动文件夹中的自启动快捷方式及启动器"""
+    lnk = STARTUP_FOLDER / STARTUP_SCRIPT_NAME
+    if lnk.exists():
+        try:
+            lnk.unlink()
+            print(f"[autostart] Removed {lnk}", flush=True)
+        except Exception as e:
+            print(f"[autostart] 删除失败: {e}", flush=True)
+    launcher = ROOT / LAUNCHER_NAME
+    if launcher.exists():
+        try: launcher.unlink()
         except Exception: pass
     _cleanup_legacy()
 
 
 def _cleanup_legacy():
-    """清理旧版自启动残留（.lnk 快捷方式 + 注册表 Run 键 + VBS）"""
-    # 旧 lnk
-    lnk = STARTUP_FOLDER / AUTOSTART_LEGACY_LNK
-    if lnk.exists():
-        try: lnk.unlink()
+    """清理旧版自启动残留（VBS + 旧 .bat + 注册表 Run 键）"""
+    # 旧 VBS
+    for vbs in [ROOT / AUTOSTART_LEGACY_VBS, ROOT / "autostart_backend.vbs",
+                ROOT / "autostart_full.vbs", ROOT / "taskm_autostart.bat",
+                ROOT / "taskm_autostart_full.bat"]:
+        if vbs.exists():
+            try: vbs.unlink()
+            except Exception: pass
+    # 旧 .bat 在启动文件夹
+    old_bat = STARTUP_FOLDER / "TaskM_Autostart.bat"
+    if old_bat.exists():
+        try: old_bat.unlink()
         except Exception: pass
     # 旧注册表
     try:
@@ -188,12 +235,6 @@ def _cleanup_legacy():
         winreg.CloseKey(key)
     except Exception:
         pass
-    # 旧 VBS
-    for vbs in [ROOT / "autostart_backend.vbs", ROOT / "autostart_full.vbs",
-                ROOT / "taskm_autostart.bat", ROOT / "taskm_autostart_full.bat"]:
-        if vbs.exists():
-            try: vbs.unlink()
-            except Exception: pass
 
 
 # ── API ──
