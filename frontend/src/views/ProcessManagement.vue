@@ -217,10 +217,9 @@
         </div>
         <div class="bk-dlg-row">
           <span class="bk-dlg-label">保留</span>
-          <select class="bk-select" v-model.number="bkSchedule.max_keep">
-            <option v-for="n in [3,5,7,10,15,20,30,50]" :key="n" :value="n">{{ n }} 份</option>
-          </select>
-          <span class="bk-dlg-hint">超出自动清理旧备份</span>
+          <input class="bk-num-input" v-model.number="bkSchedule.max_keep" type="number" min="1" max="100" @blur="onMaxKeepBlur" />
+          <span class="bk-unit">份</span>
+          <span class="bk-dlg-hint">超出自动清理旧备份（1~100）</span>
         </div>
       </div>
       <template #footer>
@@ -554,7 +553,15 @@ async function loadSchedule() {
   }
 }
 
+function onMaxKeepBlur() {
+  let v = parseInt(bkSchedule.max_keep, 10)
+  if (isNaN(v) || v < 1) v = 1
+  if (v > 100) v = 100
+  bkSchedule.max_keep = v
+}
+
 async function saveScheduleFromDialog() {
+  onMaxKeepBlur()
   scheduleSaving.value = true
   try {
     await setBackupSchedule({
@@ -965,6 +972,16 @@ onMounted(() => {
 .bk-dlg-label {
   font-size: 13px; color: #475569; min-width: 56px; flex-shrink: 0;
 }
+.bk-num-input {
+  width: 72px; padding: 2px 8px; border: 1px solid #d1d9e6;
+  border-radius: 6px; font-size: 13px; font-family: monospace;
+  text-align: center; color: #1e293b; background: #fff;
+  outline: none; transition: border-color 0.15s; height: 28px;
+  box-sizing: border-box;
+}
+.bk-num-input:focus { border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+.bk-num-input::-webkit-inner-spin-button { opacity: 1; }
+.bk-unit { font-size: 12px; color: #475569; flex-shrink: 0; }
 .bk-dlg-sep { font-size: 12px; color: #94a3b8; }
 .bk-dlg-hint { font-size: 11px; color: #94a3b8; }
 .bk-restore-info { font-size: 12px; color: #475569; }
