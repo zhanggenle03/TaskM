@@ -209,6 +209,14 @@ export const getReqViewState = (projectId) =>
 export const saveReqViewState = (projectId, data) =>
   http.put(`/projects/${projectId}/requirements/view-state`, data, { _silentError: true })
 
+// --- Attendance Export (后端 openpyxl 生成含原生图表的 xlsx) ---
+export const exportAttendanceExcel = (data) =>
+  http.post('/attendance/export-excel', data, {
+    responseType: 'blob',
+    rawResponse: true,
+    _silentError: true,
+  })
+
 // --- Backup & Restore ---
 export const createBackup = (scope) => http.post('/backup/create', { scope })
 

@@ -7,7 +7,7 @@ from fastapi import Request
 from .database import Base, engine, UPLOAD_DIR
 from .settings_manager import get_port
 
-from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements, backup
+from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements, backup, attendance_export
 
 
 # ── 从配置读取端口（用于 CORS 白名单） ──
@@ -88,6 +88,7 @@ app.include_router(project_contacts.router, prefix="/api")
 app.include_router(export_router.router, prefix="/api")
 app.include_router(requirements.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
+app.include_router(attendance_export.router, prefix="/api")
 
 # 挂载上传目录为静态文件（供富文本图片等访问）
 import os

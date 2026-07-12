@@ -217,17 +217,28 @@
       <div class="calc-range">
         <span style="font-size:13px;color:#888;margin-right:8px">统计范围</span>
         <el-date-picker
-          v-model="calcRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
+          v-model="calcStart"
+          type="date"
+          placeholder="开始日期"
           value-format="YYYY-MM-DD"
-          style="width:320px"
-          :disabled-date="disabledCalcDate"
-          @change="onCalcRangeChange"
+          style="width:150px"
+          :disabled-date="disabledCalcStart"
+          @change="onCalcDateChange"
+        />
+        <span style="margin:0 8px;color:#888">至</span>
+        <el-date-picker
+          v-model="calcEnd"
+          type="date"
+          placeholder="结束日期"
+          value-format="YYYY-MM-DD"
+          style="width:150px"
+          :disabled-date="disabledCalcEnd"
+          @change="onCalcDateChange"
         />
         <el-button size="small" type="primary" style="margin-left:8px" @click="runCalc">计算</el-button>
+        <el-button size="small" type="success" plain style="margin-left:8px" :disabled="!calcResult" @click="exportDetailXLSX">
+          <el-icon><Download /></el-icon> 导出明细
+        </el-button>
       </div>
 
       <template v-if="calcResult">
@@ -369,14 +380,14 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataAnalysis, WarningFilled, Setting } from '@element-plus/icons-vue'
+import { DataAnalysis, WarningFilled, Setting, Download } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import utc from 'dayjs/plugin/utc'
 dayjs.extend(utc)
 dayjs.locale('zh-cn')
 import {
-  getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks,
+  getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks, exportAttendanceExcel,
 } from '../api'
 import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer } from '../utils/holiday'
 
@@ -421,20 +432,35 @@ const loadHolidayForYear = async (year) => {
 
 // 出勤计算器
 const showCalcDlg = ref(false)
-const calcRange = ref(null)
+const calcStart = ref(null)
+const calcEnd = ref(null)
 const calcResult = ref(null)
 
-const onCalcRangeChange = () => { calcResult.value = null }
-const disabledCalcDate = (date) => {
+const onCalcDateChange = () => { calcResult.value = null }
+// 入职日之前的日期不可选
+const entryBefore = (date) => {
   const entryDateStr = getEntryDate()
   return entryDateStr ? dayjs(date).isBefore(dayjs(entryDateStr)) : false
 }
+// 开始日期：不早于入职日、不晚于结束日期
+const disabledCalcStart = (date) => {
+  if (entryBefore(date)) return true
+  if (calcEnd.value && dayjs(date).isAfter(dayjs(calcEnd.value))) return true
+  return false
+}
+// 结束日期：不早于入职日、不早于开始日期
+const disabledCalcEnd = (date) => {
+  if (entryBefore(date)) return true
+  if (calcStart.value && dayjs(date).isBefore(dayjs(calcStart.value))) return true
+  return false
+}
 const runCalc = async () => {
-  if (!calcRange.value || !calcRange.value[0] || !calcRange.value[1]) {
-    ElMessage.warning('请选择日期范围')
+  if (!calcStart.value || !calcEnd.value) {
+    ElMessage.warning('请选择开始和结束日期')
     return
   }
-  const [startStr, endStr] = calcRange.value
+  const startStr = calcStart.value
+  const endStr = calcEnd.value
   const start = dayjs(startStr)
   const end = dayjs(endStr)
   if (end.isBefore(start)) { ElMessage.warning('结束日期不能早于开始日期'); return }
@@ -452,6 +478,7 @@ const runCalc = async () => {
   const byMonth = {}
   const byProject = {}
   const multiProjectDays = [] // 多项目签到的日期列表
+  const days = [] // 逐日明细
   let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0
   const today = dayjs().startOf('day')
 
@@ -461,6 +488,12 @@ const runCalc = async () => {
     const extra = getDayExtraInfo(dateStr)
     const dayCheckins = rangeCheckinsByDate[dateStr] || []
     const hasCheckin = dayCheckins.length > 0
+    const dayProjectNames = []
+    for (const chk of dayCheckins) {
+      for (const p of chk.projects || []) {
+        if (!dayProjectNames.includes(p.name)) dayProjectNames.push(p.name)
+      }
+    }
     const isFuture = d.isAfter(today)
     const monthKey = d.format('YYYY年M月')
     const entryDateStr = getEntryDate()
@@ -532,6 +565,20 @@ const runCalc = async () => {
     } else {
       if (!hasCheckin && !isFuture) { totalLeave++; byMonth[monthKey].leaveDays++ }
     }
+
+    // 逐日明细
+    let dayType
+    if (hasCheckin) dayType = effIsRest ? '加班' : '上班'
+    else if (effIsRest) dayType = '休息'
+    else if (isFuture) dayType = '预估上班'
+    else dayType = '请假'
+    days.push({
+      date: dateStr,
+      weekday: ['日', '一', '二', '三', '四', '五', '六'][weekday],
+      type: dayType,
+      projectNames: dayProjectNames,
+      estimated: dayType === '预估上班',
+    })
   }
 
   calcResult.value = {
@@ -539,6 +586,33 @@ const runCalc = async () => {
     monthly: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })),
     byProject: Object.values(byProject).sort((a, b) => b.days - a.days),
     multiProjectDays,
+    days,
+  }
+}
+
+// 将出勤计算结果发送到后端，由 openpyxl 生成含原生图表的 Excel 并下载
+const exportDetailXLSX = async () => {
+  if (!calcResult.value) { ElMessage.warning('请先计算'); return }
+  try {
+    const res = await exportAttendanceExcel({
+      start: calcStart.value,
+      end: calcEnd.value,
+      result: calcResult.value,
+    })
+    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const rangeStr = (calcStart.value && calcEnd.value) ? `${calcStart.value}_${calcEnd.value}` : dayjs().format('YYYY-MM-DD')
+    a.download = `出勤明细_${rangeStr}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('Excel 已导出')
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('导出失败：' + (e && e.message ? e.message : e))
   }
 }
 
