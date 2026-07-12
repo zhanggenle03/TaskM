@@ -12,7 +12,7 @@
         <el-button :type="batchMode ? 'warning' : 'default'" @click="toggleBatchMode">
           <el-icon><Select /></el-icon> {{ batchMode ? '退出批量' : '批量签到' }}
         </el-button>
-        <el-button type="success" @click="openCheckinDialog">
+        <el-button type="success" :disabled="isCheckinDisabled(selectedDate || todayStr)" @click="openCheckinDialog">
           <el-icon><Select /></el-icon> 签到
         </el-button>
       </div>
@@ -24,7 +24,27 @@
         <div class="cal-panel" :class="{ 'batch-mode': batchMode, 'delete-batch-mode': deleteBatchMode }">
           <div class="cal-nav">
             <el-button size="small" text @click="prevMonth"><el-icon><ArrowLeft /></el-icon></el-button>
-            <span class="cal-month-title">{{ calYear }}年{{ calMonth }}月</span>
+            <el-popover :visible="showMonthPicker" placement="bottom-start" :width="240" trigger="click" @update:visible="onPickerVisible">
+              <template #reference>
+                <span class="cal-month-title cal-month-clickable">{{ calYear }}年{{ calMonth }}月</span>
+              </template>
+              <div class="month-picker">
+                <div class="mp-year-row">
+                  <el-button size="small" text @click="changeMpYear(-1)"><el-icon><ArrowLeft /></el-icon></el-button>
+                  <span class="mp-year">{{ mpYear }}年</span>
+                  <el-button size="small" text @click="changeMpYear(1)"><el-icon><ArrowRight /></el-icon></el-button>
+                </div>
+                <div class="mp-month-grid">
+                  <button
+                    v-for="m in 12"
+                    :key="m"
+                    class="mp-month"
+                    :class="{ active: m === calMonth && mpYear === calYear }"
+                    @click="pickMonth(m)"
+                  >{{ m }}月</button>
+                </div>
+              </div>
+            </el-popover>
             <el-button size="small" text @click="nextMonth"><el-icon><ArrowRight /></el-icon></el-button>
             <el-button size="small" text style="margin-left:8px" @click="goToday">今天</el-button>
             <el-button size="small" text style="margin-left:auto" @click="showHolidaySettings = true">
@@ -48,6 +68,7 @@
                 'batch-disabled': (batchMode && checkinsByDate[day.date]),
                 'delete-selected': deleteBatchMode && deleteDates.includes(day.date),
                 'delete-disabled': (deleteBatchMode && !checkinsByDate[day.date]),
+                'cal-cell-disabled': (batchMode && (day.beforeEntry || day.isFuture)),
               }"
               @click="onCellClick(day)"
             >
@@ -706,6 +727,8 @@ const calendarDays = computed(() => {
       isToday: dateStr === todayStr,
       holiday: extra,
       status: statusType,
+      beforeEntry,
+      isFuture,
     })
   }
   // 月末空白占位
@@ -846,6 +869,29 @@ const goToday = async () => {
   holidayVersion.value++
 }
 
+// 点击日历标题跳转指定年月
+const showMonthPicker = ref(false)
+const mpYear = ref(calYear.value)
+const onPickerVisible = (v) => {
+  if (v) mpYear.value = calYear.value
+  showMonthPicker.value = v
+}
+const changeMpYear = (delta) => { mpYear.value += delta }
+const jumpToMonth = async (year, month) => {
+  const [newCheckins] = await Promise.all([
+    getAllCheckins({ year, month }),
+    loadHolidayForYear(year),
+  ])
+  calYear.value = year
+  calMonth.value = month
+  allCheckins.value = newCheckins
+  holidayVersion.value++
+}
+const pickMonth = async (m) => {
+  await jumpToMonth(mpYear.value, m)
+  showMonthPicker.value = false
+}
+
 // 日历设置
 const showHolidaySettings = ref(false)
 const hsActiveTab = ref('general')
@@ -947,8 +993,16 @@ const resetCheckinForm = () => {
   tasksForSelected.value = []
   if (lastPid) loadTasksForProjects([Number(lastPid)])
 }
+// 入职日期前或尚未到达（未来）的日期不可签到
+const isCheckinDisabled = (dateStr) => {
+  const entryDateStr = getEntryDate()
+  if (entryDateStr && dateStr < entryDateStr) return true
+  if (dayjs(dateStr).isAfter(dayjs().startOf('day'))) return true
+  return false
+}
 const openCheckinDialog = () => {
   const date = selectedDate.value || todayStr
+  if (isCheckinDisabled(date)) return
   resetCheckinForm()
   checkinForm.value.date = date
   loadStatusForDate(date)  // 加载该日期的更新状态
@@ -1041,8 +1095,8 @@ const toggleBatchMode = () => {
 const onCellClick = (day) => {
   if (day.empty) return
   if (batchMode.value) {
-    // 批量签到模式：已有签到的日期不可选
-    if (!day.isCurrent || checkinsByDate[day.date]) return
+    // 批量签到模式：不可签到日期（入职前/未来）与已有签到的日期均不可选
+    if (day.beforeEntry || day.isFuture || !day.isCurrent || checkinsByDate[day.date]) return
     const idx = batchDates.value.indexOf(day.date)
     if (idx >= 0) batchDates.value.splice(idx, 1)
     else batchDates.value.push(day.date)
@@ -1116,6 +1170,15 @@ const submitBatch = async () => {
 .cal-panel.delete-batch-mode { border-color: #f56c6c; }
 .cal-nav { display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
 .cal-month-title { font-size: 16px; font-weight: 600; min-width: 120px; text-align: center; }
+.cal-month-clickable { cursor: pointer; user-select: none; border-radius: 6px; padding: 2px 8px; transition: background 0.15s, color 0.15s; }
+.cal-month-clickable:hover { color: #534ab7; background: #eeedfe; }
+.month-picker { padding: 4px; }
+.mp-year-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 10px; }
+.mp-year { font-size: 14px; font-weight: 600; min-width: 56px; text-align: center; }
+.mp-month-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.mp-month { border: 1px solid #ebeef5; background: #fff; border-radius: 6px; padding: 8px 0; font-size: 13px; color: #606266; cursor: pointer; transition: all 0.15s; }
+.mp-month:hover { border-color: #534ab7; color: #534ab7; }
+.mp-month.active { background: #534ab7; border-color: #534ab7; color: #fff; font-weight: 600; }
 .cal-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; margin-bottom: 8px; }
 .cal-weekday { font-size: 12px; color: #888; padding: 4px 0; }
 .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
@@ -1123,6 +1186,9 @@ const submitBatch = async () => {
 .cal-cell { position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center; border-radius: 8px; cursor: pointer; font-size: 13px; transition: background .1s; gap: 2px; }
 .cal-cell:hover { background: #f5f4fe; }
 .cal-cell-empty { visibility: hidden; pointer-events: none; }
+.cal-cell-disabled { cursor: not-allowed; }
+.cal-cell-disabled .cal-cell-num { color: #c8c8d0; }
+.cal-cell-disabled .cal-cell-badge { opacity: 0.3; }
 .cal-cell.batch-disabled { opacity: 0.3; cursor: default; }
 .cal-cell.delete-disabled { opacity: 0.3; cursor: default; }
 .cal-cell.today .cal-cell-num { color: #534ab7; font-weight: 700; }
