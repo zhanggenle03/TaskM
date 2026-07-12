@@ -19,7 +19,7 @@ from openpyxl.utils import get_column_letter
 
 router = APIRouter(prefix="/attendance", tags=["attendance-export"])
 
-WEEKDAY_CN = ["日", "一", "二", "三", "四", "五", "六"]
+WEEKDAY_CN = ["一", "二", "三", "四", "五", "六", "日"]  # Python weekday(): 周一=0
 # 浅蓝填充（表头与周间隔带共用）
 _BLUE = PatternFill(start_color="FFDCE6F1", end_color="FFDCE6F1", fill_type="solid")
 
@@ -60,8 +60,9 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         # 1) 出勤明细
         ws = wb.active
         ws.title = "出勤明细"
-        headers = ["日期", "星期", "类型", "涉及项目", "是否预估"]
+        headers = ["日期", "星期", "类型", "涉及项目", "人天", "人天说明", "工作记录", "是否预估"]
         ws.append(headers)
+        _WRAP = Alignment(horizontal="left", vertical="top", wrap_text=True)
         first_monday = None
         for i, d in enumerate(days):
             dt = _parse_date(d.get("date", ""))
@@ -76,12 +77,23 @@ async def export_attendance_excel(payload: Dict[str, Any]):
             ws.cell(row=rn, column=2, value="周" + WEEKDAY_CN[dt.weekday()])
             ws.cell(row=rn, column=3, value=d.get("type", ""))
             ws.cell(row=rn, column=4, value=("/".join(d.get("projectNames") or [])) or "-")
-            ws.cell(row=rn, column=5, value="是" if d.get("estimated") else "否")
+            ws.cell(row=rn, column=5, value=d.get("manDays", 0))
+            reason = d.get("manDayReason", "") or ""
+            content = d.get("content", "") or ""
+            c_reason = ws.cell(row=rn, column=6, value=reason)
+            c_reason.alignment = _WRAP
+            c_content = ws.cell(row=rn, column=7, value=content)
+            c_content.alignment = _WRAP
+            ws.cell(row=rn, column=8, value="是" if d.get("estimated") else "否")
+            # 多行内容时按需加高行高
+            lines = max(reason.count("\n") + 1, content.count("\n") + 1, 1)
+            if lines > 1:
+                ws.row_dimensions[rn].height = min(lines * 15 + 4, 120)
             if week_idx % 2 == 1:  # 按自然周(周一对齐)交替浅蓝底色
                 for c in range(1, len(headers) + 1):
                     ws.cell(row=rn, column=c).fill = _BLUE
         _header_style(ws, len(headers), len(days))
-        for c, w in enumerate([12, 8, 10, 34, 10], start=1):
+        for c, w in enumerate([12, 8, 10, 24, 8, 24, 44, 10], start=1):
             ws.column_dimensions[get_column_letter(c)].width = w
 
         # 2) 总统计
@@ -94,6 +106,7 @@ async def export_attendance_excel(payload: Dict[str, Any]):
             ("请假天数", total.get("leaveDays", 0)),
             ("加班天数", total.get("overtimeDays", 0)),
             ("预估天数", total.get("estimatedDays", 0)),
+            ("人天合计", total.get("manDays", 0)),
         ]:
             ws_sum.append(row)
         _header_style(ws_sum, 2, len(ws_sum["A"]) - 1)
@@ -102,30 +115,31 @@ async def export_attendance_excel(payload: Dict[str, Any]):
 
         # 3) 按月统计
         ws_month = wb.create_sheet("按月统计")
-        m_headers = ["月份", "上班", "请假", "加班", "预估"]
+        m_headers = ["月份", "上班", "请假", "加班", "预估", "人天"]
         ws_month.append(m_headers)
         for m in monthly:
             ws_month.append([m.get("month", ""), m.get("workDays", 0), m.get("leaveDays", 0),
-                             m.get("overtimeDays", 0), m.get("estimatedDays", 0)])
+                             m.get("overtimeDays", 0), m.get("estimatedDays", 0), m.get("manDays", 0)])
         _header_style(ws_month, len(m_headers), len(monthly))
-        for c, w in enumerate([14, 8, 8, 8, 8], start=1):
+        for c, w in enumerate([14, 8, 8, 8, 8, 8], start=1):
             ws_month.column_dimensions[get_column_letter(c)].width = w
 
         # 4) 按项目统计
         ws_proj = wb.create_sheet("按项目统计")
-        ws_proj.append(["项目名称", "天数"])
+        ws_proj.append(["项目名称", "天数", "人天"])
         for p in by_project:
-            ws_proj.append([p.get("projectName", ""), p.get("days", 0)])
-        _header_style(ws_proj, 2, len(by_project))
+            ws_proj.append([p.get("projectName", ""), p.get("days", 0), p.get("manDays", 0)])
+        _header_style(ws_proj, 3, len(by_project))
         ws_proj.column_dimensions["A"].width = 26
         ws_proj.column_dimensions["B"].width = 8
+        ws_proj.column_dimensions["C"].width = 8
 
         # 5) 统计图表（原生 Excel 图表）
         ws_chart = wb.create_sheet("统计图表")
         ws_chart.append(m_headers)
         for m in monthly:
             ws_chart.append([m.get("month", ""), m.get("workDays", 0), m.get("leaveDays", 0),
-                             m.get("overtimeDays", 0), m.get("estimatedDays", 0)])
+                             m.get("overtimeDays", 0), m.get("estimatedDays", 0), m.get("manDays", 0)])
         month_last = len(monthly) + 1
         # 类型分布表（G/H 列，供饼图引用）
         ws_chart["G1"] = "类型"

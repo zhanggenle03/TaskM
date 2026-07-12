@@ -275,6 +275,8 @@ def create_checkin_global(data: CheckinCreate, db: Session = Depends(get_db)):
         date=chk_date,
         content=data.content,
         multi_project=data.multi_project,
+        man_days=data.man_days,
+        man_day_reason=data.man_day_reason,
     )
     # 关联项目
     for pid in data.project_ids:
@@ -308,6 +310,8 @@ def update_checkin(checkin_id: int, data: CheckinCreate, db: Session = Depends(g
     chk.date = date_type.fromisoformat(data.date) if data.date else chk.date
     chk.content = data.content
     chk.multi_project = data.multi_project
+    chk.man_days = data.man_days
+    chk.man_day_reason = data.man_day_reason
     # 更新关联项目
     chk.projects = []
     for pid in data.project_ids:
@@ -624,7 +628,13 @@ def create_checkin(project_id: str, data: CheckinCreate, db: Session = Depends(g
     proj = resolve_project(db, project_id)
     from datetime import date as date_type
     chk_date = date_type.fromisoformat(data.date) if data.date else date_type.today()
-    chk = Checkin(date=chk_date, content=data.content, multi_project=data.multi_project)
+    chk = Checkin(
+        date=chk_date,
+        content=data.content,
+        multi_project=data.multi_project,
+        man_days=data.man_days,
+        man_day_reason=data.man_day_reason,
+    )
     chk.projects.append(proj)
     for tid in data.task_ids:
         task = db.query(Task).filter(Task.id == tid).first()
@@ -643,3 +653,35 @@ def delete_checkin(project_id: str, checkin_id: int, db: Session = Depends(get_d
     db.delete(chk)
     db.commit()
     return {"ok": True}
+
+
+@router.put("/{project_id}/checkins/{checkin_id}", response_model=CheckinOut)
+def update_checkin_project(project_id: str, checkin_id: int, data: CheckinCreate, db: Session = Depends(get_db)):
+    """项目级编辑签到（含人天字段）。前端 updateCheckin 走此路由。"""
+    resolve_project(db, project_id)
+    chk = db.query(Checkin).options(
+        joinedload(Checkin.projects), joinedload(Checkin.tasks)
+    ).filter(Checkin.id == checkin_id).first()
+    if not chk:
+        raise HTTPException(404, "签到记录不存在")
+    from datetime import date as date_type
+    chk.date = date_type.fromisoformat(data.date) if data.date else chk.date
+    chk.content = data.content
+    chk.multi_project = data.multi_project
+    chk.man_days = data.man_days
+    chk.man_day_reason = data.man_day_reason
+    # 更新关联项目
+    chk.projects = []
+    for pid in data.project_ids:
+        proj = db.query(Project).filter(Project.id == pid).first()
+        if proj:
+            chk.projects.append(proj)
+    # 更新关联任务
+    chk.tasks = []
+    for tid in data.task_ids:
+        task = db.query(Task).filter(Task.id == tid).first()
+        if task:
+            chk.tasks.append(task)
+    db.commit()
+    db.refresh(chk)
+    return chk

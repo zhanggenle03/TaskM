@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, ForeignKey, Boolean, UniqueConstraint, event
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, ForeignKey, Boolean, Float, UniqueConstraint, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -320,6 +320,9 @@ class Checkin(Base):
     date = Column(Date, nullable=False)
     content = Column(Text, default="")
     multi_project = Column(Boolean, default=False)
+    # 人天体系：当天人天（默认 1.0，加班/并行多项目/调休补班等可 >1），man_day_reason 记录原因
+    man_days = Column(Float, default=1.0, nullable=False)
+    man_day_reason = Column(String(200), default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
     projects = relationship("Project", secondary="checkin_projects", backref="checkins_ref")

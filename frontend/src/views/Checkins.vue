@@ -19,9 +19,8 @@
     </div>
 
     <div class="calendar-layout">
-      <div class="cal-left">
-        <!-- 日历 -->
-        <div class="cal-panel" :class="{ 'batch-mode': batchMode, 'delete-batch-mode': deleteBatchMode }">
+      <!-- 日历 -->
+      <div class="cal-panel" :class="{ 'batch-mode': batchMode, 'delete-batch-mode': deleteBatchMode }">
           <div class="cal-nav">
             <el-button size="small" text @click="prevMonth"><el-icon><ArrowLeft /></el-icon></el-button>
             <el-popover :visible="showMonthPicker" placement="bottom-start" :width="240" trigger="click" @update:visible="onPickerVisible">
@@ -78,6 +77,7 @@
                 <span v-if="day.status === 'attendance' && !batchMode && !deleteBatchMode" class="cal-cell-dot"></span>
                 <span v-if="day.status === 'overtime' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-overtime">加</span>
                 <span v-if="day.status === 'leave' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-leave">请</span>
+                <span v-if="mandayByDate[day.date] > 1 && !batchMode && !deleteBatchMode" class="cal-cell-manday">{{ mandayByDate[day.date] }}</span>
                 <span v-if="batchMode && checkinsByDate[day.date]" class="cal-cell-checked">已签</span>
                 <span v-if="deleteBatchMode && checkinsByDate[day.date]" class="cal-cell-has-data">已签</span>
               </template>
@@ -115,17 +115,8 @@
             <span class="cal-stats-divider"></span>
             <span class="cal-stats-item">请假 <strong>{{ monthStats.leaveDays }}</strong> 天</span>
           </div>
-          <div class="cal-stats-overtime">其中加班 <strong>{{ monthStats.overtimeDays }}</strong> 天</div>
+          <div class="cal-stats-overtime">其中加班 <strong>{{ monthStats.overtimeDays }}</strong> 天，人天合计 <strong class="cal-manday-num">{{ monthStats.manDays }}</strong> 天</div>
         </div>
-
-        <!-- 工具 -->
-        <div class="cal-tools-card">
-          <div class="cal-tools-title">工具</div>
-          <el-button text class="cal-tools-btn" @click="showCalcDlg = true">
-            <el-icon><DataAnalysis /></el-icon> 出勤计算器
-          </el-button>
-        </div>
-      </div>
 
       <!-- 右侧详情 -->
       <div class="cal-detail">
@@ -137,6 +128,8 @@
                 <template v-for="p in chk.projects" :key="p.id">
                   <span class="cal-cc-project">{{ p.name }}</span>
                 </template>
+                <span class="cal-cc-manday-badge">{{ chk.man_days }} 人天</span>
+                <span v-if="chk.man_day_reason" class="cal-cc-manday-reason">{{ chk.man_day_reason }}</span>
                 <span class="cal-cc-time">{{ dayjs.utc(chk.created_at).utcOffset(8).format('HH:mm') }}</span>
                 <el-button size="small" text type="danger" @click="removeCheckin(chk)"><el-icon><Delete /></el-icon></el-button>
               </div>
@@ -163,7 +156,15 @@
           </div>
         </template>
         <el-empty v-else-if="!batchMode" description="点击日期查看签到记录" :image-size="60" />
-      </div>
+        </div>
+
+        <!-- 工具 -->
+        <div class="cal-tools-card">
+          <div class="cal-tools-title">工具</div>
+          <el-button text class="cal-tools-btn" @click="showCalcDlg = true">
+            <el-icon><DataAnalysis /></el-icon> 出勤计算器
+          </el-button>
+        </div>
     </div>
 
     <!-- 单次签到对话框 -->
@@ -192,6 +193,13 @@
         </el-form-item>
         <el-form-item label="工作记录">
           <el-input v-model="checkinForm.content" type="textarea" :rows="4" placeholder="今天做了什么？" />
+        </el-form-item>
+        <el-form-item label="人天">
+          <el-input-number v-model="checkinForm.man_days" :min="0" :step="0.5" :precision="2" controls-position="right" style="width:160px" />
+          <span style="margin-left:8px;font-size:12px;color:#888">默认 1 人天，加班/并行多项目等可 &gt;1</span>
+        </el-form-item>
+        <el-form-item label="人天说明">
+          <el-input v-model="checkinForm.man_day_reason" placeholder="如：加班、并行多项目、调休补班等（可选）" style="width:100%" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -225,6 +233,13 @@
         </el-form-item>
         <el-form-item label="工作记录">
           <el-input v-model="batchForm.content" type="textarea" :rows="4" placeholder="所有选中日期共用此记录" />
+        </el-form-item>
+        <el-form-item label="人天">
+          <el-input-number v-model="batchForm.man_days" :min="0" :step="0.5" :precision="2" controls-position="right" style="width:160px" />
+          <span style="margin-left:8px;font-size:12px;color:#888">默认 1 人天，加班/并行多项目等可 &gt;1</span>
+        </el-form-item>
+        <el-form-item label="人天说明">
+          <el-input v-model="batchForm.man_day_reason" placeholder="如：加班、并行多项目、调休补班等（可选）" style="width:100%" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -277,6 +292,10 @@
             <span class="calc-summary-num" style="color:#d48806">{{ calcResult.total.overtimeDays }}</span>
             <span class="calc-summary-label">加班</span>
           </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#0f6e56">{{ calcResult.total.manDays }}</span>
+            <span class="calc-summary-label">人天</span>
+          </div>
         </div>
         <div v-if="calcResult.total.estimatedDays > 0" class="calc-estimated-note">
           其中 <strong>{{ calcResult.total.estimatedDays }}</strong> 天为未来日期默认预估
@@ -294,6 +313,7 @@
               <div class="calc-month-row">上班 <strong style="color:#534ab7">{{ m.workDays }}</strong> 天</div>
               <div class="calc-month-row">请假 <strong style="color:#e67e22">{{ m.leaveDays }}</strong> 天</div>
               <div class="calc-month-row">加班 <strong style="color:#d48806">{{ m.overtimeDays }}</strong> 天</div>
+              <div class="calc-month-row">人天 <strong style="color:#0f6e56">{{ m.manDays }}</strong></div>
             </div>
           </div>
         </div>
@@ -304,7 +324,7 @@
           <div class="calc-proj-grid">
             <div v-for="p in calcResult.byProject" :key="p.projectId" class="calc-proj-card">
               <span class="calc-proj-name">{{ p.projectName }}</span>
-              <span class="calc-proj-days"><strong>{{ p.days }}</strong> 天</span>
+              <span class="calc-proj-days"><strong>{{ p.days }}</strong> 天 · <strong style="color:#0f6e56">{{ p.manDays }}</strong> 人天</span>
             </div>
           </div>
         </div>
@@ -418,7 +438,7 @@ const showCheckinDlg = ref(false)
 const checkinLoading = ref(false)
 const selectedDate = ref(null)
 const tasksForSelected = ref([])
-const checkinForm = ref({ project_ids: [], task_ids: [], multi_project: false, date: null, content: '' })
+const checkinForm = ref({ project_ids: [], task_ids: [], multi_project: false, date: null, content: '', man_days: 1, man_day_reason: '' })
 const editingCheckinId = ref(null) // 编辑已有签到时记录 ID
 
 // 批量签到
@@ -426,7 +446,7 @@ const batchMode = ref(false)
 const batchDates = ref([])
 const showBatchDlg = ref(false)
 const batchLoading = ref(false)
-const batchForm = ref({ project_ids: [], task_ids: [], multi_project: false, content: '' })
+const batchForm = ref({ project_ids: [], task_ids: [], multi_project: false, content: '', man_days: 1, man_day_reason: '' })
 const batchTasks = ref([])
 
 // 批量删除签到（日历选日期模式）
@@ -500,7 +520,7 @@ const runCalc = async () => {
   const byProject = {}
   const multiProjectDays = [] // 多项目签到的日期列表
   const days = [] // 逐日明细
-  let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0
+  let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0, totalManDays = 0
   const today = dayjs().startOf('day')
 
   for (let d = start; d.isBefore(end) || d.isSame(end); d = d.add(1, 'day')) {
@@ -509,6 +529,7 @@ const runCalc = async () => {
     const extra = getDayExtraInfo(dateStr)
     const dayCheckins = rangeCheckinsByDate[dateStr] || []
     const hasCheckin = dayCheckins.length > 0
+    let dayManDays = 0 // 当天人天
     const dayProjectNames = []
     for (const chk of dayCheckins) {
       for (const p of chk.projects || []) {
@@ -522,18 +543,24 @@ const runCalc = async () => {
 
     if (beforeEntry) continue
 
-    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, leaveDays: 0, overtimeDays: 0, estimatedDays: 0 }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, leaveDays: 0, overtimeDays: 0, estimatedDays: 0, manDays: 0 }
 
     if (hasCheckin) {
       totalWork++
       byMonth[monthKey].workDays++
 
+      // 当天人天合计（该日所有签到记录 man_days 之和，0 人天按 0 计）
+      dayManDays = dayCheckins.reduce((s, c) => s + (c.man_days == null ? 1 : c.man_days), 0)
+      totalManDays += dayManDays
+      byMonth[monthKey].manDays += dayManDays
+
       // 按项目统计：每个签到记录的项目
       const dayProjects = new Set()
       for (const chk of dayCheckins) {
         for (const p of chk.projects || []) {
-          if (!byProject[p.id]) byProject[p.id] = { projectName: p.name, days: 0 }
+          if (!byProject[p.id]) byProject[p.id] = { projectName: p.name, days: 0, manDays: 0 }
           byProject[p.id].days++
+          byProject[p.id].manDays += (chk.man_days == null ? 1 : chk.man_days)
           dayProjects.add(p.id)
         }
       }
@@ -569,6 +596,9 @@ const runCalc = async () => {
         totalEstimated++
         byMonth[monthKey].workDays++
         byMonth[monthKey].estimatedDays++
+        dayManDays = 1 // 未来预估工作日按 1 人天计
+        totalManDays += 1
+        byMonth[monthKey].manDays += 1
       }
     }
 
@@ -593,17 +623,25 @@ const runCalc = async () => {
     else if (effIsRest) dayType = '休息'
     else if (isFuture) dayType = '预估上班'
     else dayType = '请假'
+    // 当天工作记录与人天说明（多签到记录用换行拼接）
+    const dayContents = dayCheckins.map(c => (c.content && c.content.trim()) ? c.content.trim() : '已签到')
+    const dayReasons = dayCheckins.map(c => (c.man_day_reason && c.man_day_reason.trim()) ? c.man_day_reason.trim() : '').filter(Boolean)
+    const dayContent = dayContents.join('\n')
+    const dayManDayReason = dayReasons.join('\n')
     days.push({
       date: dateStr,
       weekday: ['日', '一', '二', '三', '四', '五', '六'][weekday],
       type: dayType,
       projectNames: dayProjectNames,
+      manDays: dayManDays,
+      manDayReason: dayManDayReason,
+      content: dayContent,
       estimated: dayType === '预估上班',
     })
   }
 
   calcResult.value = {
-    total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated },
+    total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated, manDays: totalManDays },
     monthly: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })),
     byProject: Object.values(byProject).sort((a, b) => b.days - a.days),
     multiProjectDays,
@@ -661,6 +699,16 @@ const checkinsByDate = computed(() => {
     const d = dayjs(c.date).format('YYYY-MM-DD')
     if (!map[d]) map[d] = []
     map[d].push(c)
+  }
+  return map
+})
+
+// 每天人天合计（该日所有签到记录 man_days 之和）
+const mandayByDate = computed(() => {
+  const map = {}
+  for (const c of allCheckins.value) {
+    const d = dayjs(c.date).format('YYYY-MM-DD')
+    map[d] = (map[d] || 0) + (c.man_days || 1)
   }
   return map
 })
@@ -746,7 +794,7 @@ const monthStats = computed(() => {
   dataReady.value      // 签到数据未就绪时返回中性占位，避免首屏闪现"全缺勤"
   if (!dataReady.value) {
     const daysInMonth = dayjs(`${calYear.value}-${calMonth.value}-01`).daysInMonth()
-    return { workDays: 0, leaveDays: 0, overtimeDays: 0, requiredWorkDays: 0, absences: 0, total: daysInMonth, isCurrent: false, loading: true }
+    return { workDays: 0, leaveDays: 0, overtimeDays: 0, requiredWorkDays: 0, manDays: 0, absences: 0, total: daysInMonth, isCurrent: false, loading: true }
   }
   const year = calYear.value
   const month = calMonth.value
@@ -761,6 +809,7 @@ const monthStats = computed(() => {
   let leaveDays = 0        // 应上班但没签到
   let overtimeDays = 0
   let requiredWorkDays = 0 // 应上班天数（排除周末/节假日/手动假日）
+  let manDays = 0          // 人天合计（该月所有签到记录 man_days 之和）
 
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = dayjs(`${year}-${month}-${d}`).format('YYYY-MM-DD')
@@ -785,7 +834,11 @@ const monthStats = computed(() => {
 
     if (d > lastDay) continue // 今天之后的日期不统计签到/请假/加班
 
-    if (hasCheckin) workDays++
+    if (hasCheckin) {
+      workDays++
+      const dm = (checkinsByDate.value[dateStr] || []).reduce((s, c) => s + (c.man_days == null ? 1 : c.man_days), 0)
+      manDays += dm
+    }
 
     if (effectiveIsRest) {
       if (hasCheckin) overtimeDays++
@@ -799,11 +852,12 @@ const monthStats = computed(() => {
     workDays = 0
     leaveDays = 0
     overtimeDays = 0
+    manDays = 0
   }
 
   const absences = requiredWorkDays - workDays // 应出勤 - 实际出勤 = 缺勤天数
 
-  return { workDays, leaveDays, overtimeDays, requiredWorkDays, absences, total: lastDay, isCurrent }
+  return { workDays, leaveDays, overtimeDays, requiredWorkDays, manDays, absences, total: lastDay, isCurrent }
 })
 
 const load = async () => {
@@ -989,7 +1043,7 @@ const hsResetMonth = () => {
 const resetCheckinForm = () => {
   editingCheckinId.value = null
   const lastPid = localStorage.getItem('taskm_last_project')
-  checkinForm.value = { project_ids: lastPid ? [Number(lastPid)] : [], task_ids: [], multi_project: false, date: null, content: '' }
+  checkinForm.value = { project_ids: lastPid ? [Number(lastPid)] : [], task_ids: [], multi_project: false, date: null, content: '', man_days: 1, man_day_reason: '' }
   tasksForSelected.value = []
   if (lastPid) loadTasksForProjects([Number(lastPid)])
 }
@@ -1014,6 +1068,8 @@ const openCheckinDialog = () => {
     checkinForm.value.task_ids = existing.tasks.map((t) => t.id)
     checkinForm.value.multi_project = existing.multi_project
     checkinForm.value.content = existing.content
+    checkinForm.value.man_days = existing.man_days ?? 1
+    checkinForm.value.man_day_reason = existing.man_day_reason || ''
     loadTasksForProjects(checkinForm.value.project_ids)
   }
   showCheckinDlg.value = true
@@ -1138,7 +1194,7 @@ const loadBatchTasks = async (pids) => {
   }))
   batchTasks.value = results.flat()
 }
-const resetBatchForm = () => { batchForm.value = { project_ids: [], task_ids: [], multi_project: false, content: '' }; batchTasks.value = [] }
+const resetBatchForm = () => { batchForm.value = { project_ids: [], task_ids: [], multi_project: false, content: '', man_days: 1, man_day_reason: '' }; batchTasks.value = [] }
 const submitBatch = async () => {
   if (!batchForm.value.project_ids.length) { ElMessage.warning('请选择项目'); return }
   batchLoading.value = true
@@ -1162,10 +1218,9 @@ const submitBatch = async () => {
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 
-.calendar-layout { display: flex; gap: 24px; align-items: flex-start; }
+.calendar-layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); grid-template-areas: "cal detail" "stats tool"; gap: 16px 24px; align-items: stretch; }
 
-.cal-left { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
-.cal-panel { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 18px; position: relative; }
+.cal-panel { grid-area: cal; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 18px; position: relative; }
 .cal-panel.batch-mode { border-color: #e6a23c; }
 .cal-panel.delete-batch-mode { border-color: #f56c6c; }
 .cal-nav { display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
@@ -1206,24 +1261,26 @@ const submitBatch = async () => {
 .cal-cell-badge.cb-workday { color: #d48806; background: #fff7e6; }
 .cal-cell-badge.cb-festival { color: #8b5cf6; background: #f3eefe; }
 .cal-cell-badge.cb-off { color: #999; background: #f0f0f0; }
+.cal-cell-manday { position: absolute; top: 1px; left: 2px; font-size: 9px; font-weight: 700; line-height: 1.1; color: #0f6e56; background: #e1f5ee; border-radius: 3px; padding: 0 3px; }
 .cal-cell-checked { font-size: 10px; color: #999; position: absolute; bottom: 4px; }
 .cal-cell-has-data { font-size: 10px; color: #f56c6c; position: absolute; bottom: 4px; }
 .cal-cell-num { line-height: 1; }
 
-.cal-stats-card { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 16px 18px; }
+.cal-stats-card { grid-area: stats; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 16px 18px; }
 .cal-stats-title { font-size: 12px; color: #888; margin-bottom: 6px; }
 .cal-stats-row { display: flex; align-items: center; gap: 12px; }
 .cal-stats-item { font-size: 13px; color: #333; }
 .cal-stats-item strong { font-size: 18px; color: #534ab7; }
 .cal-stats-divider { width: 1px; height: 20px; background: #e0e0e0; }
 .cal-stats-overtime { font-size: 12px; color: #d48806; margin-top: 4px; }
-.cal-stats-overtime strong { font-size: 14px; }
+.cal-stats-overtime strong { font-size: 14px; color: #534ab7; }
+.cal-manday-num { color: #534ab7; }
 
 .batch-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; margin-top: 10px; border-top: 1px solid #eee; font-size: 13px; color: #e6a23c; }
 
 .delete-batch-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 4px 0; margin-top: 10px; border-top: 1px solid #f56c6c; font-size: 13px; color: #f56c6c; }
 
-.cal-detail { flex: 1; min-width: 0; }
+.cal-detail { grid-area: detail; min-width: 0; }
 .cal-detail-header { margin-bottom: 16px; }
 .cal-detail-header h3 { font-size: 16px; font-weight: 600; margin: 0; }
 .cal-checkins { display: flex; flex-direction: column; gap: 10px; }
@@ -1234,6 +1291,8 @@ const submitBatch = async () => {
 .cal-cc-tasks { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
 .cal-cc-task { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #e1f5ee; color: #0f6e56; font-weight: 500; }
 .cal-cc-content { font-size: 14px; line-height: 1.5; color: #333; white-space: pre-wrap; }
+.cal-cc-manday-badge { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 4px; background: #e1f5ee; color: #0f6e56; }
+.cal-cc-manday-reason { font-size: 12px; color: #888; }
 
 .delete-date-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #fef0f0; border-radius: 6px; font-size: 13px; margin-bottom: 4px; }
 
@@ -1242,7 +1301,7 @@ const submitBatch = async () => {
 .dot-gray { background: #d9d9d9; }
 
 /* 工具卡片 */
-.cal-tools-card { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; }
+.cal-tools-card { grid-area: tool; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; }
 .cal-tools-title { font-size: 12px; color: #888; margin-bottom: 10px; }
 .cal-tools-btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; background: #f5f4fe; color: #534ab7; }
 .cal-tools-btn:hover { background: #eeedfe; }

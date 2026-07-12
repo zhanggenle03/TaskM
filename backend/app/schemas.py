@@ -289,6 +289,8 @@ class CheckinCreate(BaseModel):
     multi_project: bool = False
     date: Optional[str] = None  # "YYYY-MM-DD" 字符串
     content: str = ""
+    man_days: float = 1.0      # 当天人天，默认 1.0，加班/并行等可 >1
+    man_day_reason: str = ""   # 人天说明（自由文本）
 
 class ProjectBrief(BaseModel):
     id: int
@@ -309,6 +311,8 @@ class CheckinOut(BaseModel):
     date: date
     content: str
     multi_project: bool
+    man_days: float = 1.0
+    man_day_reason: str = ""
     created_at: datetime
     projects: List[ProjectBrief] = []
     tasks: List[TaskBrief] = []
