@@ -26,6 +26,15 @@ export const createProject = (data) => http.post('/projects', data)
 export const updateProject = (id, data) => http.put(`/projects/${id}`, data)
 export const deleteProject = (id) => http.delete(`/projects/${id}`)
 
+// --- Project Categories (书签式分类) ---
+export const getCategories = () => http.get('/categories')
+export const createCategory = (name) => http.post('/categories', { name })
+export const renameCategory = (key, name) => http.put(`/categories/${key}`, { name })
+export const deleteCategory = (key) => http.delete(`/categories/${key}`)
+export const reorderCategories = (order) => http.put('/categories/reorder', { order })
+export const getDefaultCategory = () => http.get('/categories/default')
+export const setDefaultCategory = (key) => http.put('/categories/default', { key })
+
 // --- Statuses ---
 export const getStatuses = (projectId, params) => http.get(`/projects/${projectId}/statuses`, { params })
 export const createStatus = (projectId, data) => http.post(`/projects/${projectId}/statuses`, data)

@@ -9,12 +9,14 @@ class ProjectCreate(BaseModel):
     description: str = ""
     start_date: Optional[date] = None
     custom_prefix: Optional[str] = None  # 3字母前缀，创建后不可更改
+    category: str = ""  # 书签分类 key，空串表示未分类
 
 class ProjectUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     start_date: Optional[date] = None
     pinned: Optional[bool] = None
+    category: Optional[str] = None  # 书签分类 key
 
 class ProjectOut(BaseModel):
     id: int
@@ -26,6 +28,7 @@ class ProjectOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     pinned: bool = False
+    category: str = ""
     class Config:
         from_attributes = True
 

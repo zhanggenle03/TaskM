@@ -8,6 +8,7 @@ from .database import Base, engine, UPLOAD_DIR
 from .settings_manager import get_port
 
 from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements, backup, attendance_export
+from .routers import categories as categories_router
 
 
 # ── 从配置读取端口（用于 CORS 白名单） ──
@@ -18,6 +19,13 @@ _FRONTEND_PORT = get_port("frontend_port", 5173)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    # ── 启动迁移：补齐 projects.category 列（必须在任何查询前执行） ──
+    try:
+        from .database import _ensure_project_category_column
+        _ensure_project_category_column()
+    except Exception as e:
+        print(f"[lifespan] 数据库迁移失败: {e}", flush=True)
+
     # ── 启动时 ──
     try:
         from .process_manager import on_startup
@@ -89,6 +97,7 @@ app.include_router(export_router.router, prefix="/api")
 app.include_router(requirements.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(attendance_export.router, prefix="/api")
+app.include_router(categories_router.router, prefix="/api")
 
 # 挂载上传目录为静态文件（供富文本图片等访问）
 import os

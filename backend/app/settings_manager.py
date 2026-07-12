@@ -65,3 +65,39 @@ def get_port(key: str, default: int = None) -> int:
     settings = load_settings()
     fallback = default if default is not None else DEFAULT_SETTINGS.get(key, 8000)
     return int(settings.get(key, fallback))
+
+
+# ── 项目书签分类 ──
+# 书签列表存于 settings.json 的 project_categories，结构：[{"key": "...", "name": "..."}]
+def get_categories() -> list:
+    """读取所有书签分类（有序列表）"""
+    settings = load_settings()
+    cats = settings.get("project_categories", [])
+    return cats if isinstance(cats, list) else []
+
+
+def save_categories(cats: list) -> list:
+    """覆盖保存书签分类列表"""
+    return save_settings({"project_categories": cats}).get("project_categories", [])
+
+
+# ── 默认书签 ──
+# 默认书签（最多 1 个）以 key 字符串存入 settings.json 的 default_category，
+# 空串 / 缺失表示未设置，此时前端显示「全部项目」。
+def get_default_category() -> str:
+    """读取默认书签的 key，未设置返回空串"""
+    settings = load_settings()
+    val = settings.get("default_category", "")
+    return val if isinstance(val, str) else ""
+
+
+def set_default_category(key: str) -> str:
+    """设置默认书签 key（'' 表示清除）。若 key 不在现有书签列表中则忽略设置。"""
+    key = key or ""
+    if key:
+        cats = get_categories()
+        if not any(c.get("key") == key for c in cats):
+            raise ValueError("书签不存在")
+    save_settings({"default_category": key})
+    return key
+

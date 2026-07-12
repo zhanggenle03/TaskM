@@ -274,6 +274,7 @@ def export_single_project(project_id: int, include_uploads: bool = True) -> Opti
                 "start_date": project.start_date.isoformat() if project.start_date else None,
                 "created_at": project.created_at.isoformat() if project.created_at else None,
                 "updated_at": project.updated_at.isoformat() if project.updated_at else None,
+                "category": project.category or "",
             }
             zf.writestr("project.json", json.dumps(project_data, indent=2, ensure_ascii=False))
 
@@ -567,6 +568,7 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                     custom_prefix=project_data.get("custom_prefix"),
                     name=project_data["name"],
                     description=project_data.get("description", ""),
+                    category=project_data.get("category", ""),
                 )
                 if project_data.get("start_date"):
                     try:

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, ForeignKey, Boolean, Float, UniqueConstraint, event
+from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, Date, ForeignKey, Boolean, Float, UniqueConstraint, event, text, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -101,6 +101,8 @@ class Project(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     pinned = Column(Boolean, default=False)
+    # 书签式分类：存分类 key（空串表示未分类）。分类名称本身维护在 settings.json 的 project_categories。
+    category = Column(String(100), default="", nullable=False)
 
     tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
     status_pools = relationship("StatusPool", back_populates="project", cascade="all, delete-orphan")
@@ -459,3 +461,21 @@ def resolve_requirement(db, project_pk: int, requirement_id: str):
     if not req:
         raise HTTPException(404, "需求不存在")
     return req
+
+
+def _ensure_project_category_column():
+    """为 projects 表补充 category 列（书签分类用）。
+
+    已存在则跳过；SQLite 不支持 ALTER 加带默认值约束的列，故用 NOT NULL DEFAULT '' 直接补齐。
+    在应用启动（lifespan）时调用，保证任何查询 Project.category 前列已存在。
+    """
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("projects")]
+        if "category" not in cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE projects ADD COLUMN category VARCHAR(100) NOT NULL DEFAULT ''"))
+                conn.commit()
+            print("[migrate] projects.category 列已添加", flush=True)
+    except Exception as e:
+        print(f"[migrate] 检查/添加 category 列失败: {e}", flush=True)
