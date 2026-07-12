@@ -18,6 +18,7 @@ backend/settings.json
 *.sqlite3
 *.db-wal
 *.db-shm
+*.rollback*
 backend/uploads/
 backend/config/
 backend/backups/
