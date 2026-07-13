@@ -281,6 +281,10 @@
         <!-- 总统计 -->
         <div class="calc-summary">
           <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#2f54eb">{{ calcResult.total.requiredWorkDays }}</span>
+            <span class="calc-summary-label">应出勤</span>
+          </div>
+          <div class="calc-summary-item">
             <span class="calc-summary-num" style="color:#534ab7">{{ calcResult.total.workDays }}</span>
             <span class="calc-summary-label">上班</span>
           </div>
@@ -304,18 +308,31 @@
         <!-- 按月详情 -->
         <div v-if="calcResult.monthly.length" class="calc-section">
           <div class="calc-section-title">按月统计</div>
-          <div class="calc-month-grid">
-            <div v-for="m in calcResult.monthly" :key="m.month" class="calc-month-card">
-              <div class="calc-month-name">
-                {{ m.month }}
-                <span v-if="m.estimatedDays" class="calc-estimated-tag">预估 {{ m.estimatedDays }} 天</span>
-              </div>
-              <div class="calc-month-row">上班 <strong style="color:#534ab7">{{ m.workDays }}</strong> 天</div>
-              <div class="calc-month-row">请假 <strong style="color:#e67e22">{{ m.leaveDays }}</strong> 天</div>
-              <div class="calc-month-row">加班 <strong style="color:#d48806">{{ m.overtimeDays }}</strong> 天</div>
-              <div class="calc-month-row">人天 <strong style="color:#0f6e56">{{ m.manDays }}</strong></div>
-            </div>
-          </div>
+          <table class="calc-month-table">
+            <thead>
+              <tr>
+                <th class="calc-month-th-name">月份</th>
+                <th>应出勤</th>
+                <th>上班</th>
+                <th>请假</th>
+                <th>加班</th>
+                <th>人天</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in calcResult.monthly" :key="m.month">
+                <td class="calc-month-td-name">
+                  {{ m.month }}
+                  <span v-if="m.estimatedDays" class="calc-estimated-tag">预估 {{ m.estimatedDays }} 天</span>
+                </td>
+                <td style="color:#2f54eb;font-weight:600">{{ m.requiredWorkDays }}</td>
+                <td style="color:#534ab7;font-weight:600">{{ m.workDays }}</td>
+                <td style="color:#e67e22;font-weight:600">{{ m.leaveDays }}</td>
+                <td style="color:#d48806;font-weight:600">{{ m.overtimeDays }}</td>
+                <td style="color:#0f6e56;font-weight:600">{{ m.manDays }}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <!-- 按项目统计 -->
@@ -520,7 +537,7 @@ const runCalc = async () => {
   const byProject = {}
   const multiProjectDays = [] // 多项目签到的日期列表
   const days = [] // 逐日明细
-  let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0, totalManDays = 0
+  let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0, totalManDays = 0, totalRequired = 0
   const today = dayjs().startOf('day')
 
   for (let d = start; d.isBefore(end) || d.isSame(end); d = d.add(1, 'day')) {
@@ -543,7 +560,7 @@ const runCalc = async () => {
 
     if (beforeEntry) continue
 
-    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, leaveDays: 0, overtimeDays: 0, estimatedDays: 0, manDays: 0 }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, leaveDays: 0, overtimeDays: 0, estimatedDays: 0, manDays: 0, requiredWorkDays: 0 }
 
     if (hasCheckin) {
       totalWork++
@@ -617,6 +634,12 @@ const runCalc = async () => {
       if (!hasCheckin && !isFuture) { totalLeave++; byMonth[monthKey].leaveDays++ }
     }
 
+    // 应出勤：所有非休息日（排除周末/法定假/手动假日，且入职后）计入应上班天数
+    if (!effIsRest) {
+      totalRequired++
+      byMonth[monthKey].requiredWorkDays++
+    }
+
     // 逐日明细
     let dayType
     if (hasCheckin) dayType = effIsRest ? '加班' : '上班'
@@ -641,7 +664,7 @@ const runCalc = async () => {
   }
 
   calcResult.value = {
-    total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated, manDays: totalManDays },
+    total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated, manDays: totalManDays, requiredWorkDays: totalRequired },
     monthly: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })),
     byProject: Object.values(byProject).sort((a, b) => b.days - a.days),
     multiProjectDays,
@@ -1314,10 +1337,12 @@ const submitBatch = async () => {
 .calc-summary-label { font-size: 13px; color: #888; margin-top: 2px; display: block; }
 .calc-section { margin-top: 16px; }
 .calc-section-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #333; }
-.calc-month-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-.calc-month-card { background: #f9f9fb; border-radius: 8px; padding: 12px; }
-.calc-month-name { font-size: 13px; font-weight: 600; color: #534ab7; margin-bottom: 8px; }
-.calc-month-row { font-size: 12px; color: #666; line-height: 1.8; }
+.calc-month-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.calc-month-table th, .calc-month-table td { padding: 7px 6px; text-align: center; border-bottom: 1px solid #eee; }
+.calc-month-table th { background: #f9f9fb; color: #888; font-weight: 600; }
+.calc-month-th-name { text-align: center; }
+.calc-month-table td.calc-month-td-name { text-align: center; color: #534ab7; font-weight: 600; }
+.calc-month-table tr:last-child td { border-bottom: none; }
 .calc-proj-grid { display: flex; flex-wrap: wrap; gap: 8px; }
 .calc-proj-card { display: flex; align-items: center; gap: 8px; background: #f0f0f5; border-radius: 8px; padding: 8px 14px; }
 .calc-proj-name { font-size: 13px; color: #333; }

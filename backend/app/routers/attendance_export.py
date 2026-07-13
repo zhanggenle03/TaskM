@@ -102,6 +102,7 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         for row in [
             ("统计范围", f"{start} 至 {end}" if (start and end) else "-"),
             ("导出时间", datetime.now().strftime("%Y-%m-%d %H:%M")),
+            ("应出勤天数", total.get("requiredWorkDays", 0)),
             ("上班天数", total.get("workDays", 0)),
             ("请假天数", total.get("leaveDays", 0)),
             ("加班天数", total.get("overtimeDays", 0)),
@@ -115,13 +116,14 @@ async def export_attendance_excel(payload: Dict[str, Any]):
 
         # 3) 按月统计
         ws_month = wb.create_sheet("按月统计")
-        m_headers = ["月份", "上班", "请假", "加班", "预估", "人天"]
+        m_headers = ["月份", "上班", "请假", "加班", "预估", "人天", "应出勤"]
         ws_month.append(m_headers)
         for m in monthly:
             ws_month.append([m.get("month", ""), m.get("workDays", 0), m.get("leaveDays", 0),
-                             m.get("overtimeDays", 0), m.get("estimatedDays", 0), m.get("manDays", 0)])
+                             m.get("overtimeDays", 0), m.get("estimatedDays", 0), m.get("manDays", 0),
+                             m.get("requiredWorkDays", 0)])
         _header_style(ws_month, len(m_headers), len(monthly))
-        for c, w in enumerate([14, 8, 8, 8, 8, 8], start=1):
+        for c, w in enumerate([14, 8, 8, 8, 8, 8, 8], start=1):
             ws_month.column_dimensions[get_column_letter(c)].width = w
 
         # 4) 按项目统计
