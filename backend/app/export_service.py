@@ -302,6 +302,9 @@ def build_export_data(
 
     comm_list = []
     for c in communications:
+        # 跳过"创建任务"系统初始化记录（无实际沟通内容），保持导出干净
+        if c.old_status_id is None and (c.content or '').startswith('创建任务，初始状态：'):
+            continue
         comm_contacts = []
         for cc in c.communication_contacts:
             ct = contact_map.get(cc.contact_id)

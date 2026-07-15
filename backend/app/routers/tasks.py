@@ -388,19 +388,9 @@ def create_task(project_id: str, data: TaskCreate, db: Session = Depends(get_db)
     if default_status and task.status_id is None:
         task.status_id = default_status.id
 
-    # 创建初始状态沟通记录，使状态链完整
-    if task.status_id:
-        status_pool = db.query(StatusPool).filter(StatusPool.id == task.status_id).first()
-        status_name = status_pool.name if status_pool else ''
-        comm = Communication(
-            task_id=task.id,
-            content=f"创建任务，初始状态：{status_name}",
-            comm_at=datetime.now(),
-            comm_type=_get_comm_type_name(db, proj.id),
-            old_status_id=None,
-            new_status_id=task.status_id
-        )
-        db.add(comm)
+    # 注：新建任务不再生成"创建任务"初始沟通记录。
+    # 任务状态由 Task.status_id 字段（已写入默认状态）独立承载，
+    # 状态推导链路在无沟通记录时会回退到该字段，无需靠状态记录起链。
 
     # 生成任务显示ID
     task.display_id = generate_task_display_id(db, proj)
@@ -444,6 +434,9 @@ def update_task(project_id: str, task_id: str, data: TaskUpdate, db: Session = D
         raise HTTPException(404, "任务不存在")
 
     current_status = derive_task_status(db, task.id)
+    if current_status is None:
+        # 无状态变更记录时，以字段当前状态作为 old 端，保证首次改状态语义正确
+        current_status = task.status_id
 
     update_data = data.model_dump(exclude_unset=True)
     tag_ids = update_data.pop("tag_ids", None)
