@@ -622,10 +622,15 @@ const runCalc = async () => {
       const dayProjects = new Set()
       for (const chk of dayCheckins) {
         const pmd = chk.project_man_days || {}
+        const totalMD = chk.man_days == null ? 1 : chk.man_days
+        const projCount = chk.projects?.length || 1
         for (const p of chk.projects || []) {
           if (!byProject[p.id]) byProject[p.id] = { projectName: p.name, days: 0, manDays: 0 }
-          byProject[p.id].days++
-          byProject[p.id].manDays += (pmd[p.id] != null ? pmd[p.id] : (chk.man_days == null ? 1 : chk.man_days))
+          // 该项目分配的人天：有手动分配用分配值，否则按项目数均分
+          const alloc = pmd[p.id] != null ? pmd[p.id] : totalMD / projCount
+          byProject[p.id].manDays += alloc
+          // 天数按人天占比拆分：单项目占比=1（保持“出勤 1 天”语义），多项目按分配比例分，避免跨项目重复计数
+          byProject[p.id].days += totalMD > 0 ? alloc / totalMD : 0
           dayProjects.add(p.id)
         }
       }
@@ -714,7 +719,9 @@ const runCalc = async () => {
   calcResult.value = {
     total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated, manDays: totalManDays, requiredWorkDays: totalRequired },
     monthly: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })),
-    byProject: Object.values(byProject).sort((a, b) => b.days - a.days),
+    byProject: Object.values(byProject)
+      .map((p) => ({ ...p, days: Math.round(p.days * 100) / 100, manDays: Math.round(p.manDays * 100) / 100 }))
+      .sort((a, b) => b.days - a.days),
     multiProjectDays,
     days,
   }
