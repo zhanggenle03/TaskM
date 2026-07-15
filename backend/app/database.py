@@ -264,9 +264,11 @@ class Communication(Base):
     old_status_id = Column(Integer, ForeignKey("status_pools.id"), nullable=True)
     new_status_id = Column(Integer, ForeignKey("status_pools.id"), nullable=True)
     content = Column(Text, nullable=False)
-    comm_at = Column(DateTime, default=datetime.utcnow)
+    # 与 add_communication 中 datetime.now() 保持一致，统一用本地时间，
+    # 避免个别记录走默认 utcnow 差 8 小时，影响按日期筛选沟通记录。
+    comm_at = Column(DateTime, default=datetime.now)
     comm_type = Column(String(50), default="note")  # note/meeting/email/call
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     task = relationship("Task", back_populates="communications")
     contact = relationship("Contact", foreign_keys=[contact_id])

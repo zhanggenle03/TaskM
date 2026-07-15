@@ -6,6 +6,7 @@ import enum
 import json
 import os
 import shutil
+import sqlite3
 import sys
 import threading
 import time
@@ -43,6 +44,21 @@ _stop_event = threading.Event()
 #  主备份函数
 # ═══════════════════════════════════════════════════════════
 
+def _wal_checkpoint():
+    """备份前强制执行 WAL checkpoint(TRUNCATE)，确保 WAL 中未回收的近期数据合并进主库。
+
+    如果 checkpoint 失败（例如被写入线程锁住），静默跳过，不影响备份继续执行。
+    """
+    if not os.path.exists(DB_PATH):
+        return
+    try:
+        con = sqlite3.connect(DB_PATH)
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        con.close()
+    except Exception as e:
+        print(f"[backup] WAL checkpoint 失败（不影响备份）: {e}", flush=True)
+
+
 def create_backup(scope: str = BackupScope.FULL.value) -> str:
     """创建备份，返回备份文件路径
     
@@ -52,6 +68,9 @@ def create_backup(scope: str = BackupScope.FULL.value) -> str:
     timestamp = now.strftime("%Y%m%d_%H%M%S")
     filename = f"taskm_backup_{timestamp}_{scope}.zip"
     filepath = os.path.join(BACKUP_DIR, filename)
+
+    # ── 备份前先 WAL checkpoint，确保近期数据已入主库 ──
+    _wal_checkpoint()
 
     with zipfile.ZipFile(filepath, "w", zipfile.ZIP_DEFLATED) as zf:
         # ── manifest ──

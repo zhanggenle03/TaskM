@@ -1722,20 +1722,21 @@ def export_requirement_doc(
         if req.description:
             file_pattern = re.compile(
                 r'/uploads/' + re.escape(proj.display_id) +
-                r'/requirements/[^/]+/files/([^"\s)]+)'
+                r'/requirements/([^/]+)/files/([^"\s)]+)'
             )
             seen = set()
             for m in file_pattern.finditer(req.description):
-                fn = m.group(1)
-                if fn in seen:
+                seg = m.group(1)
+                fn = m.group(2)
+                key = (seg, fn)
+                if key in seen:
                     continue
-                seen.add(fn)
+                seen.add(key)
                 file_path = os.path.join(
-                    UPLOAD_DIR, proj.display_id, 'requirements',
-                    req.display_id or f'req_{req.id}', 'files', fn
+                    UPLOAD_DIR, proj.display_id, 'requirements', seg, 'files', fn
                 )
                 if os.path.isfile(file_path):
-                    zf.write(file_path, f'files/{fn}')
+                    zf.write(file_path, f'requirements/{seg}/files/{fn}')
 
     zip_bytes = zip_buf.getvalue()
 

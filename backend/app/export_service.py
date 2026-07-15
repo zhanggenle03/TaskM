@@ -491,6 +491,28 @@ def _format_size(bytes_val: int) -> str:
     return f'{bytes_val}B'
 
 
+# 自动生成的状态变更文本前缀（与 routers/tasks.py 中 update_task 生成格式一致）
+_AUTO_STATUS_PREFIXES = ('状态变更：', '状态变更为：', '状态：')
+
+
+def _is_auto_status_text(content: str, old_status_id, new_status_id) -> bool:
+    """判断沟通内容是否为系统自动生成的状态变更文本（与状态行重复，导出/展示时应隐藏）。"""
+    if not (old_status_id or new_status_id):
+        return False
+    if not content:
+        return False
+    c = content.strip()
+    return any(c.startswith(p) for p in _AUTO_STATUS_PREFIXES)
+
+
+_HTML_TAG_RE = re.compile(r'<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>', re.I)
+
+
+def _looks_like_html(text: str) -> bool:
+    """粗略判断内容是否为 HTML（含标签），用于决定是否走富文本渲染。"""
+    return bool(_HTML_TAG_RE.search(text or ''))
+
+
 def generate_export_package(
     db: Session,
     project_id: str,
@@ -622,12 +644,23 @@ def generate_export_package(
             _new_paragraph(doc, status_line, size=SMALL_SIZE)
 
         # 沟通内容
-        _new_paragraph(doc, '沟通内容：', size=BODY_SIZE, bold=True, before=80)
-        if comm['content']:
-            lines = comm['content'].split('\n')
-            for line in lines:
-                if line.strip():
-                    _new_paragraph(doc, line.strip(), size=BODY_SIZE, first_line_indent=480)
+        # 自动生成的状态变更文本与上方状态行重复，跳过不渲染（#8）
+        if not _is_auto_status_text(comm['content'], comm['old_status_id'], comm['new_status_id']):
+            _new_paragraph(doc, '沟通内容：', size=BODY_SIZE, bold=True, before=80)
+            if comm['content']:
+                # 富文本内容（如带格式/图片/超链接）复用需求描述的 HTML→DOCX 渲染器（#4）
+                if _looks_like_html(comm['content']):
+                    try:
+                        from .routers.requirements import _render_html_to_docx
+                        _render_html_to_docx(doc, comm['content'], {}, {}, img_base_dir=UPLOAD_DIR)
+                    except Exception:
+                        for line in comm['content'].split('\n'):
+                            if line.strip():
+                                _new_paragraph(doc, line.strip(), size=BODY_SIZE, first_line_indent=480)
+                else:
+                    for line in comm['content'].split('\n'):
+                        if line.strip():
+                            _new_paragraph(doc, line.strip(), size=BODY_SIZE, first_line_indent=480)
 
         # ---- 附件 ----
         image_atts = [a for a in comm['attachments'] if a['is_image']]
@@ -687,6 +720,7 @@ def generate_export_package(
 
         # 收集并添加需求附件文件
         req_file_entries = []  # (arcname, file_path)
+        # 按 (需求段, 文件名) 去重，避免不同需求同名文件互相覆盖（#10）
         seen_files = set()
         for req_info in linked_req_data:
             req = db.query(Requirement).filter(
@@ -695,21 +729,23 @@ def generate_export_package(
             ).first()
             if not req or not req.description:
                 continue
+            # 同时捕获需求段与文件名，写入带段的路径，杜绝跨需求同名冲突
             file_pattern = re.compile(
                 r'/uploads/' + re.escape(proj.display_id) +
-                r'/requirements/[^/]+/files/([^"\s)]+)'
+                r'/requirements/([^/]+)/files/([^"\s)]+)'
             )
             for m in file_pattern.finditer(req.description):
-                fn = m.group(1)
-                if fn in seen_files:
+                seg = m.group(1)
+                fn = m.group(2)
+                key = (seg, fn)
+                if key in seen_files:
                     continue
-                seen_files.add(fn)
+                seen_files.add(key)
                 file_path = os.path.join(
-                    UPLOAD_DIR, proj.display_id, 'requirements',
-                    req.display_id or f'req_{req.id}', 'files', fn
+                    UPLOAD_DIR, proj.display_id, 'requirements', seg, 'files', fn
                 )
                 if os.path.isfile(file_path):
-                    arcname = f'requirements/files/{fn}'
+                    arcname = f'requirements/{seg}/files/{fn}'
                     req_file_entries.append((arcname, file_path))
 
         for arcname, file_path in req_file_entries:

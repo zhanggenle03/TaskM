@@ -46,6 +46,15 @@
           <el-button size="small" type="primary" text @click="showAddComm = true">+ 添加记录</el-button>
         </div>
 
+        <!-- 时间线搜索 / 筛选（#5） -->
+        <div class="timeline-toolbar" v-if="task?.communications?.length">
+          <el-input v-model="commSearch" placeholder="搜索内容 / 对接人 / 类型" size="small" clearable style="width:240px" />
+          <el-select v-model="commTypeFilter" placeholder="全部类型" size="small" clearable style="width:150px">
+            <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commTypeFilter)" :key="ct.name" :label="ct.name" :value="ct.name" />
+          </el-select>
+          <span class="timeline-count">共 {{ filteredComms.length }} 条</span>
+        </div>
+
         <!-- 时间线选择工具栏 -->
         <div v-if="showTimelineCheckboxes" class="timeline-select-bar">
           <el-icon><Select /></el-icon>
@@ -59,9 +68,9 @@
         </div>
 
         <div class="timeline-scroll">
-          <el-timeline v-if="task.communications?.length">
+          <el-timeline v-if="displayComms.length">
             <el-timeline-item
-              v-for="(c, idx) in (timelineAsc ? task.communications : [...task.communications].reverse())"
+              v-for="c in displayComms"
               :key="c.id"
               :timestamp="formatTime(c.comm_at)"
               placement="top"
@@ -91,7 +100,8 @@
                   <el-button size="small" text @click="openEditComm(c)"><el-icon><Edit /></el-icon></el-button>
                   <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
                 </div>
-                <div class="comm-content">{{ c.content }}</div>
+                <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染 -->
+                <div class="comm-content" v-if="c.content && !isAutoStatusContent(c)" v-html="renderCommContent(c)"></div>
                 <!-- 沟通附件 -->
                 <div v-if="c.attachments?.length" class="att-list">
                   <div v-for="a in c.attachments" :key="a.id" class="att-item">
@@ -107,9 +117,14 @@
                 </div>
               </div>
             </el-timeline-item>
-          </el-timeline>
-          <el-empty v-else description="暂无沟通记录" :image-size="60" />
-        </div>
+              <div v-if="hasMoreComms" class="timeline-more">
+                <el-button size="small" text @click="commVisibleCount += COMM_PAGE_SIZE">
+                  加载更多（剩 {{ filteredComms.length - commVisibleCount }} 条）
+                </el-button>
+              </div>
+            </el-timeline>
+            <el-empty v-else :description="task?.communications?.length ? '无匹配的沟通记录' : '暂无沟通记录'" :image-size="60" />
+          </div>
       </div>
 
       <!-- 右侧信息栏 -->
@@ -204,7 +219,7 @@
 
     <!-- 添加/编辑沟通记录（含对接人选择+附件上传） -->
     <el-dialog v-model="showAddComm" :title="editComm ? '编辑沟通记录' : '添加沟通记录'" width="520px" @close="resetCommForm" @open="onOpenCommDialog">
-      <el-form :model="commForm" label-width="80px">
+      <el-form :model="commForm" label-width="80px" @paste.capture="onContentPaste">
         <el-form-item label="对接人">
           <el-select v-model="commForm.contact_ids" placeholder="选择对接人" multiple clearable style="width:100%">
             <el-option v-for="c in task?.contacts || []" :key="c.id" :value="c.id" :label="c.name">
@@ -214,8 +229,10 @@
           </el-select>
         </el-form-item>
         <el-form-item label="沟通内容" required>
-          <div @paste.capture="onContentPaste" style="width:100%">
-            <el-input v-model="commForm.content" type="textarea" :rows="4" placeholder="描述本次沟通内容..." />
+          <!-- 缩略预览：点击进入独立编辑器 -->
+          <div class="comm-content-preview" :class="{ empty: !isRichContent(commEditorHtml) }" @click="openCommEditor">
+            <div v-if="isRichContent(commEditorHtml)" class="comm-content-preview-inner" v-html="sanitizeHtml(commEditorHtml)"></div>
+            <div v-else class="comm-content-placeholder"><el-icon><Edit /></el-icon> 点击此处编辑富文本内容（支持加粗、列表、链接等）</div>
           </div>
         </el-form-item>
         <el-form-item label="沟通类型">
@@ -291,6 +308,9 @@
         <el-button type="primary" :loading="commLoading" @click="submitComm">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 独立富文本编辑器（点击沟通内容预览弹出） -->
+    <CommEditorDialog v-model="showCommEditor" :initial-html="commEditorHtml" @save="onCommEditorSave" />
 
     <!-- 添加/编辑对接人 -->
     <el-dialog v-model="showAddContact" :title="editContactRef ? '编辑对接人' : '添加对接人'" width="400px" @close="resetContactForm">
@@ -532,6 +552,7 @@ import {
   linkRequirement, unlinkRequirement, getRequirements,
   getReqStatusPools, getReqPriorityPools
 } from '../api'
+import CommEditorDialog from '../components/CommEditorDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -642,6 +663,9 @@ const commLoading = ref(false)
 const editComm = ref(null)
 const commForm = ref({ content: '', contact_ids: [], comm_type: '', comm_at: null, files: [], old_status_id: null, new_status_id: null })
 const pastedFiles = ref([])  // 粘贴或选择的临时文件，提交时一起上传
+// 独立富文本编辑器相关
+const showCommEditor = ref(false)
+const commEditorHtml = ref('')  // 沟通内容（HTML），与 commForm.content 双向同步
 
 const hiddenFileInput = ref(null)
 const uploadTargetComm = ref(null)
@@ -665,6 +689,102 @@ const previewIndex = ref(0)
 const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico']
 
 const timelineAsc = ref(false)  // 时间线排序：false=最新的在前面，true=最早的在前
+
+// ---- 时间线搜索 / 筛选 / 分页（#5） ----
+const commSearch = ref('')
+const commTypeFilter = ref('')
+const COMM_PAGE_SIZE = 20
+const commVisibleCount = ref(COMM_PAGE_SIZE)
+
+const filteredComms = computed(() => {
+  if (!task.value?.communications) return []
+  let list = [...task.value.communications]
+  if (commTypeFilter.value) list = list.filter(c => c.comm_type === commTypeFilter.value)
+  const q = (commSearch.value || '').trim().toLowerCase()
+  if (q) {
+    list = list.filter(c => {
+      const content = (c.content || '').toLowerCase()
+      const names = (c.contacts || []).map(cn => cn.name).join('、').toLowerCase()
+      const type = (c.comm_type || '').toLowerCase()
+      return content.includes(q) || names.includes(q) || type.includes(q)
+    })
+  }
+  list.sort((a, b) => {
+    const ta = new Date(a.comm_at).getTime() || 0
+    const tb = new Date(b.comm_at).getTime() || 0
+    return timelineAsc.value ? ta - tb : tb - ta
+  })
+  return list
+})
+const displayComms = computed(() => filteredComms.value.slice(0, commVisibleCount.value))
+const hasMoreComms = computed(() => commVisibleCount.value < filteredComms.value.length)
+
+// 筛选/排序变化时重置分页
+watch([commSearch, commTypeFilter, timelineAsc], () => { commVisibleCount.value = COMM_PAGE_SIZE })
+
+// ---- 沟通内容渲染（#1 隐藏重复状态文本；#4 富文本 sanitize 后渲染） ----
+const isAutoStatusContent = (c) => {
+  if (!(c.old_status_id || c.new_status_id)) return false
+  const t = (c.content || '').trim()
+  if (!t) return false
+  return t.startsWith('状态变更：') || t.startsWith('状态变更为：') || t.startsWith('状态：')
+}
+
+const _looksLikeHtml = (s) => /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/.test(s || '')
+const escapeHtml = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const sanitizeHtml = (html) => {
+  const allowed = new Set(['P', 'DIV', 'SPAN', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'UL', 'OL', 'LI', 'A', 'IMG', 'PRE', 'CODE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'HR', 'SUB', 'SUP', 'FONT', 'SECTION'])
+  const tpl = document.createElement('template')
+  tpl.innerHTML = html
+  const walk = (node) => {
+    Array.from(node.childNodes).forEach(n => { if (n.nodeType === 1) walk(n) })
+    Array.from(node.children).forEach(child => {
+      if (!allowed.has(child.tagName)) {
+        const parent = child.parentNode
+        while (child.firstChild) parent.insertBefore(child.firstChild, child)
+        parent.removeChild(child)
+      } else {
+        Array.from(child.attributes).forEach(attr => {
+          const n = attr.name.toLowerCase()
+          if (n.startsWith('on')) child.removeAttribute(attr.name)
+          else if ((n === 'href' || n === 'src') && /^\s*(javascript|vbscript|data):/i.test(attr.value)) child.removeAttribute(attr.name)
+        })
+        if (child.tagName === 'A') { child.setAttribute('target', '_blank'); child.setAttribute('rel', 'noopener noreferrer') }
+      }
+    })
+  }
+  walk(tpl.content)
+  return tpl.innerHTML
+}
+const renderCommContent = (c) => {
+  const txt = c.content || ''
+  if (_looksLikeHtml(txt)) return sanitizeHtml(txt)
+  return escapeHtml(txt)
+}
+// 判断富文本内容是否为"空"（去掉标签与空白后无实际文字）
+const isRichEmpty = (html) => {
+  if (!html) return true
+  const txt = (html || '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, '')
+  return txt.length === 0
+}
+const isRichContent = (html) => !isRichEmpty(html)
+
+// 点击缩略预览 → 打开独立编辑器
+const openCommEditor = () => {
+  // 确保当前表单内容与编辑器源同步（编辑场景下 commEditorHtml 已被 openEditComm 赋值）
+  if (commForm.value.content && !commEditorHtml.value) {
+    commEditorHtml.value = commForm.value.content
+  }
+  showCommEditor.value = true
+}
+// 编辑器保存：回写 HTML 到表单与预览
+const onCommEditorSave = (html) => {
+  commEditorHtml.value = html || ''
+  commForm.value.content = html || ''
+}
 
 const imgState = ref({ x: 0, y: 0, scale: 1 })
 const isDragging = ref(false)
@@ -873,6 +993,7 @@ const quickUpdateTags = async (ids) => {
 const onOpenCommDialog = () => {
   // 设置默认沟通类型
   if (!editComm.value) {
+    commEditorHtml.value = ''  // 新增场景清空富文本内容
     const defaultType = commTypes.value.find((ct) => ct.is_default) || commTypes.value[0]
     if (defaultType) {
       commForm.value.comm_type = defaultType.name
@@ -1046,6 +1167,7 @@ const resetCommForm = () => {
   commForm.value = { content: '', contact_ids: [], comm_type: '', comm_at: null, files: [], old_status_id: null, new_status_id: null }
   pastedFiles.value = []
   editComm.value = null
+  commEditorHtml.value = ''
 }
 const openEditComm = (c) => {
   editComm.value = c
@@ -1058,10 +1180,11 @@ const openEditComm = (c) => {
     old_status_id: c.old_status_id ?? null,
     new_status_id: c.new_status_id ?? null
   }
+  commEditorHtml.value = c.content || ''
   showAddComm.value = true
 }
 const submitComm = async () => {
-  if (!commForm.value.content.trim()) { ElMessage.warning('内容不能为空'); return }
+  if (isRichEmpty(commForm.value.content)) { ElMessage.warning('内容不能为空'); return }
   commLoading.value = true
   try {
     if (editComm.value) {
@@ -1267,7 +1390,17 @@ const submitExport = async () => {
     URL.revokeObjectURL(url)
 
     showExportDialog.value = false
-    ElMessage.success('导出成功')
+    // #12 读取导出统计头，给出明确反馈
+    const stats = res.headers?.['x-export-stats']
+    let msg = '导出成功'
+    if (stats) {
+      const m = stats.match(/comms[:=](\d+)/)
+      const at = stats.match(/atts[:=](\d+)/)
+      if (m || at) {
+        msg = `导出成功：共 ${m ? m[1] : 0} 条沟通记录、${at ? at[1] : 0} 个附件`
+      }
+    }
+    ElMessage.success(msg)
   } catch (err) {
     ElMessage.error('导出失败：' + (err.response?.data?.detail || err.message))
   } finally {
@@ -1335,6 +1468,9 @@ const removeAtt = async (a) => {
 .preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
 .preview-toolbar .tb-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
 .timeline-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.timeline-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.timeline-count { font-size: 12px; color: #999; white-space: nowrap; }
+.timeline-more { text-align: center; padding: 6px 0 2px; }
 .timeline-scroll::-webkit-scrollbar { width: 6px; }
 .timeline-scroll::-webkit-scrollbar-track { background: transparent; }
 .timeline-scroll::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 3px; transition: background 0.2s; }
@@ -1349,6 +1485,12 @@ const removeAtt = async (a) => {
 .comm-arrow { color: #bbb; font-size: 12px; margin: 0 2px; }
 .status-dot-mini { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .comm-content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
+/* 缩略预览框（点击进入编辑器） */
+.comm-content-preview { min-height: 96px; max-height: 160px; overflow: hidden; border: 1px dashed #dcdfe6; border-radius: 6px; padding: 10px 12px; cursor: text; background: #fafafa; transition: border-color .15s, background .15s; }
+.comm-content-preview:hover { border-color: #c0c4cc; background: #f5f7fa; }
+.comm-content-preview.empty { display: flex; align-items: center; }
+.comm-content-preview-inner { font-size: 14px; line-height: 1.6; color: #333; pointer-events: none; }
+.comm-content-placeholder { color: #bbb; font-size: 13px; display: flex; align-items: center; gap: 6px; }
 .att-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .att-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #555; background: #f7f7f5; border-radius: 4px; padding: 4px 8px; }
 .att-name { color: #185fa5; text-decoration: none; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
