@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 import os
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import update
 from typing import List, Optional
 from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
 from ..holiday_service import get_year
@@ -12,6 +13,53 @@ from ..schemas import (
     CheckinCreate, CheckinOut, BatchDeleteIds,
     HolidayOverrideSet, HolidayOverrideOut,
 )
+
+
+def _apply_checkin_projects(db, chk, project_ids, project_man_days, day_man_days):
+    """设置签到关联项目，并按 project_man_days 写入各项目分配的人天（checkin_projects.man_days）。
+    返回当天人天合计（= 各项目分配之和）。"""
+    alloc = project_man_days or {}
+    n = len(project_ids)
+    md_map = {}
+    projects = []
+    for pid in project_ids:
+        proj = db.query(Project).filter(Project.id == pid).first()
+        if not proj:
+            continue
+        projects.append(proj)
+        if pid in alloc and alloc[pid] is not None:
+            md = float(alloc[pid])
+        elif n == 1:
+            md = float(day_man_days)
+        else:
+            md = round(float(day_man_days) / n, 4)
+        md_map[pid] = md
+    # 通过 secondary 关系写入 checkin_projects（默认 man_days），随后用分配值覆盖
+    chk.projects = projects
+    db.flush()
+    for pid, md in md_map.items():
+        db.execute(
+            update(CheckinProject)
+            .where(CheckinProject.checkin_id == chk.id, CheckinProject.project_id == pid)
+            .values(man_days=md)
+        )
+    return sum(md_map.values())
+
+
+def _attach_project_man_days(db, checkins):
+    """为返回给前端的 Checkin 对象附加 project_man_days 字典（各项目分配的人天）。"""
+    if not checkins:
+        return checkins
+    ids = [c.id for c in checkins]
+    rows = db.query(
+        CheckinProject.checkin_id, CheckinProject.project_id, CheckinProject.man_days
+    ).filter(CheckinProject.checkin_id.in_(ids)).all()
+    by_c = {}
+    for cid, pid, md in rows:
+        by_c.setdefault(cid, {})[pid] = md
+    for c in checkins:
+        c.project_man_days = by_c.get(c.id, {})
+    return checkins
 
 
 def _ensure_single_default(db: Session, model_class, project_id: int, exclude_id: int = None):
@@ -264,7 +312,9 @@ def list_all_checkins(
         q = q.filter(Checkin.date >= start_date)
     if end_date is not None:
         q = q.filter(Checkin.date <= end_date)
-    return q.order_by(Checkin.date.desc(), Checkin.created_at.desc()).all()
+    result = q.order_by(Checkin.date.desc(), Checkin.created_at.desc()).all()
+    _attach_project_man_days(db, result)
+    return result
 
 
 @router.post("/checkins", response_model=CheckinOut)
@@ -278,11 +328,11 @@ def create_checkin_global(data: CheckinCreate, db: Session = Depends(get_db)):
         man_days=data.man_days,
         man_day_reason=data.man_day_reason,
     )
-    # 关联项目
-    for pid in data.project_ids:
-        proj = db.query(Project).filter(Project.id == pid).first()
-        if proj:
-            chk.projects.append(proj)
+    db.add(chk)
+    db.flush()
+    # 关联项目（按 project_man_days 分配各项目人天）
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.man_days)
+    chk.man_days = total
     # 关联任务
     for tid in data.task_ids:
         task = db.query(Task).filter(Task.id == tid).first()
@@ -291,6 +341,7 @@ def create_checkin_global(data: CheckinCreate, db: Session = Depends(get_db)):
     db.add(chk)
     db.commit()
     db.refresh(chk)
+    _attach_project_man_days(db, [chk])
     return chk
 
 
@@ -310,13 +361,12 @@ def update_checkin(checkin_id: int, data: CheckinCreate, db: Session = Depends(g
     chk.date = date_type.fromisoformat(data.date) if data.date else chk.date
     chk.content = data.content
     chk.multi_project = data.multi_project
-    chk.man_days = data.man_days
     chk.man_day_reason = data.man_day_reason
-    # 更新关联项目
+    # 更新关联项目（按 project_man_days 分配各项目人天）
     chk.projects = []
-    for pid in data.project_ids:
-        proj = db.query(Project).filter(Project.id == pid).first()
-        if proj: chk.projects.append(proj)
+    db.flush()
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.man_days)
+    chk.man_days = total
     # 更新关联任务
     chk.tasks = []
     for tid in data.task_ids:
@@ -324,6 +374,7 @@ def update_checkin(checkin_id: int, data: CheckinCreate, db: Session = Depends(g
         if task: chk.tasks.append(task)
     db.commit()
     db.refresh(chk)
+    _attach_project_man_days(db, [chk])
     return chk
 
 
@@ -618,9 +669,11 @@ def delete_tag(project_id: str, tag_id: int, force: bool = False, confirmed: boo
 @router.get("/{project_id}/checkins", response_model=List[CheckinOut])
 def list_checkins(project_id: str, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
-    return db.query(Checkin).options(
+    result = db.query(Checkin).options(
         joinedload(Checkin.projects), joinedload(Checkin.tasks)
     ).filter(Checkin.projects.any(id=proj.id)).order_by(Checkin.date.desc(), Checkin.created_at.desc()).all()
+    _attach_project_man_days(db, result)
+    return result
 
 
 @router.post("/{project_id}/checkins", response_model=CheckinOut)
@@ -635,13 +688,17 @@ def create_checkin(project_id: str, data: CheckinCreate, db: Session = Depends(g
         man_days=data.man_days,
         man_day_reason=data.man_day_reason,
     )
-    chk.projects.append(proj)
+    db.add(chk)
+    db.flush()
+    pids = data.project_ids if data.project_ids else [proj.id]
+    total = _apply_checkin_projects(db, chk, pids, data.project_man_days, data.man_days)
+    chk.man_days = total
     for tid in data.task_ids:
         task = db.query(Task).filter(Task.id == tid).first()
         if task: chk.tasks.append(task)
-    db.add(chk)
     db.commit()
     db.refresh(chk)
+    _attach_project_man_days(db, [chk])
     return chk
 
 
@@ -668,14 +725,12 @@ def update_checkin_project(project_id: str, checkin_id: int, data: CheckinCreate
     chk.date = date_type.fromisoformat(data.date) if data.date else chk.date
     chk.content = data.content
     chk.multi_project = data.multi_project
-    chk.man_days = data.man_days
     chk.man_day_reason = data.man_day_reason
-    # 更新关联项目
+    # 更新关联项目（按 project_man_days 分配各项目人天）
     chk.projects = []
-    for pid in data.project_ids:
-        proj = db.query(Project).filter(Project.id == pid).first()
-        if proj:
-            chk.projects.append(proj)
+    db.flush()
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.man_days)
+    chk.man_days = total
     # 更新关联任务
     chk.tasks = []
     for tid in data.task_ids:
@@ -684,4 +739,5 @@ def update_checkin_project(project_id: str, checkin_id: int, data: CheckinCreate
             chk.tasks.append(task)
     db.commit()
     db.refresh(chk)
+    _attach_project_man_days(db, [chk])
     return chk

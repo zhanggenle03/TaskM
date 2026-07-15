@@ -335,6 +335,8 @@ class CheckinProject(Base):
     __tablename__ = "checkin_projects"
     checkin_id = Column(Integer, ForeignKey("checkins.id", ondelete="CASCADE"), primary_key=True)
     project_id = Column(Integer, ForeignKey("projects.id"), primary_key=True)
+    # 该签到记录下本项目分配的人天（多项目时各项目分别填写，合计=当天人天）
+    man_days = Column(Float, default=1.0, nullable=False)
 
 
 class CheckinTask(Base):
@@ -479,3 +481,46 @@ def _ensure_project_category_column():
             print("[migrate] projects.category 列已添加", flush=True)
     except Exception as e:
         print(f"[migrate] 检查/添加 category 列失败: {e}", flush=True)
+
+
+def _ensure_checkin_project_mandays_column():
+    """为 checkin_projects 关联表补充 man_days 列（多项目时各项目单独分配人天）。
+
+    已存在则跳过。补齐后把历史 junction 行（仍为默认 1.0）按「当天人天 / 关联项目数」回填，
+    保证历史单项目签到 man_days 等于当天人天、多项目签到平均分摊（消除旧版重复计算）。
+    """
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("checkin_projects")]
+        if "man_days" not in cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE checkin_projects ADD COLUMN man_days REAL NOT NULL DEFAULT 1.0"))
+                conn.commit()
+            print("[migrate] checkin_projects.man_days 列已添加", flush=True)
+
+        # 回填：仅处理仍等于默认 1.0 的历史行（新写入的行已由应用代码赋正确值）
+        with engine.connect() as conn:
+            rows = conn.execute(text(
+                "SELECT cp.checkin_id, cp.project_id, c.man_days "
+                "FROM checkin_projects cp JOIN checkins c ON c.id = cp.checkin_id "
+                "WHERE cp.man_days = 1.0"
+            )).fetchall()
+            by_c = {}
+            for cid, pid, total in rows:
+                by_c.setdefault(cid, {"total": total, "items": []})["items"].append(pid)
+            for cid, info in by_c.items():
+                n = len(info["items"])
+                if n == 0:
+                    continue
+                total = info["total"] or 0.0
+                share = round(total / n, 4)
+                for i, pid in enumerate(info["items"]):
+                    md = share if i < n - 1 else round(total - share * (n - 1), 4)
+                    conn.execute(text(
+                        "UPDATE checkin_projects SET man_days = :md "
+                        "WHERE checkin_id = :cid AND project_id = :pid"
+                    ), {"md": md, "cid": cid, "pid": pid})
+            conn.commit()
+        print("[migrate] checkin_projects.man_days 回填完成", flush=True)
+    except Exception as e:
+        print(f"[migrate] 检查/添加 checkin_projects.man_days 列失败: {e}", flush=True)

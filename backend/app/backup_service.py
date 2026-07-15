@@ -442,7 +442,7 @@ def export_single_project(project_id: int, include_uploads: bool = True) -> Opti
                     CheckinProject.project_id == project_id
                 ).all()
                 zf.writestr("checkin_projects.json", json.dumps(
-                    [{"checkin_id": l.checkin_id, "project_id": l.project_id}
+                    [{"checkin_id": l.checkin_id, "project_id": l.project_id, "man_days": l.man_days}
                      for l in cp_links], indent=2, ensure_ascii=False
                 ))
                 # checkin_tasks
@@ -832,9 +832,11 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                     try:
                         db.execute(
                             sa_text(
-                                "INSERT INTO checkin_projects (checkin_id, project_id) VALUES (:ckid, :pid)"
+                                "INSERT INTO checkin_projects (checkin_id, project_id, man_days) "
+                                "VALUES (:ckid, :pid, :md)"
                             ),
-                            {"ckid": new_ckid, "pid": new_project_id},
+                            {"ckid": new_ckid, "pid": new_project_id,
+                             "md": float(link.get("man_days", 1.0) or 1.0)},
                         )
                     except Exception:
                         pass

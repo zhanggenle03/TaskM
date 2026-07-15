@@ -194,9 +194,22 @@
         <el-form-item label="工作记录">
           <el-input v-model="checkinForm.content" type="textarea" :rows="4" placeholder="今天做了什么？" />
         </el-form-item>
-        <el-form-item label="人天">
+        <el-form-item v-if="!checkinForm.multi_project" label="人天">
           <el-input-number v-model="checkinForm.man_days" :min="0" :step="0.5" :precision="2" controls-position="right" style="width:160px" />
-          <span style="margin-left:8px;font-size:12px;color:#888">默认 1 人天，加班/并行多项目等可 &gt;1</span>
+          <span style="margin-left:8px;font-size:12px;color:#888">默认 1 人天，加班等可 &gt;1</span>
+        </el-form-item>
+        <el-form-item v-else label="项目人天">
+          <div class="pmd-block">
+            <div v-for="pid in checkinForm.project_ids" :key="pid" class="pmd-row">
+              <span class="pmd-name">{{ projectNameById(pid) }}</span>
+              <el-input-number v-model="projectManDays[pid]" :min="0" :step="0.5" :precision="2" controls-position="right" style="width:140px" />
+              <span class="pmd-unit">人天</span>
+            </div>
+            <div class="pmd-foot">
+              <span>合计 <strong class="pmd-sum-num">{{ multiManDaySum }}</strong> 人天</span>
+              <el-button text size="small" type="primary" @click="splitSingleEvenly">均分</el-button>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="人天说明">
           <el-input v-model="checkinForm.man_day_reason" placeholder="如：加班、并行多项目、调休补班等（可选）" style="width:100%" />
@@ -234,9 +247,22 @@
         <el-form-item label="工作记录">
           <el-input v-model="batchForm.content" type="textarea" :rows="4" placeholder="所有选中日期共用此记录" />
         </el-form-item>
-        <el-form-item label="人天">
+        <el-form-item v-if="!batchForm.multi_project" label="人天">
           <el-input-number v-model="batchForm.man_days" :min="0" :step="0.5" :precision="2" controls-position="right" style="width:160px" />
-          <span style="margin-left:8px;font-size:12px;color:#888">默认 1 人天，加班/并行多项目等可 &gt;1</span>
+          <span style="margin-left:8px;font-size:12px;color:#888">默认 1 人天，加班等可 &gt;1</span>
+        </el-form-item>
+        <el-form-item v-else label="项目人天">
+          <div class="pmd-block">
+            <div v-for="pid in batchForm.project_ids" :key="pid" class="pmd-row">
+              <span class="pmd-name">{{ projectNameById(pid) }}</span>
+              <el-input-number v-model="batchProjectManDays[pid]" :min="0" :step="0.5" :precision="2" controls-position="right" style="width:140px" />
+              <span class="pmd-unit">人天</span>
+            </div>
+            <div class="pmd-foot">
+              <span>合计 <strong class="pmd-sum-num">{{ batchManDaySum }}</strong> 人天</span>
+              <el-button text size="small" type="primary" @click="splitBatchEvenly">均分</el-button>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="人天说明">
           <el-input v-model="batchForm.man_day_reason" placeholder="如：加班、并行多项目、调休补班等（可选）" style="width:100%" />
@@ -466,6 +492,27 @@ const batchLoading = ref(false)
 const batchForm = ref({ project_ids: [], task_ids: [], multi_project: false, content: '', man_days: 1, man_day_reason: '' })
 const batchTasks = ref([])
 
+// 多项目时各项目分配的人天（project_id -> 人天）
+const projectManDays = ref({})
+const batchProjectManDays = ref({})
+// 选中项目变化时同步分配表：移除已取消项、补默认值 0.5
+const syncProjectManDays = (ids, store) => {
+  const next = {}
+  for (const pid of ids) next[pid] = (store[pid] != null ? store[pid] : 0.5)
+  for (const k of Object.keys(store)) delete store[k]
+  Object.assign(store, next)
+}
+const projectNameById = (pid) => projects.value.find((p) => p.id === pid)?.name || `#${pid}`
+// 多项目当天人天合计（= 各项目分配之和）；单项目直接用 man_days
+const multiManDaySum = computed(() => {
+  if (!checkinForm.value.multi_project) return checkinForm.value.man_days
+  return checkinForm.value.project_ids.reduce((s, pid) => s + (Number(projectManDays.value[pid]) || 0), 0)
+})
+const batchManDaySum = computed(() => {
+  if (!batchForm.value.multi_project) return batchForm.value.man_days
+  return batchForm.value.project_ids.reduce((s, pid) => s + (Number(batchProjectManDays.value[pid]) || 0), 0)
+})
+
 // 批量删除签到（日历选日期模式）
 const deleteBatchMode = ref(false)
 const deleteDates = ref([])
@@ -571,13 +618,14 @@ const runCalc = async () => {
       totalManDays += dayManDays
       byMonth[monthKey].manDays += dayManDays
 
-      // 按项目统计：每个签到记录的项目
+      // 按项目统计：每个签到记录的项目（多项目按各自分配的人天计入，消除重复计算）
       const dayProjects = new Set()
       for (const chk of dayCheckins) {
+        const pmd = chk.project_man_days || {}
         for (const p of chk.projects || []) {
           if (!byProject[p.id]) byProject[p.id] = { projectName: p.name, days: 0, manDays: 0 }
           byProject[p.id].days++
-          byProject[p.id].manDays += (chk.man_days == null ? 1 : chk.man_days)
+          byProject[p.id].manDays += (pmd[p.id] != null ? pmd[p.id] : (chk.man_days == null ? 1 : chk.man_days))
           dayProjects.add(p.id)
         }
       }
@@ -1067,6 +1115,7 @@ const resetCheckinForm = () => {
   editingCheckinId.value = null
   const lastPid = localStorage.getItem('taskm_last_project')
   checkinForm.value = { project_ids: lastPid ? [Number(lastPid)] : [], task_ids: [], multi_project: false, date: null, content: '', man_days: 1, man_day_reason: '' }
+  projectManDays.value = {}
   tasksForSelected.value = []
   if (lastPid) loadTasksForProjects([Number(lastPid)])
 }
@@ -1093,14 +1142,23 @@ const openCheckinDialog = () => {
     checkinForm.value.content = existing.content
     checkinForm.value.man_days = existing.man_days ?? 1
     checkinForm.value.man_day_reason = existing.man_day_reason || ''
+    // 多项目：回填各项目分配的人天
+    projectManDays.value = {}
+    if (existing.multi_project) {
+      const src = existing.project_man_days || {}
+      for (const p of existing.projects) {
+        projectManDays.value[p.id] = src[p.id] != null ? src[p.id] : 0.5
+      }
+    }
     loadTasksForProjects(checkinForm.value.project_ids)
   }
   showCheckinDlg.value = true
 }
-const onMultiChange = () => { checkinForm.value.project_ids = []; checkinForm.value.task_ids = []; tasksForSelected.value = [] }
+const onMultiChange = () => { checkinForm.value.project_ids = []; checkinForm.value.task_ids = []; tasksForSelected.value = []; projectManDays.value = {} }
 const onProjectChange = () => {
   const ids = checkinForm.value.project_ids
   checkinForm.value.task_ids = []
+  syncProjectManDays(ids, projectManDays.value)
   if (ids.length) { localStorage.setItem('taskm_last_project', ids[0]); loadTasksForProjects(ids) }
   else tasksForSelected.value = []
 }
@@ -1115,15 +1173,37 @@ const loadTasksForProjects = async (pids) => {
   }))
   tasksForSelected.value = results.flat()
 }
+const buildCheckinPayload = (form, store) => {
+  const payload = {
+    project_ids: form.project_ids,
+    task_ids: form.task_ids,
+    multi_project: form.multi_project,
+    date: form.date,
+    content: form.content,
+    man_days: form.man_days,
+    man_day_reason: form.man_day_reason,
+    project_man_days: {},
+  }
+  if (form.multi_project) {
+    for (const pid of form.project_ids) payload.project_man_days[pid] = Number(store[pid] || 0)
+    payload.man_days = form.project_ids.reduce((s, pid) => s + (Number(store[pid]) || 0), 0)
+  } else {
+    const pid = form.project_ids[0]
+    if (pid != null) payload.project_man_days[pid] = Number(form.man_days || 0)
+  }
+  return payload
+}
+
 const submitCheckin = async () => {
   if (!checkinForm.value.project_ids.length) { ElMessage.warning('请选择项目'); return }
   checkinLoading.value = true
   try {
+    const payload = buildCheckinPayload(checkinForm.value, projectManDays.value)
     if (editingCheckinId.value) {
-      await updateCheckin(editingCheckinId.value, checkinForm.value)
+      await updateCheckin(editingCheckinId.value, payload)
       ElMessage.success('签到已更新')
     } else {
-      await createCheckin(checkinForm.value)
+      await createCheckin(payload)
       ElMessage.success('签到成功')
     }
     showCheckinDlg.value = false
@@ -1199,10 +1279,11 @@ const openBatchDialog = () => {
   if (lastPid) loadBatchTasks([Number(lastPid)])
   showBatchDlg.value = true
 }
-const onBatchMultiChange = () => { batchForm.value.project_ids = []; batchForm.value.task_ids = []; batchTasks.value = [] }
+const onBatchMultiChange = () => { batchForm.value.project_ids = []; batchForm.value.task_ids = []; batchTasks.value = []; batchProjectManDays.value = {} }
 const onBatchProjectChange = () => {
   const ids = batchForm.value.project_ids
   batchForm.value.task_ids = []
+  syncProjectManDays(ids, batchProjectManDays.value)
   if (ids.length) { localStorage.setItem('taskm_last_project', ids[0]); loadBatchTasks(ids) }
   else batchTasks.value = []
 }
@@ -1217,14 +1298,25 @@ const loadBatchTasks = async (pids) => {
   }))
   batchTasks.value = results.flat()
 }
-const resetBatchForm = () => { batchForm.value = { project_ids: [], task_ids: [], multi_project: false, content: '', man_days: 1, man_day_reason: '' }; batchTasks.value = [] }
+const resetBatchForm = () => { batchForm.value = { project_ids: [], task_ids: [], multi_project: false, content: '', man_days: 1, man_day_reason: '' }; batchProjectManDays.value = {}; batchTasks.value = [] }
+// 多项目人天均分（以 1 人天为基准平摊到各项目）
+const splitEvenly = (ids, store) => {
+  const n = ids.length
+  if (!n) return
+  const each = Math.round((1.0 / n) * 100) / 100
+  const rem = Math.round((1.0 - each * (n - 1)) * 100) / 100
+  ids.forEach((pid, i) => { store[pid] = i === n - 1 ? rem : each })
+}
+const splitSingleEvenly = () => splitEvenly(checkinForm.value.project_ids, projectManDays.value)
+const splitBatchEvenly = () => splitEvenly(batchForm.value.project_ids, batchProjectManDays.value)
 const submitBatch = async () => {
   if (!batchForm.value.project_ids.length) { ElMessage.warning('请选择项目'); return }
   batchLoading.value = true
   try {
     let count = 0
     for (const d of batchDates.value) {
-      await createCheckin({ ...batchForm.value, date: d })
+      const payload = buildCheckinPayload({ ...batchForm.value, date: d }, batchProjectManDays.value)
+      await createCheckin(payload)
       count++
     }
     ElMessage.success(`批量签到完成（${count} 天）`)
@@ -1391,5 +1483,13 @@ const submitBatch = async () => {
 .hs-ts-off { color: #999; background: #f0f0f0; }
 .hs-override-dot { width: 4px; height: 4px; border-radius: 50%; background: #534ab7; position: absolute; top: 2px; right: 2px; }
 .hs-auto-save { font-size: 12px; color: #bbb; }
+
+/* 多项目按项目分配人天 */
+.pmd-block { border: 1px solid #ebeef5; border-radius: 8px; padding: 10px 12px; width: 100%; background: #fafbff; }
+.pmd-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; }
+.pmd-name { flex: 1; font-size: 13px; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pmd-unit { font-size: 12px; color: #888; }
+.pmd-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ebeef5; font-size: 13px; color: #666; }
+.pmd-sum-num { color: #0f6e56; font-size: 15px; }
 
 </style>

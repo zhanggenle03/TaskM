@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Optional, List, Dict
 from datetime import datetime, date
 
 
@@ -292,8 +292,10 @@ class CheckinCreate(BaseModel):
     multi_project: bool = False
     date: Optional[str] = None  # "YYYY-MM-DD" 字符串
     content: str = ""
-    man_days: float = 1.0      # 当天人天，默认 1.0，加班/并行等可 >1
+    man_days: float = 1.0      # 当天人天（合计），默认 1.0，加班/并行等可 >1
     man_day_reason: str = ""   # 人天说明（自由文本）
+    # 多项目时各项目分配的人天：{project_id: man_days}，合计应等于当天 man_days
+    project_man_days: Dict[int, float] = {}
 
 class ProjectBrief(BaseModel):
     id: int
@@ -319,6 +321,7 @@ class CheckinOut(BaseModel):
     created_at: datetime
     projects: List[ProjectBrief] = []
     tasks: List[TaskBrief] = []
+    project_man_days: Dict[int, float] = {}  # 各项目分配的人天
     class Config:
         from_attributes = True
 
