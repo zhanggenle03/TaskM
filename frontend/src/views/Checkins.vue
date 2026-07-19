@@ -618,20 +618,46 @@ const runCalc = async () => {
       totalManDays += dayManDays
       byMonth[monthKey].manDays += dayManDays
 
-      // 按项目统计：每个签到记录的项目（多项目按各自分配的人天计入，消除重复计算）
+      // 多项目提醒仍基于界面可见项目（chk.projects）
       const dayProjects = new Set()
+      for (const chk of dayCheckins) {
+        for (const p of chk.projects || []) dayProjects.add(p.id)
+      }
+      // 按项目统计：遍历 project_man_days（含已删除/孤儿项目的分配明细），
+      // 保证按项目人天合计 == 顶部总人天；无法归属的部分归入“未关联项目”。
       for (const chk of dayCheckins) {
         const pmd = chk.project_man_days || {}
         const totalMD = chk.man_days == null ? 1 : chk.man_days
-        const projCount = chk.projects?.length || 1
-        for (const p of chk.projects || []) {
-          if (!byProject[p.id]) byProject[p.id] = { projectName: p.name, days: 0, manDays: 0 }
-          // 该项目分配的人天：有手动分配用分配值，否则按项目数均分
-          const alloc = pmd[p.id] != null ? pmd[p.id] : totalMD / projCount
-          byProject[p.id].manDays += alloc
+        const pmdKeys = Object.keys(pmd)
+        // 无分配明细但有可见项目时，按旧逻辑均分（数据异常兜底）
+        if (pmdKeys.length === 0 && (chk.projects || []).length) {
+          const projCount = chk.projects.length
+          for (const p of chk.projects) {
+            const alloc = totalMD / projCount
+            if (!byProject[p.id]) byProject[p.id] = { projectId: p.id, projectName: p.name, days: 0, manDays: 0 }
+            byProject[p.id].manDays += alloc
+            byProject[p.id].days += totalMD > 0 ? alloc / totalMD : 0
+          }
+          continue
+        }
+        let accounted = 0
+        for (const pidStr of pmdKeys) {
+          const pid = Number(pidStr)
+          const alloc = pmd[pidStr]
+          accounted += alloc
+          const rawName = projectNameById(pid)
+          const name = rawName && rawName.startsWith('#') ? '已删除项目' : rawName
+          if (!byProject[pid]) byProject[pid] = { projectId: pid, projectName: name, days: 0, manDays: 0 }
+          byProject[pid].manDays += alloc
           // 天数按人天占比拆分：单项目占比=1（保持“出勤 1 天”语义），多项目按分配比例分，避免跨项目重复计数
-          byProject[p.id].days += totalMD > 0 ? alloc / totalMD : 0
-          dayProjects.add(p.id)
+          byProject[pid].days += totalMD > 0 ? alloc / totalMD : 0
+        }
+        // 当天有人天但未分配到任何项目（关联已删且无保留分配）→ 归入“未关联项目”
+        const remainder = totalMD - accounted
+        if (remainder > 1e-9) {
+          if (!byProject.__unassigned__) byProject.__unassigned__ = { projectId: '__unassigned__', projectName: '未关联项目', days: 0, manDays: 0 }
+          byProject.__unassigned__.manDays += remainder
+          byProject.__unassigned__.days += totalMD > 0 ? remainder / totalMD : 0
         }
       }
       // 检查当天是否涉及多个项目
