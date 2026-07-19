@@ -217,100 +217,108 @@
       </div>
     </div>
 
-    <!-- 添加/编辑沟通记录（含对接人选择+附件上传） -->
-    <el-dialog v-model="showAddComm" :title="editComm ? '编辑沟通记录' : '添加沟通记录'" width="520px" @close="resetCommForm" @open="onOpenCommDialog">
-      <el-form :model="commForm" label-width="80px" @paste.capture="onContentPaste">
-        <el-form-item label="对接人">
-          <el-select v-model="commForm.contact_ids" placeholder="选择对接人" multiple clearable style="width:100%">
-            <el-option v-for="c in task?.contacts || []" :key="c.id" :value="c.id" :label="c.name">
-              <span>{{ c.name }}</span>
-              <span style="color:#999;margin-left:6px;font-size:12px">{{ c.role }}</span>
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="沟通内容" required>
-          <!-- 缩略预览：点击进入独立编辑器 -->
-          <div class="comm-content-preview" :class="{ empty: !isRichContent(commEditorHtml) }" @click="openCommEditor">
-            <div v-if="isRichContent(commEditorHtml)" class="comm-content-preview-inner" v-html="sanitizeHtml(commEditorHtml)"></div>
-            <div v-else class="comm-content-placeholder"><el-icon><Edit /></el-icon> 点击此处编辑富文本内容（支持加粗、列表、链接等）</div>
+    <!-- 添加/编辑沟通记录：左为放大的富文本编辑器，右为其它设置 -->
+    <el-dialog v-model="showAddComm" :title="editComm ? '编辑沟通记录' : '添加沟通记录'" width="1140px" top="4vh" class="comm-edit-dialog" destroy-on-close @open="onOpenCommDialog" @opened="commEditorReady = true" @close="onCloseCommDialog">
+      <el-form :model="commForm" label-position="top" @paste.capture="onContentPaste">
+        <div class="comm-edit-layout">
+          <!-- 左：富文本编辑器（直接放大放置，无需再弹窗） -->
+          <div class="comm-edit-left">
+            <div class="comm-edit-label">沟通内容 <span class="req">*</span></div>
+            <CommRichEditor
+              v-if="commEditorReady"
+              :initial-html="commForm.content"
+              :project-id="projectId"
+              :task-id="taskId"
+              :comm-id="editComm?.id ?? null"
+              @change="onCommEditorChange"
+            />
+            <div class="comm-edit-hint">支持加粗、列表、图片、链接、引用、分隔线等格式；Ctrl+V 可直接粘贴文件作为附件</div>
           </div>
-        </el-form-item>
-        <el-form-item label="沟通类型">
-          <el-select v-model="commForm.comm_type">
-            <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commForm.comm_type)" :key="ct.name" :value="ct.name" :label="ct.name">
-              <span :style="{ color: ct.color, marginRight: '4px' }">●</span>{{ ct.name }}
-            </el-option>
-          </el-select>
-        </el-form-item>
-        <el-form-item label="时间">
-          <el-date-picker v-model="commForm.comm_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="默认当前时间" />
-        </el-form-item>
-        <el-form-item label="状态变更">
-          <div style="display:flex;align-items:center;gap:8px;width:100%">
-            <el-select v-model="commForm.old_status_id" placeholder="当前" style="width:160px">
-              <el-option v-for="s in statuses.filter(s => s.is_active || s.id === commForm.old_status_id)" :key="s.id" :label="s.name" :value="s.id">
-                <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
-              </el-option>
-            </el-select>
-            <el-icon><ArrowRight /></el-icon>
-            <el-select v-model="commForm.new_status_id" placeholder="不变更" clearable style="width:160px">
-              <el-option v-for="s in statuses.filter(s => s.is_active || s.id === commForm.new_status_id)" :key="s.id" :label="s.name" :value="s.id" :disabled="s.id === commForm.old_status_id">
-                <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
-              </el-option>
-            </el-select>
+          <!-- 右：其它设置，一列排下 -->
+          <div class="comm-edit-right">
+            <el-form-item label="对接人">
+              <el-select v-model="commForm.contact_ids" placeholder="选择对接人" multiple clearable style="width:100%">
+                <el-option v-for="c in task?.contacts || []" :key="c.id" :value="c.id" :label="c.name">
+                  <span>{{ c.name }}</span>
+                  <span style="color:#999;margin-left:6px;font-size:12px">{{ c.role }}</span>
+                </el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="沟通类型">
+              <el-select v-model="commForm.comm_type" style="width:100%">
+                <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commForm.comm_type)" :key="ct.name" :value="ct.name" :label="ct.name">
+                  <span :style="{ color: ct.color, marginRight: '4px' }">●</span>{{ ct.name }}
+                </el-option>
+              </el-select>
+            </el-form-item>
+            <el-form-item label="时间">
+              <el-date-picker v-model="commForm.comm_at" type="datetime" value-format="YYYY-MM-DDTHH:mm:ss" placeholder="默认当前时间" style="width:100%" />
+            </el-form-item>
+            <el-form-item label="状态变更">
+              <div style="display:flex;align-items:center;gap:8px;width:100%">
+                <el-select v-model="commForm.old_status_id" placeholder="当前" style="flex:1;min-width:0">
+                  <el-option v-for="s in statuses.filter(s => s.is_active || s.id === commForm.old_status_id)" :key="s.id" :label="s.name" :value="s.id">
+                    <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
+                  </el-option>
+                </el-select>
+                <el-icon><ArrowRight /></el-icon>
+                <el-select v-model="commForm.new_status_id" placeholder="不变更" clearable style="flex:1;min-width:0">
+                  <el-option v-for="s in statuses.filter(s => s.is_active || s.id === commForm.new_status_id)" :key="s.id" :label="s.name" :value="s.id" :disabled="s.id === commForm.old_status_id">
+                    <span :style="{ color: s.color, marginRight: '6px' }">●</span>{{ s.name }}
+                  </el-option>
+                </el-select>
+              </div>
+            </el-form-item>
+            <el-form-item label="附件">
+              <!-- 新建沟通：简洁附件上传 -->
+              <template v-if="!editComm">
+                <div style="width:100%">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <el-button size="small" text @click="triggerAddUpload">
+                      <el-icon><Paperclip /></el-icon> 选择文件
+                    </el-button>
+                    <span style="font-size:12px;color:#999">或 Ctrl+V 粘贴</span>
+                  </div>
+                  <div v-if="pastedFiles.length" class="dialog-att-list" style="margin-top:4px">
+                    <div v-for="(f, i) in pastedFiles" :key="i" class="dialog-att-item">
+                      <el-icon><Paperclip /></el-icon>
+                      <span class="dialog-att-name">{{ f.name }}</span>
+                      <span class="att-size">{{ formatSize(f.size) }}</span>
+                      <el-button size="small" text @click="renamePastedFile(i)"><el-icon><Edit /></el-icon></el-button>
+                      <el-button size="small" text type="danger" @click="pastedFiles.splice(i, 1)"><el-icon><Close /></el-icon></el-button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <!-- 编辑沟通：已有附件 + 回形针上传 -->
+              <template v-else>
+                <div style="width:100%">
+                  <div class="dialog-att-list" v-if="editComm.attachments?.length">
+                    <div v-for="a in editComm.attachments" :key="a.id" class="dialog-att-item">
+                      <el-icon><Paperclip /></el-icon>
+                      <a :href="downloadUrl(a.id)" target="_blank" class="dialog-att-name" :title="a.original_filename">{{ a.original_filename }}</a>
+                      <span class="att-size">{{ formatSize(a.file_size) }}</span>
+                      <el-button size="small" text @click="renameAtt(a)"><el-icon><Edit /></el-icon></el-button>
+                      <el-button size="small" text type="danger" @click="removeAtt(a)"><el-icon><Close /></el-icon></el-button>
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
+                    <el-button size="small" text @click="triggerEditUpload">
+                      <el-icon><Paperclip /></el-icon> 选择文件
+                    </el-button>
+                    <span style="font-size:12px;color:#999">或 Ctrl+V 粘贴</span>
+                  </div>
+                </div>
+              </template>
+            </el-form-item>
           </div>
-        </el-form-item>
-        <el-form-item label="附件">
-          <!-- 新建沟通：简洁附件上传 -->
-          <template v-if="!editComm">
-            <div style="width:100%">
-              <div style="display:flex;align-items:center;gap:8px">
-                <el-button size="small" text @click="triggerAddUpload">
-                  <el-icon><Paperclip /></el-icon> 选择文件
-                </el-button>
-                <span style="font-size:12px;color:#999">或 Ctrl+V 粘贴文件</span>
-              </div>
-              <div v-if="pastedFiles.length" class="dialog-att-list" style="margin-top:4px">
-                <div v-for="(f, i) in pastedFiles" :key="i" class="dialog-att-item">
-                  <el-icon><Paperclip /></el-icon>
-                  <span class="dialog-att-name">{{ f.name }}</span>
-                  <span class="att-size">{{ formatSize(f.size) }}</span>
-                  <el-button size="small" text @click="renamePastedFile(i)"><el-icon><Edit /></el-icon></el-button>
-                  <el-button size="small" text type="danger" @click="pastedFiles.splice(i, 1)"><el-icon><Close /></el-icon></el-button>
-                </div>
-              </div>
-            </div>
-          </template>
-          <!-- 编辑沟通：已有附件 + 回形针上传 -->
-          <template v-else>
-            <div style="width:100%">
-              <div class="dialog-att-list" v-if="editComm.attachments?.length">
-                <div v-for="a in editComm.attachments" :key="a.id" class="dialog-att-item">
-                  <el-icon><Paperclip /></el-icon>
-                  <a :href="downloadUrl(a.id)" target="_blank" class="dialog-att-name" :title="a.original_filename">{{ a.original_filename }}</a>
-                  <span class="att-size">{{ formatSize(a.file_size) }}</span>
-                  <el-button size="small" text @click="renameAtt(a)"><el-icon><Edit /></el-icon></el-button>
-                  <el-button size="small" text type="danger" @click="removeAtt(a)"><el-icon><Close /></el-icon></el-button>
-                </div>
-              </div>
-              <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-                <el-button size="small" text @click="triggerEditUpload">
-                  <el-icon><Paperclip /></el-icon> 选择文件
-                </el-button>
-                <span style="font-size:12px;color:#999">或 Ctrl+V 粘贴文件</span>
-              </div>
-            </div>
-          </template>
-        </el-form-item>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="showAddComm = false">取消</el-button>
         <el-button type="primary" :loading="commLoading" @click="submitComm">确定</el-button>
       </template>
     </el-dialog>
-
-    <!-- 独立富文本编辑器（点击沟通内容预览弹出） -->
-    <CommEditorDialog v-model="showCommEditor" :initial-html="commEditorHtml" @save="onCommEditorSave" />
 
     <!-- 添加/编辑对接人 -->
     <el-dialog v-model="showAddContact" :title="editContactRef ? '编辑对接人' : '添加对接人'" width="400px" @close="resetContactForm">
@@ -552,7 +560,7 @@ import {
   linkRequirement, unlinkRequirement, getRequirements,
   getReqStatusPools, getReqPriorityPools
 } from '../api'
-import CommEditorDialog from '../components/CommEditorDialog.vue'
+import CommRichEditor from '../components/CommRichEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -663,9 +671,10 @@ const commLoading = ref(false)
 const editComm = ref(null)
 const commForm = ref({ content: '', contact_ids: [], comm_type: '', comm_at: null, files: [], old_status_id: null, new_status_id: null })
 const pastedFiles = ref([])  // 粘贴或选择的临时文件，提交时一起上传
-// 独立富文本编辑器相关
-const showCommEditor = ref(false)
-const commEditorHtml = ref('')  // 沟通内容（HTML），与 commForm.content 双向同步
+// 内联富文本编辑器相关
+const commPendingImages = ref([])  // 新建沟通时编辑器内联图片的待上传队列（保存时回填）
+// 编辑器仅在弹窗完全展开后挂载：避免在 el-dialog 过渡期间初始化导致工具栏事件绑定失效
+const commEditorReady = ref(false)
 
 const hiddenFileInput = ref(null)
 const uploadTargetComm = ref(null)
@@ -770,20 +779,25 @@ const isRichEmpty = (html) => {
     .replace(/\s+/g, '')
   return txt.length === 0
 }
-const isRichContent = (html) => !isRichEmpty(html)
 
-// 点击缩略预览 → 打开独立编辑器
-const openCommEditor = () => {
-  // 确保当前表单内容与编辑器源同步（编辑场景下 commEditorHtml 已被 openEditComm 赋值）
-  if (commForm.value.content && !commEditorHtml.value) {
-    commEditorHtml.value = commForm.value.content
-  }
-  showCommEditor.value = true
-}
-// 编辑器保存：回写 HTML 到表单与预览
-const onCommEditorSave = (html) => {
-  commEditorHtml.value = html || ''
+// 编辑器内容变化：实时同步 HTML 与待上传图片队列到表单
+const onCommEditorChange = (html, pendingImages) => {
   commForm.value.content = html || ''
+  commPendingImages.value = pendingImages || []
+}
+// 将 HTML 中占位图片（data-pending-id）替换为真实预览 URL
+const replacePendingImg = (html, id, url) => {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const img = doc.querySelector(`img[data-pending-id="${id}"]`)
+    if (img) {
+      img.setAttribute('src', url)
+      img.removeAttribute('data-pending-id')
+    }
+    return doc.body.innerHTML
+  } catch {
+    return html
+  }
 }
 
 const imgState = ref({ x: 0, y: 0, scale: 1 })
@@ -993,7 +1007,6 @@ const quickUpdateTags = async (ids) => {
 const onOpenCommDialog = () => {
   // 设置默认沟通类型
   if (!editComm.value) {
-    commEditorHtml.value = ''  // 新增场景清空富文本内容
     const defaultType = commTypes.value.find((ct) => ct.is_default) || commTypes.value[0]
     if (defaultType) {
       commForm.value.comm_type = defaultType.name
@@ -1167,7 +1180,12 @@ const resetCommForm = () => {
   commForm.value = { content: '', contact_ids: [], comm_type: '', comm_at: null, files: [], old_status_id: null, new_status_id: null }
   pastedFiles.value = []
   editComm.value = null
-  commEditorHtml.value = ''
+  commPendingImages.value = []
+}
+// 关闭弹窗：先卸载编辑器（避免残留实例），再重置表单
+const onCloseCommDialog = () => {
+  commEditorReady.value = false
+  resetCommForm()
 }
 const openEditComm = (c) => {
   editComm.value = c
@@ -1180,7 +1198,6 @@ const openEditComm = (c) => {
     old_status_id: c.old_status_id ?? null,
     new_status_id: c.new_status_id ?? null
   }
-  commEditorHtml.value = c.content || ''
   showAddComm.value = true
 }
 const submitComm = async () => {
@@ -1205,6 +1222,24 @@ const submitComm = async () => {
         old_status_id: commForm.value.old_status_id,
         new_status_id: commForm.value.new_status_id
       })
+      // 回填编辑器内联图片：先建沟通拿到 ID，再上传并替换占位
+      let finalHtml = commForm.value.content
+      for (const p of commPendingImages.value) {
+        // 编辑期内被删除的图片（HTML 中已无占位）不再上传，避免产生孤儿附件
+        if (!finalHtml.includes(`data-pending-id="${p.id}"`)) continue
+        try {
+          const res = await uploadCommAttachment(projectId, taskId, comm.id, p.file)
+          if (res?.id) {
+            finalHtml = replacePendingImg(finalHtml, p.id, `/api/attachments/${res.id}/preview`)
+          }
+        } catch (e) {
+          console.error('沟通图片上传失败', e)
+        }
+      }
+      if (finalHtml !== commForm.value.content) {
+        await updateCommunication(projectId, taskId, comm.id, { content: finalHtml })
+      }
+      commPendingImages.value = []
       // 上传附件到刚创建的沟通记录
       for (const f of pastedFiles.value) {
         try {
@@ -1485,12 +1520,15 @@ const removeAtt = async (a) => {
 .comm-arrow { color: #bbb; font-size: 12px; margin: 0 2px; }
 .status-dot-mini { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .comm-content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
-/* 缩略预览框（点击进入编辑器） */
-.comm-content-preview { min-height: 96px; max-height: 160px; overflow: hidden; border: 1px dashed #dcdfe6; border-radius: 6px; padding: 10px 12px; cursor: text; background: #fafafa; transition: border-color .15s, background .15s; }
-.comm-content-preview:hover { border-color: #c0c4cc; background: #f5f7fa; }
-.comm-content-preview.empty { display: flex; align-items: center; }
-.comm-content-preview-inner { font-size: 14px; line-height: 1.6; color: #333; pointer-events: none; }
-.comm-content-placeholder { color: #bbb; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+/* 添加/编辑沟通记录：左编辑器 + 右设置两栏布局 */
+.comm-edit-layout { display: flex; gap: 20px; align-items: stretch; }
+.comm-edit-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.comm-edit-label { font-size: 14px; font-weight: 500; color: #333; margin-bottom: 8px; }
+.comm-edit-label .req { color: #f56c6c; }
+.comm-edit-hint { font-size: 12px; color: #999; margin-top: 6px; line-height: 1.5; }
+.comm-edit-right { flex: 0 0 300px; width: 300px; max-height: 520px; overflow-y: auto; padding-right: 4px; }
+.comm-edit-right :deep(.el-form-item) { margin-bottom: 16px; }
+.comm-edit-right :deep(.el-form-item__label) { padding-bottom: 4px; line-height: 1.2; }
 .att-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
 .att-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #555; background: #f7f7f5; border-radius: 4px; padding: 4px 8px; }
 .att-name { color: #185fa5; text-decoration: none; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }

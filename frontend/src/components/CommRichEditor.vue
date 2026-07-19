@@ -1,0 +1,167 @@
+<template>
+  <div class="comm-editor-wrap">
+    <Toolbar
+      :editor="editorRef"
+      :defaultConfig="toolbarConfig"
+      :mode="mode"
+      class="comm-editor-toolbar"
+    />
+    <Editor
+      :defaultConfig="editorConfig"
+      :mode="mode"
+      class="comm-editor-body"
+      @onCreated="handleCreated"
+      @onChange="onEditorChange"
+    />
+  </div>
+</template>
+
+<script setup>
+import '@wangeditor/editor/dist/css/style.css'
+import { onBeforeUnmount, nextTick, shallowRef, ref } from 'vue'
+import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
+import { ElMessage } from 'element-plus'
+import { uploadCommAttachment } from '../api'
+
+const props = defineProps({
+  initialHtml: { type: String, default: '' },
+  projectId: { type: [String, Number], default: '' },
+  taskId: { type: [String, Number], default: '' },
+  // 编辑已有沟通时传入；新建时为 null（此时图片走 pending，保存时回填）
+  commId: { type: Number, default: null },
+})
+const emit = defineEmits(['change'])
+
+// editor 实例必须用 shallowRef，避免 Vue 的深度响应导致编辑器异常
+const editorRef = shallowRef()
+const mode = 'default'
+
+// 待上传图片（仅新建沟通、commId 尚未生成时）：保存时由父组件先建沟通再回填真实 URL
+const pendingImages = ref([])
+let pendingSeq = 0
+
+// 完整基础格式工具栏（不含需求详情页专属的引用块颜色 / 需求文件关联菜单）
+const toolbarConfig = {
+  toolbarKeys: [
+    'undo', 'redo',
+    '|',
+    'bold', 'italic', 'underline', 'through', 'code',
+    '|',
+    'color', 'bgColor',
+    '|',
+    'header1', 'header2', 'header3',
+    '|',
+    'bulletedList', 'numberedList', 'blockquote',
+    '|',
+    'divider',
+    '|',
+    'clearStyle',
+    '|',
+    'uploadImage', 'insertLink',
+  ],
+}
+
+const editorConfig = {
+  placeholder: '输入沟通内容，支持加粗、列表、图片、链接、引用等…',
+  hoverbarKeys: {
+    text: { menuKeys: [] },
+    link: { menuKeys: ['editLink', 'unLink', 'viewLink'] },
+    image: { menuKeys: ['deleteImage', 'editImage', 'viewImage'] },
+  },
+  MENU_CONF: {
+    uploadImage: {
+      async customUpload(file, insertFn) {
+        if (!file) return
+        // 已有沟通 ID：直接上传并插入真实 URL
+        if (props.commId) {
+          try {
+            const r = await uploadCommAttachment(props.projectId, props.taskId, props.commId, file)
+            if (r?.id) insertFn(`/api/attachments/${r.id}/preview`)
+          } catch {
+            ElMessage.error('图片上传失败')
+          }
+          return
+        }
+        // 新建沟通：暂存文件，编辑期用 blob 预览，保存时回填真实 URL
+        const id = 'p_' + (++pendingSeq)
+        pendingImages.value.push({ id, file })
+        const blobUrl = URL.createObjectURL(file)
+        insertFn(blobUrl)
+        nextTick(() => {
+          try {
+            const container = editorRef.value?.getEditableContainer?.()
+            const imgs = container?.querySelectorAll('img') || []
+            const last = imgs[imgs.length - 1]
+            if (last) last.setAttribute('data-pending-id', id)
+          } catch {}
+        })
+      },
+    },
+  },
+}
+// ⚠️ 注意：editorConfig.onChange 在此库版本中已废弃，使用会抛异常中断编辑。
+// 内容变化同步改为在模板 @onChange 中处理。
+
+const handleCreated = (editor) => {
+  editorRef.value = editor
+  // 每次创建（外层弹窗 destroy-on-close 会重建）重置待上传队列
+  pendingImages.value = []
+  pendingSeq = 0
+  // 注入初始内容
+  try {
+    editor.setHtml(props.initialHtml || '')
+  } catch (e) {
+    console.error('设置编辑器内容失败', e)
+  }
+  // 自动聚焦定位光标（等 DOM 稳定后执行）
+  nextTick(() => {
+    try { editor.focus() } catch (e) {}
+  })
+}
+
+// 内容变化实时回传父组件（HTML + 待上传图片队列），由父组件在提交时统一落库
+const onEditorChange = (editor) => {
+  emit('change', editor.getHtml(), pendingImages.value.slice())
+}
+
+onBeforeUnmount(() => {
+  editorRef.value?.destroy()
+})
+</script>
+
+<style scoped>
+.comm-editor-wrap {
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  overflow: visible;
+}
+.comm-editor-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid #e8e8e8;
+  background: #fafafa;
+}
+.comm-editor-body {
+  height: 480px;
+  overflow-y: hidden;
+}
+/* 固定编辑区域的高宽，不随内容变化；超出部分垂直滚动 */
+.comm-editor-body :deep(.w-e-text-container) {
+  min-height: 480px !important;
+  max-height: 480px !important;
+  overflow-y: auto !important;
+}
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor]) {
+  padding: 14px 20px !important;
+  line-height: 1.5 !important;
+}
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] p) {
+  margin: 0;
+  line-height: 1.5;
+}
+.comm-editor-body :deep(.w-e-text-placeholder) {
+  left: 20px;
+  top: 14px;
+}
+</style>
