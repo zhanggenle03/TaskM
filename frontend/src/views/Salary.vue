@@ -6,9 +6,16 @@
         <p class="page-sub">按月记录薪资发放、明细与五险一金</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
-        <el-select v-model="selectedYear" size="default" style="width:110px" @change="loadData">
-          <el-option v-for="y in years" :key="y" :label="y + '年'" :value="y" />
-        </el-select>
+        <el-date-picker
+          v-model="periodRange"
+          type="monthrange"
+          range-separator="至"
+          start-placeholder="开始月份"
+          end-placeholder="结束月份"
+          value-format="YYYY-MM"
+          @change="loadData"
+          style="width:260px"
+        />
         <el-button type="primary" @click="openCreate">
           <el-icon><Plus /></el-icon> 新增薪资
         </el-button>
@@ -18,10 +25,10 @@
       </div>
     </div>
 
-    <!-- 年度汇总卡片 -->
+    <!-- 统计汇总卡片 -->
     <div class="summary-grid" v-if="summary">
       <div class="sum-card sum-gross">
-        <div class="sum-label">年度应发合计</div>
+        <div class="sum-label">区间应发合计</div>
         <div class="sum-value">{{ fmt(summary.total_gross) }}</div>
       </div>
       <div class="sum-card sum-deduct">
@@ -29,55 +36,69 @@
         <div class="sum-value">{{ fmt(summary.total_personal_deduction) }}</div>
       </div>
       <div class="sum-card sum-net">
-        <div class="sum-label">年度实发合计</div>
+        <div class="sum-label">区间实发合计</div>
         <div class="sum-value">{{ fmt(summary.total_net) }}</div>
+      </div>
+      <div class="sum-card sum-credited">
+        <div class="sum-label">到账合计</div>
+        <div class="sum-value">{{ fmt(summary.total_credited) }}</div>
       </div>
       <div class="sum-card sum-company">
         <div class="sum-label">公司承担合计</div>
         <div class="sum-value">{{ fmt(summary.total_company_cost) }}</div>
       </div>
-      <div class="sum-card sum-avg">
-        <div class="sum-label">月均实发（{{ summary.record_count }} 个月）</div>
-        <div class="sum-value">{{ fmt(summary.avg_net) }}</div>
-      </div>
     </div>
 
     <!-- 记录表格 -->
-    <el-table :data="records" v-loading="loading" class="salary-table" empty-text="暂无薪资记录，点击右上角「新增薪资」开始记录">
-      <el-table-column prop="period" label="月份" width="110" />
-      <el-table-column label="单位" min-width="140">
-        <template #default="{ row }">{{ row.employer || '—' }}</template>
-      </el-table-column>
-      <el-table-column label="应发" width="130" align="right">
-        <template #default="{ row }"><span class="amt amt-gross">{{ fmt(row.gross) }}</span></template>
-      </el-table-column>
-      <el-table-column label="个人扣" width="130" align="right">
-        <template #default="{ row }"><span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}</span></template>
-      </el-table-column>
-      <el-table-column label="实发" width="140" align="right">
-        <template #default="{ row }"><span class="amt amt-net">{{ fmt(row.net) }}</span></template>
-      </el-table-column>
-      <el-table-column label="公司承担" width="140" align="right">
-        <template #default="{ row }"><span class="amt amt-company">{{ fmt(row.company_cost) }}</span></template>
-      </el-table-column>
-      <el-table-column label="操作" width="140" align="center">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
-        </template>
-      </el-table-column>
-      <el-table-column type="expand" label="明细" width="60">
-        <template #default="{ row }">
-          <div class="detail-list">
-            <div v-for="it in row.items" :key="it.id" class="detail-row">
-              <span class="detail-cat" :class="'cat-' + it.category">{{ catLabel(it.category) }}</span>
-              <span class="detail-name">{{ it.name }}<template v-if="it.base != null && it.rate != null"> <span class="detail-formula">基数{{ fmt(it.base) }}×{{ it.rate }}%</span></template></span>
-              <span class="detail-amt">{{ fmt(it.amount) }}</span>
+    <div class="table-wrap">
+      <el-table :data="records" v-loading="loading" class="salary-table" empty-text="暂无薪资记录，点击右上角「新增薪资」开始记录">
+        <el-table-column type="expand" label="" width="44" fixed="left">
+          <template #default="{ row }">
+            <div class="detail-list">
+              <div v-for="it in row.items" :key="it.id" class="detail-row">
+                <span class="detail-cat" :class="'cat-' + it.category">{{ catLabel(it.category) }}</span>
+                <span class="detail-name">{{ it.name }}<template v-if="it.base != null && it.rate != null"> <span class="detail-formula">基数{{ fmt(it.base) }}×{{ it.rate }}%</span></template></span>
+                <span class="detail-amt">{{ fmt(it.amount) }}</span>
+              </div>
             </div>
-          </div>
-        </template>
-      </el-table-column>
-    </el-table>
+          </template>
+        </el-table-column>
+        <el-table-column prop="period" label="月份" width="80" />
+        <el-table-column label="发放日期" width="100">
+          <template #default="{ row }">{{ row.pay_date || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="单位" min-width="125" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.employer || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="应发" width="100" align="center">
+          <template #default="{ row }"><span class="amt amt-gross">{{ fmt(row.gross) }}</span></template>
+        </el-table-column>
+        <el-table-column label="个人扣" width="190" align="center">
+          <template #default="{ row }">
+            <span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}</span>
+            <span class="tax-hint">（含税：{{ taxOf(row) }}）</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="实发" width="115" align="center">
+          <template #default="{ row }"><span class="amt amt-net">{{ fmt(row.net) }}</span></template>
+        </el-table-column>
+        <el-table-column label="到账" width="115" align="center">
+          <template #default="{ row }"><span class="amt amt-credited" :class="{ 'amt-muted': row.credited_amount == null }">{{ row.credited_amount != null ? fmt(row.credited_amount) : '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="实际个税" width="115" align="center">
+          <template #default="{ row }"><span class="amt amt-tax" :class="{ 'amt-muted': row.actual_tax == null }">{{ row.actual_tax != null ? fmt(row.actual_tax) : '—' }}</span></template>
+        </el-table-column>
+        <el-table-column label="公司承担" width="115" align="center">
+          <template #default="{ row }"><span class="amt amt-company">{{ fmt(row.company_cost) }}</span></template>
+        </el-table-column>
+        <el-table-column label="操作" width="105" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" @click="remove(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
 
     <!-- 新增 / 编辑 弹窗 -->
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑薪资记录' : '新增薪资记录'" width="1040px" top="2vh"
@@ -133,8 +154,19 @@
             <div class="si"><span class="si-label">公司承担</span><span class="si-val c-company">{{ fmt(formTotals.company_cost) }}</span></div>
           </div>
 
-          <div class="side-head">备注</div>
-          <el-input v-model="form.remark" type="textarea" :rows="5" placeholder="可选备注" />
+          <div class="actual-card">
+            <div class="inline-field">
+              <span class="inline-label">实际到账</span>
+              <el-input-number v-model="form.credited_amount" :min="0" controls-position="right" size="small" class="inline-input" placeholder="入卡" />
+            </div>
+            <div class="inline-field">
+              <span class="inline-label">实际个税</span>
+              <el-input-number v-model="form.actual_tax" :min="0" controls-position="right" size="small" class="inline-input" placeholder="个税" />
+            </div>
+          </div>
+
+          <div class="side-head remark-head">备注</div>
+          <el-input v-model="form.remark" type="textarea" :rows="2" placeholder="可选备注" class="remark-input"></el-input>
         </div>
       </div>
 
@@ -224,7 +256,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  getSalaryRecords, getSalaryYears, getSalaryRecord,
+  getSalaryRecords, getSalaryRecord,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
   getSalaryConfig, updateSalaryConfig,
 } from '../api'
@@ -285,8 +317,11 @@ const loading = ref(false)
 const saving = ref(false)
 const records = ref([])
 const summary = ref(null)
-const years = ref([])
-const selectedYear = ref(new Date().getFullYear())
+
+// 月份范围过滤，默认当前年
+const now = new Date()
+const periodRange = ref([`${now.getFullYear()}-01`, `${now.getFullYear()}-12`])
+
 const dialogVisible = ref(false)
 
 // ── 薪资通用配置（用于新增时自动带入）──
@@ -305,27 +340,21 @@ const emptyConfig = () => ({
 const configForm = reactive(emptyConfig())
 function resetConfigForm() { Object.assign(configForm, emptyConfig()) }
 
-const emptyForm = () => ({ id: null, period: '', pay_date: '', employer: '', remark: '', items: [] })
+const emptyForm = () => ({ id: null, period: '', pay_date: '', employer: '', credited_amount: null, actual_tax: null, remark: '', items: [] })
 const form = reactive(emptyForm())
 
 // ── 工具 ──
 const fmt = (n) => '¥' + Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const catLabel = (c) => (CATEGORY_OPTIONS.find(o => o.value === c) || {}).label || c
-
-function loadYears() {
-  return getSalaryYears().then(list => {
-    years.value = list && list.length ? list : [selectedYear.value]
-    if (!years.value.includes(selectedYear.value)) {
-      selectedYear.value = years.value[years.value.length - 1]
-    }
-  }).catch(() => { years.value = [selectedYear.value] })
-}
+// 从明细行中计算个税合计
+const taxOf = (row) => fmt((row.items || []).filter(i => i.category === 'tax').reduce((s, i) => s + (i.amount || 0), 0))
 
 function loadData() {
   loading.value = true
+  const [pf, pt] = periodRange.value || []
   return Promise.all([
-    getSalaryRecords({ year: selectedYear.value }),
-    getSalarySummary(selectedYear.value),
+    getSalaryRecords({ period_from: pf || null, period_to: pt || null }),
+    getSalarySummary({ period_from: pf || null, period_to: pt || null }),
   ]).then(([recs, sum]) => {
     records.value = recs || []
     summary.value = sum
@@ -335,8 +364,7 @@ function loadData() {
   }).finally(() => { loading.value = false })
 }
 
-onMounted(async () => { await loadYears(); await loadData(); await loadConfig() })
-watch(selectedYear, loadData)
+onMounted(async () => { await loadData(); await loadConfig() })
 
 // ── 薪资通用配置 ──
 function loadConfig() {
@@ -509,6 +537,8 @@ async function openEdit(row) {
       period: detail.period,
       pay_date: detail.pay_date || '',
       employer: detail.employer || '',
+      credited_amount: detail.credited_amount ?? null,
+      actual_tax: detail.actual_tax ?? null,
       remark: detail.remark || '',
       items: (detail.items || []).map((it, i) => ({
         category: it.category, name: it.name, amount: it.amount,
@@ -527,6 +557,8 @@ async function save() {
     period: form.period,
     pay_date: form.pay_date || null,
     employer: form.employer || '',
+    credited_amount: form.credited_amount ?? null,
+    actual_tax: form.actual_tax ?? null,
     remark: form.remark || '',
     items: form.items.map((it, i) => {
       const base = numOrNull(it.base)
@@ -578,14 +610,21 @@ async function remove(row) {
 .sum-gross .sum-value { color: #67C23A; }
 .sum-deduct .sum-value { color: #E6A23C; }
 .sum-net .sum-value { color: #534AB7; }
+.sum-credited .sum-value { color: #1d953f; }
 .sum-company .sum-value { color: #909399; }
 .sum-avg .sum-value { color: #2c2c2a; }
 
 .salary-table { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; }
+.salary-table :deep(.cell) { white-space: nowrap; }
+.table-wrap { width: 100%; }
 .amt { font-variant-numeric: tabular-nums; }
 .amt-gross { color: #67C23A; }
 .amt-deduct { color: #E6A23C; }
+.tax-hint { color: #aaa; font-size: 12px; white-space: nowrap; }
 .amt-net { color: #534AB7; font-weight: 600; }
+.amt-credited { color: #1d953f; }
+.amt-tax { color: #d9534f; }
+.amt-muted { color: #bbb; }
 .amt-company { color: #909399; }
 
 .detail-list { padding: 4px 12px; }
@@ -606,7 +645,28 @@ async function remove(row) {
 /* 分栏布局：左侧明细可滚动，右侧汇总固定 */
 .record-split { display: flex; gap: 20px; height: 100%; }
 .record-main { flex: 1; overflow-y: auto; overflow-x: hidden; min-width: 0; padding-right: 4px; }
-.record-side { flex: 0 0 280px; }
+.record-side { flex: 0 0 280px; display: flex; flex-direction: column; min-height: 0; }
+.record-side .side-head { flex-shrink: 0; }
+.record-side .side-head.credited-head { margin-top: 16px; }
+.record-side .side-head.tax-head { margin-top: 12px; }
+.record-side .side-head.remark-head { margin-top: 20px; }
+.record-side .side-head.remark-head { margin-top: 20px; }
+.record-side .remark-input { flex: 1; overflow-y: auto; min-height: 0; }
+
+/* 实际到账 / 实际个税 卡片 */
+.actual-card {
+  background: #f8f9fb;
+  border: 1px solid #eef0f2;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-top: 12px;
+  flex-shrink: 0;
+}
+.inline-field { display: flex; align-items: center; gap: 8px; }
+.inline-field + .inline-field { margin-top: 8px; }
+.inline-label { font-size: 12px; color: #666; white-space: nowrap; flex-shrink: 0; }
+.inline-input { flex: 0 0 120px; }
+.inline-input .el-input-number { width: 100%; }
 
 .sec-head {
   font-size: 13px; font-weight: 600; color: #2c2c2a;
