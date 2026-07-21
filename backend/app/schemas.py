@@ -325,6 +325,83 @@ class CheckinOut(BaseModel):
     class Config:
         from_attributes = True
 
+# ---- Salary ----
+# 明细行 category 取值：income 收入 / deduction 五险一金个人及扣款 / tax 个税 / company_cost 公司承担
+VALID_SALARY_CATEGORIES = ["income", "deduction", "tax", "company_cost"]
+
+class SalaryItemCreate(BaseModel):
+    category: str                                   # income/deduction/tax/company_cost
+    name: str                                        # 如「基本工资」「养老保险(个人)」
+    amount: float = 0.0
+    base: Optional[float] = None                    # 缴费基数（基数×比例自动算时用）
+    rate: Optional[float] = None                    # 比例（百分比，如 8 表示 8%）
+    funded_by: str = ""                             # personal/company/空
+    sort_order: int = 0
+
+class SalaryItemOut(BaseModel):
+    id: int
+    category: str
+    name: str
+    amount: float
+    base: Optional[float] = None
+    rate: Optional[float] = None
+    funded_by: str = ""
+    sort_order: int = 0
+    class Config:
+        from_attributes = True
+
+class SalaryRecordCreate(BaseModel):
+    period: str                                      # "YYYY-MM"
+    pay_date: Optional[str] = None                  # "YYYY-MM-DD"
+    employer: str = ""
+    remark: str = ""
+    items: List[SalaryItemCreate] = []
+
+class SalaryRecordOut(BaseModel):
+    id: int
+    period: str
+    pay_date: Optional[date] = None
+    employer: str = ""
+    remark: str = ""
+    created_at: datetime
+    updated_at: datetime
+    items: List[SalaryItemOut] = []
+    # 汇总（后端计算，不冗余存储）
+    gross: float = 0.0                              # 应发合计 = Σ income
+    personal_deduction: float = 0.0                 # 个人扣除 = Σ deduction + Σ tax
+    net: float = 0.0                                # 实发 = gross - personal_deduction
+    company_cost: float = 0.0                       # 公司承担合计 = Σ company_cost
+    class Config:
+        from_attributes = True
+
+class SalarySummaryOut(BaseModel):
+    year: int
+    record_count: int
+    total_gross: float = 0.0
+    total_personal_deduction: float = 0.0
+    total_net: float = 0.0
+    total_company_cost: float = 0.0
+    avg_net: float = 0.0                            # 月均实发
+
+# ── 薪资通用配置（存于 settings.json 的 salary_config，非独立表）──
+class SalaryConfigOut(BaseModel):
+    employer: str = ""                               # 默认单位名称
+    social_bases: dict = {}                           # 各项缴费基数（通用稳定），key 为险种名；各项最低基数不同，故分项配置
+    social_rates: dict = {}                           # 各险种比例（百分比，如 8=8%），key 为险种名
+    default_pay_month: str = "current"                # 默认发放月份：current=当月 / next=次月
+    default_pay_day: int = 10                         # 默认发放日（1~31）
+    default_income_items: List[dict] = []             # 默认收入项模板 [{name, amount}]
+    class Config:
+        from_attributes = True
+
+class SalaryConfigUpdate(BaseModel):
+    employer: Optional[str] = None
+    social_bases: Optional[dict] = None
+    social_rates: Optional[dict] = None
+    default_pay_month: Optional[str] = None            # current / next
+    default_pay_day: Optional[int] = None
+    default_income_items: Optional[List[dict]] = None
+
 
 # ---- Requirement ----
 class RequirementCreate(BaseModel):

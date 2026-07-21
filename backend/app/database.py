@@ -384,6 +384,64 @@ class TaskRequirement(Base):
     task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True)
     requirement_id = Column(Integer, ForeignKey("requirements.id", ondelete="CASCADE"), primary_key=True)
 
+# ========== 薪资模块 ==========
+
+class SalaryRecord(Base):
+    """薪资记录：每月一条（按 period "YYYY-MM" 唯一）"""
+    __tablename__ = "salary_records"
+    id = Column(Integer, primary_key=True, index=True)
+    period = Column(String(20), unique=True, nullable=False)  # "2026-07"
+    pay_date = Column(Date, nullable=True)                    # 发放日
+    employer = Column(String(200), default="")               # 单位名称（可选）
+    remark = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    items = relationship("SalaryItem", back_populates="record", cascade="all, delete-orphan", order_by="SalaryItem.sort_order")
+
+class SalaryItem(Base):
+    """薪资明细行：挂在某条薪资记录下。
+
+    category 取值：
+      income        收入项（基本工资/加班费/奖金/津贴等）
+      deduction     五险一金个人部分及其他个人扣款
+      tax           个人所得税
+      company_cost  公司承担部分（五险一金公司缴纳等，仅参考展示）
+    """
+    __tablename__ = "salary_items"
+    id = Column(Integer, primary_key=True, index=True)
+    salary_record_id = Column(Integer, ForeignKey("salary_records.id", ondelete="CASCADE"), nullable=False)
+    category = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    amount = Column(Float, default=0.0, nullable=False)
+    base = Column(Float, nullable=True)  # 缴费基数（基数×比例自动算时用；可空）
+    rate = Column(Float, nullable=True)  # 比例（百分比，如 8 表示 8%）；与 base 同时非空时 amount=base*rate/100
+    funded_by = Column(String(20), default="")  # personal / company / 空
+    sort_order = Column(Integer, default=0)
+
+    record = relationship("SalaryRecord", back_populates="items")
+
+
+def ensure_salary_item_columns(engine):
+    """幂等迁移：为已存在的 salary_items 表补充 base/rate 列。
+
+    全新库由 Base.metadata.create_all 建表时直接带出这两列；
+    仅对已存在但缺列的旧库执行 ALTER，保证「老库无损」。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_items" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("salary_items")]
+    for col, ddl in (
+        ("base", "ALTER TABLE salary_items ADD COLUMN base REAL"),
+        ("rate", "ALTER TABLE salary_items ADD COLUMN rate REAL"),
+    ):
+        if col not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(ddl))
+                conn.commit()
+
 
 # ---- 显示ID生成工具函数 ----
 

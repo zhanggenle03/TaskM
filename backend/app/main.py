@@ -9,6 +9,7 @@ from .settings_manager import get_port
 
 from .routers import projects, tasks, attachments, process, project_contacts, export as export_router, requirements, backup, attendance_export
 from .routers import categories as categories_router
+from .routers import salary as salary_router
 
 
 # ── 从配置读取端口（用于 CORS 白名单） ──
@@ -85,6 +86,10 @@ async def lifespan(app: FastAPI):
 
 Base.metadata.create_all(bind=engine)
 
+# 幂等迁移：为已存在的 salary_items 表补充 base/rate 列（全新库由 create_all 直接带出）
+from .database import ensure_salary_item_columns
+ensure_salary_item_columns(engine)
+
 app = FastAPI(title="TaskM API", version="1.0.0", lifespan=lifespan, debug=True)
 
 app.add_middleware(
@@ -105,6 +110,7 @@ app.include_router(requirements.router, prefix="/api")
 app.include_router(backup.router, prefix="/api")
 app.include_router(attendance_export.router, prefix="/api")
 app.include_router(categories_router.router, prefix="/api")
+app.include_router(salary_router.router, prefix="/api")
 
 # 挂载上传目录为静态文件（供富文本图片等访问）
 import os
