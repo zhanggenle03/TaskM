@@ -44,15 +44,13 @@
         <div class="section-title">
           <el-icon><ChatDotRound /></el-icon> 沟通时间线
           <el-button size="small" type="primary" text @click="showAddComm = true">+ 添加记录</el-button>
-        </div>
-
-        <!-- 时间线搜索 / 筛选（#5） -->
-        <div class="timeline-toolbar" v-if="task?.communications?.length">
-          <el-input v-model="commSearch" placeholder="搜索内容 / 对接人 / 类型" size="small" clearable style="width:240px" />
-          <el-select v-model="commTypeFilter" placeholder="全部类型" size="small" clearable style="width:150px">
-            <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commTypeFilter)" :key="ct.name" :label="ct.name" :value="ct.name" />
-          </el-select>
-          <span class="timeline-count">共 {{ filteredComms.length }} 条</span>
+          <div class="timeline-actions" v-if="task?.communications?.length">
+            <el-input v-model="commSearch" placeholder="搜索内容 / 对接人 / 类型" size="small" clearable style="width:200px" />
+            <el-select v-model="commTypeFilter" placeholder="全部类型" size="small" clearable style="width:130px">
+              <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commTypeFilter)" :key="ct.name" :label="ct.name" :value="ct.name" />
+            </el-select>
+            <span class="timeline-count">共 {{ filteredComms.length }} 条</span>
+          </div>
         </div>
 
         <!-- 时间线选择工具栏 -->
@@ -101,7 +99,7 @@
                   <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
                 </div>
                 <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染 -->
-                <div class="comm-content" v-if="c.content && !isAutoStatusContent(c)" v-html="renderCommContent(c)"></div>
+                <div class="comm-content" v-if="c.content && !isAutoStatusContent(c)" v-html="renderCommContent(c)" @click="onCommContentClick"></div>
                 <!-- 沟通附件 -->
                 <div v-if="c.attachments?.length" class="att-list">
                   <div v-for="a in c.attachments" :key="a.id" class="att-item">
@@ -226,13 +224,14 @@
             <div class="comm-edit-label">沟通内容 <span class="req">*</span></div>
             <CommRichEditor
               v-if="commEditorReady"
+              ref="commEditorRef"
               :initial-html="commForm.content"
               :project-id="projectId"
               :task-id="taskId"
               :comm-id="editComm?.id ?? null"
               @change="onCommEditorChange"
             />
-            <div class="comm-edit-hint">支持加粗、列表、图片、链接、引用、分隔线等格式；Ctrl+V 可直接粘贴文件作为附件</div>
+            <div class="comm-edit-hint">支持加粗、列表、图片（内联，不进入附件列表）、链接、引用、分隔线等格式；Ctrl+V 可直接粘贴文件作为附件（图片将自动嵌入正文）</div>
           </div>
           <!-- 右：其它设置，一列排下 -->
           <div class="comm-edit-right">
@@ -527,13 +526,25 @@
           </div>
         </el-form-item>
         <el-form-item label="任务属性">
-          <el-checkbox-group v-model="exportFields">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-              <el-checkbox v-for="opt in exportFieldOptions" :key="opt.key" :value="opt.key">
-                {{ opt.label }}
-              </el-checkbox>
+          <div style="width:100%">
+            <div style="margin-bottom:6px">
+              <el-checkbox
+                :indeterminate="exportFieldsIndeterminate"
+                v-model="exportFieldsAll"
+                @change="handleExportFieldsAllChange"
+              >全选</el-checkbox>
             </div>
-          </el-checkbox-group>
+            <el-checkbox-group v-model="exportFields" @change="handleExportFieldsChange">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <el-checkbox v-for="opt in exportFieldOptions" :key="opt.key" :value="opt.key">
+                  {{ opt.label }}
+                </el-checkbox>
+              </div>
+            </el-checkbox-group>
+          </div>
+        </el-form-item>
+        <el-form-item label="沟通记录">
+          <el-checkbox v-model="exportCommMinimal">极简模式</el-checkbox>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -558,7 +569,8 @@ import {
   uploadCommAttachment, deleteAttachment, renameAttachment, downloadAttachment,
   getProjectContacts, getTags, exportTaskDoc,
   linkRequirement, unlinkRequirement, getRequirements,
-  getReqStatusPools, getReqPriorityPools
+  getReqStatusPools, getReqPriorityPools,
+  uploadCommImage
 } from '../api'
 import CommRichEditor from '../components/CommRichEditor.vue'
 
@@ -675,6 +687,7 @@ const pastedFiles = ref([])  // 粘贴或选择的临时文件，提交时一起
 const commPendingImages = ref([])  // 新建沟通时编辑器内联图片的待上传队列（保存时回填）
 // 编辑器仅在弹窗完全展开后挂载：避免在 el-dialog 过渡期间初始化导致工具栏事件绑定失效
 const commEditorReady = ref(false)
+const commEditorRef = ref(null)
 
 const hiddenFileInput = ref(null)
 const uploadTargetComm = ref(null)
@@ -811,6 +824,9 @@ const exportLoading = ref(false)
 const exportTimeRange = ref('all')
 const exportDateRange = ref(null)
 const exportFields = ref([])
+const exportCommMinimal = ref(false)
+const exportFieldsAll = ref(false)
+const exportFieldsIndeterminate = ref(false)
 const exportFieldOptions = [
   { key: 'title', label: '任务名称' },
   { key: 'display_id', label: '显示ID' },
@@ -835,11 +851,17 @@ const openPreview = (a, list) => {
 }
 
 const applyPreview = (a) => {
-  previewAttId.value = a.id
-  previewTitle.value = a.original_filename
-  previewSrc.value = previewUrl(a.id)
-  const ext = (a.original_filename?.split('.').pop() || '').toLowerCase()
-  previewIsImage.value = imageExts.includes('.' + ext)
+  previewAttId.value = a.id ?? null
+  previewTitle.value = a.original_filename || ''
+  if (a._isComImage) {
+    // 沟通正文内联图片：直接使用 src 作为预览 URL
+    previewSrc.value = a.src
+    previewIsImage.value = true
+  } else {
+    previewSrc.value = previewUrl(a.id)
+    const ext = (a.original_filename?.split('.').pop() || '').toLowerCase()
+    previewIsImage.value = imageExts.includes('.' + ext)
+  }
   imgState.value = { x: 0, y: 0, scale: 1 }
 }
 
@@ -913,7 +935,37 @@ const resetImageZoom = () => {
 const downloadPreview = () => {
   if (previewAttId.value) {
     window.open(downloadUrl(previewAttId.value), '_blank')
+  } else if (previewSrc.value) {
+    window.open(previewSrc.value, '_blank')
   }
+}
+
+// 点击沟通正文中的图片 → 打开预览弹窗，支持同一沟通内所有图片前后翻页
+const onCommContentClick = (e) => {
+  let target = e.target
+  if (target.tagName !== 'IMG') {
+    target = target.closest('img')
+  }
+  if (!target || target.tagName !== 'IMG') return
+
+  const container = target.closest('.comm-content')
+  if (!container) return
+
+  // 收集该沟通正文中的所有图片，构建预览列表
+  const imgs = container.querySelectorAll('img')
+  const list = Array.from(imgs).map((img, i) => ({
+    src: img.getAttribute('src') || img.src,
+    original_filename: `图${i + 1}`,
+    _isComImage: true,
+    id: null,
+  }))
+  if (list.length === 0) return
+
+  const idx = list.findIndex(item => item.src === (target.getAttribute('src') || target.src))
+  previewList.value = list
+  previewIndex.value = idx >= 0 ? idx : 0
+  applyPreview(list[previewIndex.value])
+  previewDialog.value = true
 }
 
 // 选择对接人时自动填充角色和联系方式
@@ -1032,13 +1084,48 @@ const triggerUpload = (comm) => {
 }
 
 const triggerEditUpload = () => {
-  if (editComm.value) {
-    uploadTargetComm.value = editComm.value
-    hiddenFileInput.value?.click()
+  // 编辑模式：图片注入编辑器，非图片上传为附件
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.multiple = true
+  input.onchange = () => {
+    if (input.files) {
+      for (const f of input.files) {
+        if (imageMimeTypes.includes(f.type)) {
+          // 图片：直接上传到沟通图片路径，真实 URL 注入编辑器
+          ;(async () => {
+            try {
+              const r = await uploadCommImage(projectId, taskId, editComm.value.id, f)
+              if (r?.url) {
+                commEditorRef.value?.insertImageUrl?.(r.url)
+              }
+            } catch {
+              ElMessage.error('图片上传失败')
+            }
+          })()
+        } else {
+          // 非图片：上传为附件
+          ;(async () => {
+            editComm.value.uploading = true
+            try {
+              const res = await uploadCommAttachment(projectId, taskId, editComm.value.id, f)
+              editComm.value.attachments.push(res)
+              ElMessage.success('上传成功')
+            } catch {
+              ElMessage.error('上传失败')
+            } finally {
+              editComm.value.uploading = false
+            }
+          })()
+        }
+      }
+    }
+    input.remove()
   }
+  input.click()
 }
 
-// 新增沟通时选择文件：存入 pastedFiles，提交时统一上传
+// 新增沟通时选择文件：图片注入编辑器（pending 流程），非图片存入 pastedFiles
 const triggerAddUpload = () => {
   const input = document.createElement('input')
   input.type = 'file'
@@ -1046,7 +1133,13 @@ const triggerAddUpload = () => {
   input.onchange = () => {
     if (input.files) {
       for (const f of input.files) {
-        pastedFiles.value.push(f)
+        if (imageMimeTypes.includes(f.type)) {
+          // 图片：注入编辑器 pending 流程，不进入附件列表
+          commEditorRef.value?.injectImage?.(f)
+        } else {
+          // 非图片：走附件
+          pastedFiles.value.push(f)
+        }
       }
     }
     input.remove()
@@ -1090,7 +1183,9 @@ const onFileInputChange = async (e) => {
   }
 }
 
-// 捕获阶段粘贴处理：沟通对话框打开时，文件/图片粘贴直接上传
+const imageMimeTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/bmp', 'image/webp', 'image/svg+xml', 'image/ico', 'image/x-icon']
+
+// 捕获阶段粘贴处理：沟通对话框打开时，图片粘贴注入编辑器，非图片文件添加到附件列表
 const onContentPaste = (e) => {
   // 只处理沟通对话框打开时的粘贴
   if (!showAddComm.value) return
@@ -1112,23 +1207,44 @@ const onContentPaste = (e) => {
     if (item.kind !== 'file') continue
     const file = item.getAsFile()
     if (!file) break
-    if (editComm.value) {
-      // 编辑模式：直接上传
-      editComm.value.uploading = true
-      ;(async () => {
-        try {
-          const res = await uploadCommAttachment(projectId, taskId, editComm.value.id, file)
-          editComm.value.attachments.push(res)
-          ElMessage.success(`"${file.name}" 已上传`)
-        } catch {
-          ElMessage.error('粘贴上传失败')
-        } finally {
-          editComm.value.uploading = false
-        }
-      })()
+    // 图片：注入富文本编辑器（不进入附件列表）
+    if (imageMimeTypes.includes(file.type)) {
+      if (editComm.value) {
+        // 编辑模式：直接上传，真实 URL 插入编辑器
+        ;(async () => {
+          try {
+            const r = await uploadCommImage(projectId, taskId, editComm.value.id, file)
+            if (r?.url) {
+              commEditorRef.value?.insertImageUrl?.(r.url)
+            }
+          } catch {
+            ElMessage.error('图片粘贴上传失败')
+          }
+        })()
+      } else {
+        // 新增模式：注入编辑器 pending 流程（保存时回填）
+        commEditorRef.value?.injectImage?.(file)
+      }
     } else {
-      // 新增模式：添加到待上传列表
-      pastedFiles.value.push(file)
+      // 非图片文件：走附件列表
+      if (editComm.value) {
+        // 编辑模式：直接上传
+        editComm.value.uploading = true
+        ;(async () => {
+          try {
+            const res = await uploadCommAttachment(projectId, taskId, editComm.value.id, file)
+            editComm.value.attachments.push(res)
+            ElMessage.success(`"${file.name}" 已上传`)
+          } catch {
+            ElMessage.error('粘贴上传失败')
+          } finally {
+            editComm.value.uploading = false
+          }
+        })()
+      } else {
+        // 新增模式：添加到待上传列表
+        pastedFiles.value.push(file)
+      }
     }
     break
   }
@@ -1225,12 +1341,12 @@ const submitComm = async () => {
       // 回填编辑器内联图片：先建沟通拿到 ID，再上传并替换占位
       let finalHtml = commForm.value.content
       for (const p of commPendingImages.value) {
-        // 编辑期内被删除的图片（HTML 中已无占位）不再上传，避免产生孤儿附件
+        // 编辑期内被删除的图片（HTML 中已无占位）不再上传，避免产生孤儿文件
         if (!finalHtml.includes(`data-pending-id="${p.id}"`)) continue
         try {
-          const res = await uploadCommAttachment(projectId, taskId, comm.id, p.file)
-          if (res?.id) {
-            finalHtml = replacePendingImg(finalHtml, p.id, `/api/attachments/${res.id}/preview`)
+          const res = await uploadCommImage(projectId, taskId, comm.id, p.file)
+          if (res?.url) {
+            finalHtml = replacePendingImg(finalHtml, p.id, res.url)
           }
         } catch (e) {
           console.error('沟通图片上传失败', e)
@@ -1364,6 +1480,8 @@ const initExportDialog = () => {
   } else {
     exportFields.value = []
   }
+  handleExportFieldsChange()
+  exportCommMinimal.value = false
 }
 
 const exportDisabledDate = (time) => {
@@ -1376,6 +1494,20 @@ const exportDisabledDate = (time) => {
 const resetExportDialog = () => {
   showExportDialog.value = false
   exportLoading.value = false
+  exportFieldsAll.value = false
+  exportFieldsIndeterminate.value = false
+}
+
+// 全选/取消全选任务属性
+const handleExportFieldsAllChange = (val) => {
+  exportFields.value = val ? exportFieldOptions.map(o => o.key) : []
+  exportFieldsAll.value = val
+  exportFieldsIndeterminate.value = false
+}
+const handleExportFieldsChange = () => {
+  const len = exportFields.value.length
+  exportFieldsAll.value = len === exportFieldOptions.length
+  exportFieldsIndeterminate.value = len > 0 && len < exportFieldOptions.length
 }
 
 const submitExport = async () => {
@@ -1394,12 +1526,14 @@ const submitExport = async () => {
       params.end_date = exportDateRange.value[1]
     }
     // 'all' → 不传参，后端不筛选
-    if (exportFields.value.length) {
-      params.fields = exportFields.value.join(',')
-    }
+    params.fields = exportFields.value.join(',')
     // 沟通记录复选：使用时间线上勾选的记录
     if (timelineSelectedCommIds.value.size) {
       params.comm_ids = Array.from(timelineSelectedCommIds.value).join(',')
+    }
+    // 极简模式
+    if (exportCommMinimal.value) {
+      params.comm_minimal = '1'
     }
 
     const res = await exportTaskDoc(projectId, taskId, params)
@@ -1499,7 +1633,8 @@ const removeAtt = async (a) => {
 .page-title { font-size: 22px; font-weight: 600; color: #222; margin: 0; }
 .task-desc { color: #555; font-size: 14px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 20px; }
 .task-desc-empty { color: #bbb; }
-.section-title { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; margin-top: 20px; color: #444; }
+.section-title { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; margin-top: 20px; color: #444; flex-wrap: wrap; }
+.timeline-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
 .preview-toolbar .tb-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
 .timeline-scroll { flex: 1; min-height: 0; overflow-y: auto; }
@@ -1520,6 +1655,9 @@ const removeAtt = async (a) => {
 .comm-arrow { color: #bbb; font-size: 12px; margin: 0 2px; }
 .status-dot-mini { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .comm-content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
+.comm-content :deep(ul), .comm-content :deep(ol) { padding-left: 24px; margin: 6px 0; }
+.comm-content :deep(img) { max-width: 100%; max-height: 50vh; height: auto; border-radius: 4px; cursor: zoom-in; }
+.comm-content :deep(img:hover) { box-shadow: 0 0 0 2px #534ab7; }
 /* 添加/编辑沟通记录：左编辑器 + 右设置两栏布局 */
 .comm-edit-layout { display: flex; gap: 20px; align-items: stretch; }
 .comm-edit-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }

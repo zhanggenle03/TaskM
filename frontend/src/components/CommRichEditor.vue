@@ -122,6 +122,23 @@ const onEditorChange = (editor) => {
   emit('change', editor.getHtml(), pendingImages.value.slice())
 }
 
+// 供父组件调用：从外部注入图片文件（粘贴/选择文件），走与工具栏上传相同的 pending 流程
+const injectImage = (file) => {
+  if (!file || !editorRef.value) return
+  const id = 'p_' + (++pendingSeq)
+  pendingImages.value.push({ id, file })
+  const blobUrl = URL.createObjectURL(file)
+  editorRef.value.dangerouslyInsertHtml(`<img src="${blobUrl}" data-pending-id="${id}" />`)
+}
+
+// 供父组件调用：直接插入已上传的图片 URL（编辑模式使用）
+const insertImageUrl = (url) => {
+  if (!url || !editorRef.value) return
+  editorRef.value.dangerouslyInsertHtml(`<img src="${url}" />`)
+}
+
+defineExpose({ injectImage, insertImageUrl })
+
 onBeforeUnmount(() => {
   editorRef.value?.destroy()
 })
