@@ -406,6 +406,12 @@ class SalaryTaxSummaryOut(BaseModel):
     next_bracket_threshold: float = 0.0              # 下一级距门槛（0 表示无下一级）
     next_tax_rate: float = 0.0                       # 下一级距税率
 
+class SalaryCalcTaxIn(BaseModel):
+    """计算本月应扣个税的请求参数"""
+    period: str                                      # "YYYY-MM"
+    items: List[SalaryItemCreate] = []
+    edit_id: Optional[int] = None                    # 编辑模式传入当前记录 ID 以排除自身
+
 # ── 薪资通用配置（存于 settings.json 的 salary_config，非独立表）──
 class SalaryConfigOut(BaseModel):
     employer: str = ""                               # 默认单位名称

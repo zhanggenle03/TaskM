@@ -24,6 +24,7 @@ from ..schemas import (
     SalaryItemOut,
     SalarySummaryOut,
     SalaryTaxSummaryOut,
+    SalaryCalcTaxIn,
     SalaryConfigOut,
     SalaryConfigUpdate,
 )
@@ -365,7 +366,9 @@ def salary_tax_summary(
 
         # 计算距下一级距额度
         if bracket_max != float('inf') and taxable_income < bracket_max:
+            # 还在这一级距内，有下一级
             remaining_to_next = round(bracket_max - taxable_income, 2)
+            # 下一级的信息
             if bracket_index + 1 < len(TAX_BRACKETS):
                 nu, nr, _ = TAX_BRACKETS[bracket_index + 1]
                 next_threshold = nu if nu != 0 else float('inf')
@@ -374,6 +377,7 @@ def salary_tax_summary(
                 next_threshold = 0.0
                 next_rate = 0.0
         else:
+            # 已在本级上限或已是最高级
             remaining_to_next = 0.0
             next_threshold = 0.0
             next_rate = 0.0
@@ -395,6 +399,81 @@ def salary_tax_summary(
         next_bracket_threshold=round(next_threshold, 2) if next_threshold != float('inf') else 0.0,
         next_tax_rate=next_rate,
     )
+
+
+def _cumulate_for_tax(items):
+    """从明细列表计算收入总额与专项扣除"""
+    income = 0.0
+    social = 0.0
+    for it in items:
+        amt = it.amount or 0.0
+        if it.category == "income":
+            income += amt
+        elif it.category == "deduction":
+            social += amt
+    return income, social
+
+
+@router.post("/calc-tax")
+def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
+    """根据当前填写明细 + 本年度历史记录（累计预扣法），计算本月应扣个税。
+
+    累计预扣法：
+        累计应纳税所得额 = 累计收入 − 累计减除费用(5000×月数) − 累计专项扣除
+        累计应预扣预缴税额 = 累计应纳税所得额 × 税率 − 速算扣除数
+        本月应预扣预缴税额 = 累计应预扣预缴税额 − 本年已累计预扣预缴税额
+    """
+    year_str = body.period[:4]
+    if not year_str.isdigit():
+        return {"tax_amount": 0.0}
+    year = int(year_str)
+
+    # 查询本年历史记录（编辑模式排除自身）
+    q = db.query(SalaryRecord).filter(SalaryRecord.period.like(f"{year}%"))
+    if body.edit_id:
+        q = q.filter(SalaryRecord.id != body.edit_id)
+    prev_records = q.order_by(SalaryRecord.period.asc()).all()
+
+    # 累计历史数据
+    prev_income = 0.0
+    prev_social = 0.0
+    prev_actual_tax = 0.0
+    prev_month_count = 0
+
+    for r in prev_records:
+        for i in r.items:
+            if i.category == "income":
+                prev_income += i.amount
+            elif i.category == "deduction":
+                prev_social += i.amount
+        prev_actual_tax += r.actual_tax or 0.0
+        prev_month_count += 1
+
+    # 当月数据
+    cur_income, cur_social = _cumulate_for_tax(body.items)
+
+    # 累计计算
+    cumulative_income = prev_income + cur_income
+    cumulative_months = prev_month_count + 1
+    cumulative_deduction = prev_social + cur_social
+    cumulative_taxable = round(
+        cumulative_income - MONTHLY_DEDUCTION * cumulative_months - cumulative_deduction, 2
+    )
+
+    if cumulative_taxable <= 0:
+        tax_amount = 0.0
+    else:
+        # 查税率表
+        for upper, rate, qd in TAX_BRACKETS:
+            if upper == 0 or cumulative_taxable <= upper:
+                cumulative_tax_due = round(cumulative_taxable * rate / 100 - qd, 2)
+                break
+        else:
+            cumulative_tax_due = 0.0
+
+        tax_amount = round(max(cumulative_tax_due - prev_actual_tax, 0), 2)
+
+    return {"tax_amount": tax_amount}
 
 
 # ──────────────────────────────────────────────── 薪资通用配置 ────────────────────────────────────────────────

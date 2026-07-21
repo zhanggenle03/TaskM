@@ -124,6 +124,7 @@ export const getSalarySummary = (params) => http.get('/salary/summary', { params
 export const getSalaryConfig = () => http.get('/salary/config')
 export const updateSalaryConfig = (data) => http.put('/salary/config', data)
 export const getSalaryTaxSummary = (params) => http.get('/salary/tax-summary', { params })
+export const calcSalaryTax = (data) => http.post('/salary/calc-tax', data)
 
 // --- Holiday Overrides ---
 export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })

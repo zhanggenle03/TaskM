@@ -175,6 +175,7 @@
             <el-button size="small" @click="addItem"><el-icon><Plus /></el-icon> 加一行</el-button>
             <el-button size="small" @click="applySocialTemplate"><el-icon><MagicStick /></el-icon> 套用五险一金模板</el-button>
             <el-button size="small" @click="applyIncomeTemplate"><el-icon><DocumentCopy /></el-icon> 套用默认收入</el-button>
+            <el-button size="small" @click="calcTax"><el-icon><DataAnalysis /></el-icon> 计算个税(实际已交个税计算)</el-button>
           </div>
         </div>
 
@@ -293,7 +294,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getSalaryRecords, getSalaryRecord,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
-  getSalaryConfig, updateSalaryConfig, getSalaryTaxSummary,
+  getSalaryConfig, updateSalaryConfig, getSalaryTaxSummary, calcSalaryTax,
 } from '../api'
 
 // ── 常量 ──
@@ -521,6 +522,53 @@ function applyIncomeTemplate() {
     }
   })
   ElMessage.success('已套用默认收入项')
+}
+
+async function calcTax() {
+  if (!form.period) {
+    ElMessage.warning('请先选择薪资月份')
+    return
+  }
+  try {
+    const payload = {
+      period: form.period,
+      edit_id: form.id,
+      items: form.items.map((it, i) => {
+        const base = numOrNull(it.base)
+        const rate = numOrNull(it.rate)
+        const amount = (base != null && rate != null) ? round2(base * rate / 100) : (Number(it.amount) || 0)
+        return {
+          category: it.category,
+          name: it.name,
+          amount: amount,
+          base: base,
+          rate: rate,
+          funded_by: it.funded_by || '',
+          sort_order: i,
+        }
+      }),
+    }
+    const res = await calcSalaryTax(payload)
+    const taxVal = res.tax_amount
+    // 查找明细中是否已有"个税"项，有则更新，无则添加
+    const existing = form.items.find(i => i.category === 'tax')
+    if (existing) {
+      existing.amount = taxVal
+      existing.base = null
+      existing.rate = null
+    } else {
+      form.items.push({
+        category: 'tax',
+        name: '个税',
+        amount: taxVal,
+        base: null,
+        rate: null,
+        funded_by: 'personal',
+        sort_order: form.items.length,
+      })
+    }
+    ElMessage.success(`计算个税完成：本月应扣 ¥${taxVal.toFixed(2)}`)
+  } catch { /* 拦截器已提示 */ }
 }
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100
