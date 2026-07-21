@@ -521,6 +521,7 @@ def generate_export_package(
     end_date: Optional[str] = None,
     fields: Optional[List[str]] = None,
     comm_ids: Optional[List[int]] = None,
+    comm_minimal: bool = False,
 ) -> bytes:
     """
     生成导出包（ZIP 文件），内含：
@@ -528,7 +529,7 @@ def generate_export_package(
     2. attachments/{记录序号}/ 目录（每个沟通记录的附件各自放在对应编号的文件夹）
     """
     all_field_keys = list(TASK_ATTR_OPTIONS.keys())
-    selected_fields = fields if fields else all_field_keys
+    selected_fields = fields if fields is not None else all_field_keys
 
     data = build_export_data(db, project_id, task_id, start_date, end_date, selected_fields, comm_ids)
     task_attrs = data['task_attrs']
@@ -576,7 +577,8 @@ def generate_export_package(
                    alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     # ---- 正文：任务基本信息 ----
-    _add_task_info_table(doc, task_attrs, selected_fields, num_id)
+    if selected_fields:
+        _add_task_info_table(doc, task_attrs, selected_fields, num_id)
 
     # ---- 关联需求（渲染在基本信息之后、沟通记录之前） ----
     linked_req_data = data.get('linked_requirements', [])
@@ -624,24 +626,25 @@ def generate_export_package(
         h2 = doc.add_heading(f'{comm_time} 记录', level=2)
         _apply_numbering(h2, num_id, 1)
 
-        # 元信息：时间 · 类型 · 对接人
-        meta_parts = [f'沟通时间：{comm_time}']
-        if comm['comm_type']:
-            meta_parts.append(comm['comm_type'])
-        contact_text = '、'.join(comm['contacts']) if comm['contacts'] else ''
-        if contact_text:
-            meta_parts.append(f'对接人：{contact_text}')
-        _new_paragraph(doc, ' | '.join(meta_parts), size=SMALL_SIZE)
+        if not comm_minimal:
+            # 元信息：时间 · 类型 · 对接人
+            meta_parts = [f'沟通时间：{comm_time}']
+            if comm['comm_type']:
+                meta_parts.append(comm['comm_type'])
+            contact_text = '、'.join(comm['contacts']) if comm['contacts'] else ''
+            if contact_text:
+                meta_parts.append(f'对接人：{contact_text}')
+            _new_paragraph(doc, ' | '.join(meta_parts), size=SMALL_SIZE)
 
-        # 状态变更
-        if comm['old_status_id'] or comm['new_status_id']:
-            if comm['old_status_name'] and comm['new_status_name']:
-                status_line = f'状态变更：{comm["old_status_name"]} → {comm["new_status_name"]}'
-            elif comm['new_status_name']:
-                status_line = f'状态变更为：{comm["new_status_name"]}'
-            else:
-                status_line = f'状态：{comm["old_status_name"]}（不变）'
-            _new_paragraph(doc, status_line, size=SMALL_SIZE)
+            # 状态变更
+            if comm['old_status_id'] or comm['new_status_id']:
+                if comm['old_status_name'] and comm['new_status_name']:
+                    status_line = f'状态变更：{comm["old_status_name"]} → {comm["new_status_name"]}'
+                elif comm['new_status_name']:
+                    status_line = f'状态变更为：{comm["new_status_name"]}'
+                else:
+                    status_line = f'状态：{comm["old_status_name"]}（不变）'
+                _new_paragraph(doc, status_line, size=SMALL_SIZE)
 
         # 沟通内容
         # 自动生成的状态变更文本与上方状态行重复，跳过不渲染（#8）
@@ -758,6 +761,8 @@ def generate_export_package(
         for rec_idx, comm in enumerate(communications):
             record_number = rec_idx + 1
             for att in comm['attachments']:
+                if att.get('is_image'):  # 图片已内嵌到 DOCX 正文，不单独打包
+                    continue
                 if att['full_path']:
                     try:
                         arcname = f'attachments/{record_number}/{att["original_filename"]}'

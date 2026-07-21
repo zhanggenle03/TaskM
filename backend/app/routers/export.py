@@ -21,6 +21,7 @@ def export_task_doc(
     end_date: Optional[str] = Query(None, description="沟通记录结束日期 (YYYY-MM-DD)"),
     fields: Optional[str] = Query(None, description="任务属性字段，逗号分隔"),
     comm_ids: Optional[str] = Query(None, description="沟通记录ID，逗号分隔，指定后忽略时间范围"),
+    comm_minimal: Optional[str] = Query(None, description="沟通记录极简模式，为 '1' 时只显示内容和附件"),
     db: Session = Depends(get_db),
 ):
     """
@@ -32,14 +33,17 @@ def export_task_doc(
     """
     # 解析字段
     selected_fields = None
-    if fields:
-        field_list = [f.strip() for f in fields.split(',') if f.strip()]
-        # 验证字段合法性
-        valid_keys = set(TASK_ATTR_OPTIONS.keys())
-        invalid = [f for f in field_list if f not in valid_keys]
-        if invalid:
-            raise HTTPException(400, f"无效的任务属性字段: {', '.join(invalid)}。有效字段: {', '.join(valid_keys)}")
-        selected_fields = field_list
+    if fields is not None:
+        if fields == '':
+            selected_fields = []  # 显式空值：不显示任何任务属性
+        else:
+            field_list = [f.strip() for f in fields.split(',') if f.strip()]
+            # 验证字段合法性
+            valid_keys = set(TASK_ATTR_OPTIONS.keys())
+            invalid = [f for f in field_list if f not in valid_keys]
+            if invalid:
+                raise HTTPException(400, f"无效的任务属性字段: {', '.join(invalid)}。有效字段: {', '.join(valid_keys)}")
+            selected_fields = field_list
 
     try:
         # 解析 comm_ids
@@ -55,6 +59,7 @@ def export_task_doc(
             end_date=end_date,
             fields=selected_fields,
             comm_ids=selected_comm_ids,
+            comm_minimal=comm_minimal == '1',
         )
     except HTTPException:
         raise
