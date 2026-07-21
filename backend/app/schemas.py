@@ -354,6 +354,8 @@ class SalaryRecordCreate(BaseModel):
     period: str                                      # "YYYY-MM"
     pay_date: Optional[str] = None                  # "YYYY-MM-DD"
     employer: str = ""
+    credited_amount: Optional[float] = None          # 实际到账（入卡金额）
+    actual_tax: Optional[float] = None               # 实际个税
     remark: str = ""
     items: List[SalaryItemCreate] = []
 
@@ -362,6 +364,8 @@ class SalaryRecordOut(BaseModel):
     period: str
     pay_date: Optional[date] = None
     employer: str = ""
+    credited_amount: Optional[float] = None          # 实际到账（入卡金额）
+    actual_tax: Optional[float] = None               # 实际个税
     remark: str = ""
     created_at: datetime
     updated_at: datetime
@@ -375,13 +379,16 @@ class SalaryRecordOut(BaseModel):
         from_attributes = True
 
 class SalarySummaryOut(BaseModel):
-    year: int
+    period_from: Optional[str] = None               # YYYY-MM
+    period_to: Optional[str] = None                 # YYYY-MM
     record_count: int
     total_gross: float = 0.0
     total_personal_deduction: float = 0.0
     total_net: float = 0.0
     total_company_cost: float = 0.0
     avg_net: float = 0.0                            # 月均实发
+    total_credited: float = 0.0                     # 到账合计
+    total_actual_tax: float = 0.0                   # 实际个税合计
 
 # ── 薪资通用配置（存于 settings.json 的 salary_config，非独立表）──
 class SalaryConfigOut(BaseModel):

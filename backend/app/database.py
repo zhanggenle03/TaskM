@@ -393,6 +393,8 @@ class SalaryRecord(Base):
     period = Column(String(20), unique=True, nullable=False)  # "2026-07"
     pay_date = Column(Date, nullable=True)                    # 发放日
     employer = Column(String(200), default="")               # 单位名称（可选）
+    credited_amount = Column(Float, nullable=True)            # 当月到账（实际入卡）
+    actual_tax = Column(Float, nullable=True)                  # 实际个税
     remark = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -436,6 +438,23 @@ def ensure_salary_item_columns(engine):
     for col, ddl in (
         ("base", "ALTER TABLE salary_items ADD COLUMN base REAL"),
         ("rate", "ALTER TABLE salary_items ADD COLUMN rate REAL"),
+    ):
+        if col not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(ddl))
+                conn.commit()
+
+
+def ensure_salary_record_columns(engine):
+    """幂等迁移：为已存在的 salary_records 表补充 credited_amount / actual_tax 列。"""
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_records" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("salary_records")]
+    for col, ddl in (
+        ("credited_amount", "ALTER TABLE salary_records ADD COLUMN credited_amount REAL"),
+        ("actual_tax", "ALTER TABLE salary_records ADD COLUMN actual_tax REAL"),
     ):
         if col not in cols:
             with engine.connect() as conn:

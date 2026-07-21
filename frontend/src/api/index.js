@@ -120,7 +120,7 @@ export const getSalaryRecord = (id) => http.get(`/salary/records/${id}`)
 export const createSalaryRecord = (data) => http.post('/salary/records', data)
 export const updateSalaryRecord = (id, data) => http.put(`/salary/records/${id}`, data)
 export const deleteSalaryRecord = (id) => http.delete(`/salary/records/${id}`)
-export const getSalarySummary = (year) => http.get('/salary/summary', { params: { year } })
+export const getSalarySummary = (params) => http.get('/salary/summary', { params })
 export const getSalaryConfig = () => http.get('/salary/config')
 export const updateSalaryConfig = (data) => http.put('/salary/config', data)
 

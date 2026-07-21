@@ -78,6 +78,8 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
         period=record.period,
         pay_date=record.pay_date,
         employer=record.employer or "",
+        credited_amount=record.credited_amount,
+        actual_tax=record.actual_tax,
         remark=record.remark or "",
         created_at=record.created_at,
         updated_at=record.updated_at,
@@ -139,10 +141,16 @@ def _sync_items(db: Session, record_id: int, items):
 # ──────────────────────────────────────────────── 列表 / 年份 ────────────────────────────────────────────────
 
 @router.get("/records", response_model=List[SalaryRecordOut])
-def list_salary_records(year: Optional[int] = None, db: Session = Depends(get_db)):
+def list_salary_records(
+    period_from: Optional[str] = None,
+    period_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     q = db.query(SalaryRecord)
-    if year:
-        q = q.filter(SalaryRecord.period.like(f"{year}-%"))
+    if period_from:
+        q = q.filter(SalaryRecord.period >= period_from)
+    if period_to:
+        q = q.filter(SalaryRecord.period <= period_to)
     records = q.order_by(SalaryRecord.period.desc()).all()
     return [_to_out(r) for r in records]
 
@@ -179,6 +187,8 @@ def create_salary_record(data: SalaryRecordCreate, db: Session = Depends(get_db)
         period=data.period,
         pay_date=_parse_date(data.pay_date),
         employer=data.employer or "",
+        credited_amount=data.credited_amount,
+        actual_tax=data.actual_tax,
         remark=data.remark or "",
     )
     for idx, it in enumerate(data.items):
@@ -207,6 +217,8 @@ def update_salary_record(record_id: int, data: SalaryRecordCreate, db: Session =
     rec.period = data.period
     rec.pay_date = _parse_date(data.pay_date)
     rec.employer = data.employer or ""
+    rec.credited_amount = data.credited_amount
+    rec.actual_tax = data.actual_tax
     rec.remark = data.remark or ""
     _sync_items(db, record_id, data.items)
     db.commit()
@@ -227,25 +239,39 @@ def delete_salary_record(record_id: int, db: Session = Depends(get_db)):
 # ──────────────────────────────────────────────── 年度汇总 ────────────────────────────────────────────────
 
 @router.get("/summary", response_model=SalarySummaryOut)
-def salary_summary(year: int, db: Session = Depends(get_db)):
-    records = db.query(SalaryRecord).filter(SalaryRecord.period.like(f"{year}-%")).all()
-    tg = tp = tn = tc = 0.0
+def salary_summary(
+    period_from: Optional[str] = None,
+    period_to: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(SalaryRecord)
+    if period_from:
+        q = q.filter(SalaryRecord.period >= period_from)
+    if period_to:
+        q = q.filter(SalaryRecord.period <= period_to)
+    records = q.all()
+    tg = tp = tn = tc = tcrd = tact = 0.0
     for r in records:
         g, pd, net, cc = _compute_totals(r)
         tg += g
         tp += pd
         tn += net
         tc += cc
+        tcrd += r.credited_amount or 0.0
+        tact += r.actual_tax or 0.0
     count = len(records)
     avg = round(tn / count, 2) if count else 0.0
     return SalarySummaryOut(
-        year=year,
+        period_from=period_from or "",
+        period_to=period_to or "",
         record_count=count,
         total_gross=round(tg, 2),
         total_personal_deduction=round(tp, 2),
         total_net=round(tn, 2),
         total_company_cost=round(tc, 2),
         avg_net=avg,
+        total_credited=round(tcrd, 2),
+        total_actual_tax=round(tact, 2),
     )
 
 
