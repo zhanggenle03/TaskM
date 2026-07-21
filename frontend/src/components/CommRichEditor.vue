@@ -21,7 +21,7 @@ import '@wangeditor/editor/dist/css/style.css'
 import { onBeforeUnmount, nextTick, shallowRef, ref } from 'vue'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { ElMessage } from 'element-plus'
-import { uploadCommAttachment } from '../api'
+import { uploadCommImage } from '../api'
 
 const props = defineProps({
   initialHtml: { type: String, default: '' },
@@ -51,9 +51,7 @@ const toolbarConfig = {
     '|',
     'header1', 'header2', 'header3',
     '|',
-    'bulletedList', 'numberedList', 'blockquote',
-    '|',
-    'divider',
+    'bulletedList', 'numberedList',
     '|',
     'clearStyle',
     '|',
@@ -62,7 +60,7 @@ const toolbarConfig = {
 }
 
 const editorConfig = {
-  placeholder: '输入沟通内容，支持加粗、列表、图片、链接、引用等…',
+  placeholder: '输入沟通内容，支持加粗、列表、图片、链接等…',
   hoverbarKeys: {
     text: { menuKeys: [] },
     link: { menuKeys: ['editLink', 'unLink', 'viewLink'] },
@@ -72,11 +70,11 @@ const editorConfig = {
     uploadImage: {
       async customUpload(file, insertFn) {
         if (!file) return
-        // 已有沟通 ID：直接上传并插入真实 URL
+        // 已有沟通 ID：直接上传到图片路径（不创建 Attachment 记录）
         if (props.commId) {
           try {
-            const r = await uploadCommAttachment(props.projectId, props.taskId, props.commId, file)
-            if (r?.id) insertFn(`/api/attachments/${r.id}/preview`)
+            const r = await uploadCommImage(props.projectId, props.taskId, props.commId, file)
+            if (r?.url) insertFn(r.url)
           } catch {
             ElMessage.error('图片上传失败')
           }

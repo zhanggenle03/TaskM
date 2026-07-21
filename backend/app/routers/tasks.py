@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime, date as date_type
-import json, os
+import json, os, uuid, re
 from ..database import (
     get_db, Project, Task, Contact, Communication, CommunicationContact,
     Attachment, ProjectContact, StatusPool, CommTypePool, TagPool, TaskTag,
@@ -661,6 +661,9 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
     ).order_by(Communication.comm_at, Communication.id).all()
     idx = next((i for i, c in enumerate(all_comms) if c.id == comm.id), None)
 
+    # ========== 保存旧 content，用于后续孤儿文件清理 ==========
+    old_content = comm.content or ''
+
     # ========== 应用编辑到 comm 对象 ==========
     for k, v in comm_data.items():
         if k in ('contact_ids',):
@@ -718,6 +721,34 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
     if was_no_change and old_status_changed and not new_status_changed and new_old_value is not None and idx is not None:
         _backward(all_comms, idx + 1, new_old_value)
 
+    # ========== 清理孤立的沟通内联图片 ==========
+    new_content = comm.content or ''
+    # 1) 新风格图片：/uploads/{proj}/{task}/comm_{comm_id}/images/{filename}
+    images_dir = os.path.join(UPLOAD_DIR, proj.display_id, task.display_id, f'comm_{comm_id}', 'images')
+    if os.path.isdir(images_dir):
+        referenced_new = set()
+        for m in re.finditer(
+            rf'/uploads/{re.escape(proj.display_id)}/{re.escape(task.display_id)}/comm_{comm_id}/images/([^"\'\s)\]]+)',
+            new_content,
+        ):
+            referenced_new.add(m.group(1))
+        for fn in os.listdir(images_dir):
+            fp = os.path.join(images_dir, fn)
+            if os.path.isfile(fp) and fn not in referenced_new:
+                os.remove(fp)
+        if not os.listdir(images_dir):
+            os.rmdir(images_dir)
+
+    # 2) 旧风格附件图片：/api/attachments/{id}/preview —— content 中已移除的附件需清理
+    old_att_ids = set(int(m) for m in re.findall(r'/api/attachments/(\d+)/preview', old_content))
+    new_att_ids = set(int(m) for m in re.findall(r'/api/attachments/(\d+)/preview', new_content))
+    for att_id in old_att_ids - new_att_ids:
+        att = db.query(Attachment).filter(Attachment.id == att_id, Attachment.comm_id == comm.id).first()
+        if att:
+            if os.path.exists(att.file_path):
+                os.remove(att.file_path)
+            db.delete(att)
+
     db.commit()
     sync_task_status(db, task.id)
     db.refresh(comm)
@@ -740,3 +771,30 @@ def delete_communication(project_id: str, task_id: str, comm_id: int, db: Sessio
     sync_task_status(db, task.id)
     touch_project(db, proj.id)
     return {"ok": True}
+
+
+# ---------- 沟通图片上传（不创建 Attachment 记录，仅嵌入正文） ----------
+@router.post("/{task_id}/communications/{comm_id}/images")
+def upload_comm_image(
+    project_id: str, task_id: str, comm_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """上传沟通富文本内联图片，存储在 comm_{comm_id}/images/ 下，不写入 attachments 表"""
+    proj = resolve_project(db, project_id)
+    task = resolve_task(db, proj.id, task_id)
+    comm = db.query(Communication).filter(Communication.id == comm_id, Communication.task_id == task.id).first()
+    if not comm:
+        raise HTTPException(404, "沟通记录不存在")
+
+    img_dir = os.path.join(UPLOAD_DIR, proj.display_id, task.display_id, f'comm_{comm_id}', 'images')
+    os.makedirs(img_dir, exist_ok=True)
+    ext = os.path.splitext(file.filename or '')[1] or '.png'
+    filename = f"{uuid.uuid4().hex}{ext}"
+    filepath = os.path.join(img_dir, filename)
+    content = file.file.read()
+    with open(filepath, "wb") as f:
+        f.write(content)
+
+    url = f"/uploads/{proj.display_id}/{task.display_id}/comm_{comm_id}/images/{filename}"
+    return {"url": url, "errno": 0}
