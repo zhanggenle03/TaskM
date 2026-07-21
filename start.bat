@@ -14,18 +14,23 @@ if not defined FP set "FP=5173"
 set "VITE_API_TARGET=http://localhost:%BP%"
 set "VITE_FRONTEND_PORT=%FP%"
 
-:: Kill old backend via PID file
-if exist "taskm.pid" (
-    for /f "usebackq" %%p in ("taskm.pid") do (
-        taskkill /F /PID %%p >nul 2>nul
-    )
-    del "taskm.pid" 2>nul
-    timeout /t 1 /nobreak >nul
+:: Free backend port by actual listener (address-agnostic), so the new run.py
+:: can always bind and load the latest code (Python does NOT hot-reload).
+:: NOTE: kill only the precise listener PID — never /IM node.exe (would kill
+:: every Node app on the machine) and never /T tree kill (collateral damage).
+echo Freeing backend port %BP% by listener...
+for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr "LISTENING" ^| findstr ":%BP% "') do (
+    taskkill /F /PID %%p >nul 2>nul
+    echo   [OK] Killed listener PID %%p
 )
 
-:: Clean previous frontend process
-echo Cleaning old frontend...
-taskkill /F /IM node.exe 2>nul
+:: Free frontend port (precise listener only)
+echo Freeing frontend port %FP% by listener...
+for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr "LISTENING" ^| findstr ":%FP% "') do (
+    taskkill /F /PID %%p >nul 2>nul
+    echo   [OK] Killed frontend listener PID %%p
+)
+timeout /t 1 /nobreak >nul
 
 :: Detect pythonw location (prefer system Python 3.10)
 set "PYTHONW="
