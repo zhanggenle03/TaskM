@@ -23,6 +23,7 @@ from ..schemas import (
     SalaryRecordOut,
     SalaryItemOut,
     SalarySummaryOut,
+    SalaryTaxSummaryOut,
     SalaryConfigOut,
     SalaryConfigUpdate,
 )
@@ -272,6 +273,127 @@ def salary_summary(
         avg_net=avg,
         total_credited=round(tcrd, 2),
         total_actual_tax=round(tact, 2),
+    )
+
+
+# ──────────────────────────────────────────────── 年度汇算清缴 ────────────────────────────────────────────────
+
+# 综合所得个税税率表（全年应纳税所得额，元）
+# 每项：(上限, 税率%, 速算扣除数)，上限为 0 表示最后一级无上限
+TAX_BRACKETS = [
+    (36_000, 3, 0),
+    (144_000, 10, 2_520),
+    (300_000, 20, 16_920),
+    (420_000, 25, 31_920),
+    (660_000, 30, 52_920),
+    (960_000, 35, 85_920),
+    (0, 45, 181_920),
+]
+
+MONTHLY_DEDUCTION = 5000  # 每月基本减除费用
+
+
+@router.get("/tax-summary", response_model=SalaryTaxSummaryOut)
+def salary_tax_summary(
+    year: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """按年计算个税汇算汇总：累计应纳税所得额、适用税率、距下一级距剩余额度"""
+    if year is None:
+        year = datetime.now().year
+
+    records = (
+        db.query(SalaryRecord)
+        .filter(SalaryRecord.period.like(f"{year}%"))
+        .order_by(SalaryRecord.period.asc())
+        .all()
+    )
+
+    if not records:
+        return SalaryTaxSummaryOut(
+            year=year,
+            month_count=0,
+            total_gross=0.0,
+            total_social_insurance=0.0,
+            taxable_income=0.0,
+            tax_rate=0.0,
+            tax_rate_label="0%",
+            bracket_min=0.0,
+            bracket_max=0.0,
+            quick_deduction=0.0,
+            remaining_to_next=36_000.0,
+            next_bracket_threshold=36_000.0,
+            next_tax_rate=3.0,
+        )
+
+    total_gross = 0.0
+    total_social_insurance = 0.0
+    month_count = len(records)
+
+    for r in records:
+        for i in r.items:
+            if i.category == "income":
+                total_gross += i.amount
+            elif i.category == "deduction":
+                total_social_insurance += i.amount
+
+    # 应纳税所得额 = 年度累计应发 - 累计减除费用(5000×月份数) - 累计专项扣除(社保公积金个人)
+    taxable_income = round(total_gross - MONTHLY_DEDUCTION * month_count - total_social_insurance, 2)
+
+    # 查找对应的个税级距
+    bracket_index = -1
+    tax_rate = 0.0
+    quick_deduction = 0.0
+
+    if taxable_income <= 0:
+        # 未达起征点（甚至亏损），适用 0%
+        bracket_min, bracket_max = 0.0, 36_000.0
+        remaining_to_next = round(36_000.0 + abs(taxable_income), 2)
+        next_threshold = 36_000.0
+        next_rate = 3.0
+    else:
+        prev_upper = 0
+        for i, (upper, rate, qd) in enumerate(TAX_BRACKETS):
+            if upper == 0 or taxable_income <= upper:
+                bracket_index = i
+                bracket_min = prev_upper
+                bracket_max = upper if upper != 0 else float('inf')
+                tax_rate = rate
+                quick_deduction = qd
+                break
+            prev_upper = upper
+
+        # 计算距下一级距额度
+        if bracket_max != float('inf') and taxable_income < bracket_max:
+            remaining_to_next = round(bracket_max - taxable_income, 2)
+            if bracket_index + 1 < len(TAX_BRACKETS):
+                nu, nr, _ = TAX_BRACKETS[bracket_index + 1]
+                next_threshold = nu if nu != 0 else float('inf')
+                next_rate = nr
+            else:
+                next_threshold = 0.0
+                next_rate = 0.0
+        else:
+            remaining_to_next = 0.0
+            next_threshold = 0.0
+            next_rate = 0.0
+
+    tax_rate_label = f"{tax_rate:.0f}%" if tax_rate == int(tax_rate) else f"{tax_rate:.1f}%"
+
+    return SalaryTaxSummaryOut(
+        year=year,
+        month_count=month_count,
+        total_gross=round(total_gross, 2),
+        total_social_insurance=round(total_social_insurance, 2),
+        taxable_income=taxable_income,
+        tax_rate=tax_rate,
+        tax_rate_label=tax_rate_label,
+        bracket_min=round(bracket_min, 2),
+        bracket_max=round(bracket_max, 2) if bracket_max != float('inf') else 0.0,
+        quick_deduction=round(quick_deduction, 2),
+        remaining_to_next=remaining_to_next,
+        next_bracket_threshold=round(next_threshold, 2) if next_threshold != float('inf') else 0.0,
+        next_tax_rate=next_rate,
     )
 
 

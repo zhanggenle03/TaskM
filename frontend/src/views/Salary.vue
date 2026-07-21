@@ -49,6 +49,41 @@
       </div>
     </div>
 
+    <!-- 个税年度汇算卡片 -->
+    <div class="tax-summary-card" v-if="taxSummary">
+      <div class="tax-summary-title">📊 {{ taxSummary.year }} 年个税汇算</div>
+      <div class="tax-summary-body">
+        <div class="tax-item">
+          <div class="tax-item-label">本年应纳税所得额</div>
+          <div class="tax-item-value" :class="taxableClass">{{ fmt(taxSummary.taxable_income) }}</div>
+        </div>
+        <div class="tax-divider"></div>
+        <div class="tax-item">
+          <div class="tax-item-label">当前税率</div>
+          <div class="tax-item-value tax-rate">{{ taxSummary.tax_rate_label }}</div>
+        </div>
+        <div class="tax-divider"></div>
+        <div class="tax-item">
+          <div class="tax-item-label">距下一级距</div>
+          <div class="tax-item-value" v-if="taxSummary.remaining_to_next > 0">{{ fmt(taxSummary.remaining_to_next) }}</div>
+          <div class="tax-item-value tax-remaining" v-else>已达最高级</div>
+        </div>
+        <div class="tax-divider"></div>
+        <div class="tax-item tax-sub">
+          <div class="tax-item-label-sub">年度累计应发</div>
+          <div class="tax-item-value-sub">{{ fmt(taxSummary.total_gross) }}</div>
+        </div>
+        <div class="tax-item tax-sub">
+          <div class="tax-item-label-sub">累计减除费用</div>
+          <div class="tax-item-value-sub">¥{{ (5000 * (taxSummary.month_count || 0)).toLocaleString() }}</div>
+        </div>
+        <div class="tax-item tax-sub">
+          <div class="tax-item-label-sub">累计专项扣除</div>
+          <div class="tax-item-value-sub">{{ fmt(taxSummary.total_social_insurance) }}</div>
+        </div>
+      </div>
+    </div>
+
     <!-- 记录表格 -->
     <div class="table-wrap">
       <el-table :data="records" v-loading="loading" class="salary-table" empty-text="暂无薪资记录，点击右上角「新增薪资」开始记录">
@@ -258,7 +293,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getSalaryRecords, getSalaryRecord,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
-  getSalaryConfig, updateSalaryConfig,
+  getSalaryConfig, updateSalaryConfig, getSalaryTaxSummary,
 } from '../api'
 
 // ── 常量 ──
@@ -317,6 +352,7 @@ const loading = ref(false)
 const saving = ref(false)
 const records = ref([])
 const summary = ref(null)
+const taxSummary = ref(null)
 
 // 月份范围过滤，默认当前年
 const now = new Date()
@@ -348,6 +384,15 @@ const fmt = (n) => '¥' + Number(n || 0).toLocaleString('zh-CN', { minimumFracti
 const catLabel = (c) => (CATEGORY_OPTIONS.find(o => o.value === c) || {}).label || c
 // 从明细行中计算个税合计
 const taxOf = (row) => fmt((row.items || []).filter(i => i.category === 'tax').reduce((s, i) => s + (i.amount || 0), 0))
+// 应纳税所得额的颜色样式
+const taxableClass = computed(() => {
+  if (!taxSummary.value) return ''
+  const ti = taxSummary.value.taxable_income
+  if (ti <= 0) return 'tax-zero'
+  if (ti <= 36000) return 'tax-low'
+  if (ti <= 144000) return 'tax-mid'
+  return 'tax-high'
+})
 
 function loadData() {
   loading.value = true
@@ -355,6 +400,7 @@ function loadData() {
   return Promise.all([
     getSalaryRecords({ period_from: pf || null, period_to: pt || null }),
     getSalarySummary({ period_from: pf || null, period_to: pt || null }),
+    loadTaxSummary(),
   ]).then(([recs, sum]) => {
     records.value = recs || []
     summary.value = sum
@@ -362,6 +408,15 @@ function loadData() {
     records.value = []
     summary.value = null
   }).finally(() => { loading.value = false })
+}
+
+function loadTaxSummary() {
+  const year = new Date().getFullYear()
+  return getSalaryTaxSummary({ year }).then(ts => {
+    taxSummary.value = ts
+  }).catch(() => {
+    taxSummary.value = null
+  })
 }
 
 onMounted(async () => { await loadData(); await loadConfig() })
@@ -613,6 +668,90 @@ async function remove(row) {
 .sum-credited .sum-value { color: #1d953f; }
 .sum-company .sum-value { color: #909399; }
 .sum-avg .sum-value { color: #2c2c2a; }
+
+/* 个税年度汇算卡片 */
+.tax-summary-card {
+  background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 100%);
+  border: 1px solid #c8d8f0;
+  border-radius: 10px;
+  padding: 14px 20px;
+  margin-bottom: 18px;
+  display: flex;
+  align-items: stretch;
+  gap: 18px;
+}
+.tax-summary-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #3a5fa8;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.tax-summary-body {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: 1;
+}
+.tax-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  padding: 0 18px;
+  min-width: 0;
+  flex: 1;
+}
+.tax-item.tax-sub {
+  flex: 0.7;
+  padding: 0 12px;
+}
+.tax-item-label {
+  font-size: 11px;
+  color: #6b7fa8;
+  margin-bottom: 4px;
+  text-align: center;
+  white-space: nowrap;
+}
+.tax-item-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: #2c3e6b;
+  font-variant-numeric: tabular-nums;
+}
+.tax-item-value.tax-rate {
+  color: #d9534f;
+  font-size: 20px;
+}
+.tax-item-value.tax-remaining {
+  color: #67C23A;
+  font-size: 13px;
+}
+.tax-item-value.tax-zero { color: #909399; }
+.tax-item-value.tax-low { color: #67C23A; }
+.tax-item-value.tax-mid { color: #E6A23C; }
+.tax-item-value.tax-high { color: #d9534f; }
+.tax-divider {
+  width: 1px;
+  background: #c8d8f0;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+.tax-item-label-sub {
+  font-size: 10px;
+  color: #8a9fc8;
+  margin-bottom: 2px;
+  text-align: center;
+  white-space: nowrap;
+}
+.tax-item-value-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: #5a7ab8;
+  font-variant-numeric: tabular-nums;
+}
 
 .salary-table { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; }
 .salary-table :deep(.cell) { white-space: nowrap; }

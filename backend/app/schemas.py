@@ -390,6 +390,22 @@ class SalarySummaryOut(BaseModel):
     total_credited: float = 0.0                     # 到账合计
     total_actual_tax: float = 0.0                   # 实际个税合计
 
+class SalaryTaxSummaryOut(BaseModel):
+    """个税年度汇算汇总（按年累计）"""
+    year: int
+    month_count: int = 0                             # 有记录月份数
+    total_gross: float = 0.0                         # 年度累计应发
+    total_social_insurance: float = 0.0              # 年度累计专项扣除（三险一金个人部分）
+    taxable_income: float = 0.0                      # 本年应纳税所得额
+    tax_rate: float = 0.0                            # 当前税率（百分比）
+    tax_rate_label: str = ""                         # 税率标注字符串
+    bracket_min: float = 0.0                         # 当前级距下限
+    bracket_max: float = 0.0                         # 当前级距上限（0 表示无上限）
+    quick_deduction: float = 0.0                     # 速算扣除数
+    remaining_to_next: float = 0.0                   # 距下一级距剩余额度
+    next_bracket_threshold: float = 0.0              # 下一级距门槛（0 表示无下一级）
+    next_tax_rate: float = 0.0                       # 下一级距税率
+
 # ── 薪资通用配置（存于 settings.json 的 salary_config，非独立表）──
 class SalaryConfigOut(BaseModel):
     employer: str = ""                               # 默认单位名称

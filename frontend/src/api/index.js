@@ -123,6 +123,7 @@ export const deleteSalaryRecord = (id) => http.delete(`/salary/records/${id}`)
 export const getSalarySummary = (params) => http.get('/salary/summary', { params })
 export const getSalaryConfig = () => http.get('/salary/config')
 export const updateSalaryConfig = (data) => http.put('/salary/config', data)
+export const getSalaryTaxSummary = (params) => http.get('/salary/tax-summary', { params })
 
 // --- Holiday Overrides ---
 export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })
