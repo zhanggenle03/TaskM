@@ -15,6 +15,10 @@
           <el-icon><Timer /></el-icon>
           <span>工作记录</span>
         </el-menu-item>
+        <el-menu-item index="/salary">
+          <el-icon><Money /></el-icon>
+          <span>薪资记录</span>
+        </el-menu-item>
         <el-menu-item index="/process">
           <el-icon><Setting /></el-icon>
           <span>通用设置</span>

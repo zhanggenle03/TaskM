@@ -102,9 +102,27 @@ export const downloadAttachment = (id) => `/api/attachments/${id}/download`
 export const deleteAttachment = (id) => http.delete(`/attachments/${id}`)
 export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { original_filename: name })
 
+// --- Communication Images (内联图片，不创建 Attachment 记录) ---
+export const uploadCommImage = (projectId, taskId, commId, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http.post(`/projects/${projectId}/tasks/${taskId}/communications/${commId}/images`, fd)
+}
+
 // --- Settings ---
 export const getSettings = () => http.get('/process/settings')
 export const updateUserSettings = (data) => http.put('/process/settings/user', data)
+
+// --- Salary（薪资记录） ---
+export const getSalaryRecords = (params) => http.get('/salary/records', { params })
+export const getSalaryYears = () => http.get('/salary/years')
+export const getSalaryRecord = (id) => http.get(`/salary/records/${id}`)
+export const createSalaryRecord = (data) => http.post('/salary/records', data)
+export const updateSalaryRecord = (id, data) => http.put(`/salary/records/${id}`, data)
+export const deleteSalaryRecord = (id) => http.delete(`/salary/records/${id}`)
+export const getSalarySummary = (year) => http.get('/salary/summary', { params: { year } })
+export const getSalaryConfig = () => http.get('/salary/config')
+export const updateSalaryConfig = (data) => http.put('/salary/config', data)
 
 // --- Holiday Overrides ---
 export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })

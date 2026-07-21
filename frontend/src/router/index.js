@@ -13,6 +13,7 @@ const router = createRouter({
     { path: '/projects/:projectId/settings', component: () => import('../views/ProjectSettings.vue'), name: 'project-settings' },
     { path: '/projects/:projectId/requirements/settings', component: () => import('../views/RequirementSettings.vue'), name: 'requirement-settings' },
     { path: '/checkins', component: () => import('../views/Checkins.vue'), name: 'checkins' },
+    { path: '/salary', component: () => import('../views/Salary.vue'), name: 'salary' },
     { path: '/process', component: () => import('../views/ProcessManagement.vue'), name: 'process' },
   ]
 })
