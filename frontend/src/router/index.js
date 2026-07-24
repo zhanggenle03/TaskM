@@ -14,6 +14,7 @@ const router = createRouter({
     { path: '/projects/:projectId/requirements/settings', component: () => import('../views/RequirementSettings.vue'), name: 'requirement-settings' },
     { path: '/checkins', component: () => import('../views/Checkins.vue'), name: 'checkins' },
     { path: '/salary', component: () => import('../views/Salary.vue'), name: 'salary' },
+    { path: '/salary/tax-summary', component: () => import('../views/SalaryTaxSummary.vue'), name: 'salary-tax-summary' },
     { path: '/process', component: () => import('../views/ProcessManagement.vue'), name: 'process' },
   ]
 })

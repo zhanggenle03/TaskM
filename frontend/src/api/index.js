@@ -125,6 +125,19 @@ export const getSalaryConfig = () => http.get('/salary/config')
 export const updateSalaryConfig = (data) => http.put('/salary/config', data)
 export const getSalaryTaxSummary = (params) => http.get('/salary/tax-summary', { params })
 export const calcSalaryTax = (data) => http.post('/salary/calc-tax', data)
+export const exportSalary = (params) =>
+  http.get('/salary/export', {
+    params,
+    responseType: 'blob',
+    rawResponse: true,
+    _silentError: true,
+  })
+
+// --- Tax Adjustments（个税汇算调整项） ---
+export const getTaxAdjustments = (params) => http.get('/salary/tax-adjustments', { params })
+export const createTaxAdjustment = (data) => http.post('/salary/tax-adjustments', data)
+export const updateTaxAdjustment = (id, data) => http.put(`/salary/tax-adjustments/${id}`, data)
+export const deleteTaxAdjustment = (id) => http.delete(`/salary/tax-adjustments/${id}`)
 
 // --- Holiday Overrides ---
 export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })

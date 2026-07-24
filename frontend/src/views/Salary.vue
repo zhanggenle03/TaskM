@@ -22,6 +22,12 @@
         <el-button @click="openConfig">
           <el-icon><Setting /></el-icon> 薪资配置
         </el-button>
+        <el-button @click="doExport" :loading="exporting">
+          <el-icon><Download /></el-icon> 导出
+        </el-button>
+        <el-button @click="$router.push('/salary/tax-summary')">
+          <el-icon><DataAnalysis /></el-icon> 个税汇算
+        </el-button>
       </div>
     </div>
 
@@ -49,51 +55,50 @@
       </div>
     </div>
 
-    <!-- 个税年度汇算卡片 -->
-    <div class="tax-summary-card" v-if="taxSummary">
-      <div class="tax-summary-title">📊 {{ taxSummary.year }} 年个税汇算</div>
-      <div class="tax-summary-body">
-        <div class="tax-item">
-          <div class="tax-item-label">本年应纳税所得额</div>
-          <div class="tax-item-value" :class="taxableClass">{{ fmt(taxSummary.taxable_income) }}</div>
-        </div>
-        <div class="tax-divider"></div>
-        <div class="tax-item">
-          <div class="tax-item-label">当前税率</div>
-          <div class="tax-item-value tax-rate">{{ taxSummary.tax_rate_label }}</div>
-        </div>
-        <div class="tax-divider"></div>
-        <div class="tax-item">
-          <div class="tax-item-label">距下一级距</div>
-          <div class="tax-item-value" v-if="taxSummary.remaining_to_next > 0">{{ fmt(taxSummary.remaining_to_next) }}</div>
-          <div class="tax-item-value tax-remaining" v-else>已达最高级</div>
-        </div>
-        <div class="tax-divider"></div>
-        <div class="tax-item tax-sub">
-          <div class="tax-item-label-sub">年度累计应发</div>
-          <div class="tax-item-value-sub">{{ fmt(taxSummary.total_gross) }}</div>
-        </div>
-        <div class="tax-item tax-sub">
-          <div class="tax-item-label-sub">累计减除费用</div>
-          <div class="tax-item-value-sub">¥{{ (5000 * (taxSummary.month_count || 0)).toLocaleString() }}</div>
-        </div>
-        <div class="tax-item tax-sub">
-          <div class="tax-item-label-sub">累计专项扣除</div>
-          <div class="tax-item-value-sub">{{ fmt(taxSummary.total_social_insurance) }}</div>
-        </div>
-      </div>
-    </div>
-
     <!-- 记录表格 -->
     <div class="table-wrap">
       <el-table :data="records" v-loading="loading" class="salary-table" empty-text="暂无薪资记录，点击右上角「新增薪资」开始记录">
         <el-table-column type="expand" label="" width="44" fixed="left">
           <template #default="{ row }">
-            <div class="detail-list">
-              <div v-for="it in row.items" :key="it.id" class="detail-row">
-                <span class="detail-cat" :class="'cat-' + it.category">{{ catLabel(it.category) }}</span>
-                <span class="detail-name">{{ it.name }}<template v-if="it.base != null && it.rate != null"> <span class="detail-formula">基数{{ fmt(it.base) }}×{{ it.rate }}%</span></template></span>
-                <span class="detail-amt">{{ fmt(it.amount) }}</span>
+            <div class="detail-cards">
+              <div v-for="(grp, cat) in grouped(row.items)" :key="cat" class="dc-card" :class="'dc-' + cat">
+                <div class="dc-head">
+                  <span class="dc-badge" :class="'b-' + cat">{{ catLabel(cat) }}</span>
+                  <span class="dc-count">{{ grp.length }} 项</span>
+                </div>
+                <!-- 个人扣款卡：社保三险 → 汇总 → 其他扣款 -->
+                <template v-if="cat === 'deduction'">
+                  <div v-for="it in socialItems(grp)" :key="it.id" class="dc-row">
+                    <div class="dc-name-wrap">
+                      <span class="dc-name">{{ it.name }}</span>
+                      <span v-if="it.base != null && it.rate != null" class="dc-formula">基数 {{ fmt(it.base) }} × {{ it.rate }}%</span>
+                    </div>
+                    <span class="dc-amt">{{ fmt(it.amount) }}</span>
+                  </div>
+                  <div v-if="row.personal_social_total > 0" class="dc-sub-box">
+                    <div class="dc-sub-row">
+                      <span class="dc-sub-label">个人社保合计</span>
+                      <span class="dc-sub-val">{{ fmt(row.personal_social_total) }}</span>
+                    </div>
+                  </div>
+                  <div v-for="it in nonSocialItems(grp)" :key="it.id" class="dc-row">
+                    <div class="dc-name-wrap">
+                      <span class="dc-name">{{ it.name }}</span>
+                      <span v-if="it.base != null && it.rate != null" class="dc-formula">基数 {{ fmt(it.base) }} × {{ it.rate }}%</span>
+                    </div>
+                    <span class="dc-amt">{{ fmt(it.amount) }}</span>
+                  </div>
+                </template>
+                <!-- 其他类别卡：常规平铺 -->
+                <template v-else>
+                  <div v-for="it in grp" :key="it.id" class="dc-row">
+                    <div class="dc-name-wrap">
+                      <span class="dc-name">{{ it.name }}</span>
+                      <span v-if="it.base != null && it.rate != null" class="dc-formula">基数 {{ fmt(it.base) }} × {{ it.rate }}%</span>
+                    </div>
+                    <span class="dc-amt">{{ fmt(it.amount) }}</span>
+                  </div>
+                </template>
               </div>
             </div>
           </template>
@@ -158,24 +163,40 @@
           <div class="sec-head">薪资明细</div>
           <div class="items-grid">
             <div class="items-head">
-              <span>类别</span><span>项目名称</span><span>基数</span><span>比例%</span><span>金额（元）</span><span></span>
+              <span>类别</span><span>项目名称</span><span>基数</span><span>比例%</span><span>金额（元）</span><span>专项扣除</span><span></span>
             </div>
             <div v-for="(item, idx) in form.items" :key="idx" class="item-row">
               <el-select v-model="item.category" size="small" class="item-cat" @change="onCatChange(item)">
                 <el-option v-for="c in CATEGORY_OPTIONS" :key="c.value" :label="c.label" :value="c.value" />
               </el-select>
-              <el-input v-model="item.name" size="small" placeholder="项目名称" class="item-name" />
+              <el-input v-if="item.category === 'income'" v-model="item.name" size="small" placeholder="项目名称" class="item-name" />
+              <el-select v-else v-model="item.name" size="small" class="item-name" placeholder="项目名称" allow-create filterable>
+                <el-option v-for="opt in nameOptions(item.category)" :key="opt" :label="opt" :value="opt" />
+              </el-select>
               <el-input-number v-model="item.base" :min="0" :precision="2" :step="100" size="small" class="item-base" controls-position="right" />
               <el-input-number v-model="item.rate" :min="0" :precision="2" :step="0.1" size="small" class="item-rate" controls-position="right" />
               <el-input-number v-model="item.amount" :min="0" :precision="2" :step="100" size="small" class="item-amt" controls-position="right" :disabled="isRateMode(item)" />
-              <el-button size="small" text type="danger" @click="removeItem(idx)"><el-icon><Delete /></el-icon></el-button>
+              <span class="item-check"><el-checkbox v-model="item.tax_deductible" :disabled="item.category !== 'deduction'" @change="onTaxDeductibleChange(item)" /></span>
+              <span class="item-del"><el-button size="small" text type="danger" @click="removeItem(idx)"><el-icon><Delete /></el-icon></el-button></span>
             </div>
           </div>
           <div class="items-actions">
             <el-button size="small" @click="addItem"><el-icon><Plus /></el-icon> 加一行</el-button>
             <el-button size="small" @click="applySocialTemplate"><el-icon><MagicStick /></el-icon> 套用五险一金模板</el-button>
             <el-button size="small" @click="applyIncomeTemplate"><el-icon><DocumentCopy /></el-icon> 套用默认收入</el-button>
-            <el-button size="small" @click="calcTax"><el-icon><DataAnalysis /></el-icon> 计算个税(实际已交个税计算)</el-button>
+            <span class="actions-spacer"></span>
+            <el-dropdown @command="handleCalcTaxCommand" trigger="click">
+              <el-button size="small">
+                <el-icon><DataAnalysis /></el-icon> 计算个税
+                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="actual">实际已交个税计算</el-dropdown-item>
+                  <el-dropdown-item command="items">往期理论计算</el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </div>
         </div>
 
@@ -294,7 +315,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   getSalaryRecords, getSalaryRecord,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
-  getSalaryConfig, updateSalaryConfig, getSalaryTaxSummary, calcSalaryTax,
+  getSalaryConfig, updateSalaryConfig, calcSalaryTax,
+  exportSalary,
 } from '../api'
 
 // ── 常量 ──
@@ -317,6 +339,17 @@ const SOCIAL_TEMPLATE = [
   { category: 'company_cost', name: '生育保险(公司)', funded_by: 'company' },
   { category: 'company_cost', name: '住房公积金(公司)', funded_by: 'company' },
 ]
+// 项目名称下拉选项（收入项自由输入，其余从固定集合中选）
+const NAME_OPTIONS = {
+  deduction: SOCIAL_TEMPLATE.filter(t => t.category === 'deduction').map(t => t.name),
+  company_cost: SOCIAL_TEMPLATE.filter(t => t.category === 'company_cost').map(t => t.name),
+  tax: ['个税'],
+}
+const nameOptions = (cat) => NAME_OPTIONS[cat] || []
+// 个人扣款卡片中区分社保与公积金/其他扣款
+const SOCIAL_PERSONAL_NAMES = ['养老保险(个人)', '医疗保险(个人)', '失业保险(个人)']
+const socialItems = (items) => items.filter(i => SOCIAL_PERSONAL_NAMES.includes(i.name))
+const nonSocialItems = (items) => items.filter(i => !SOCIAL_PERSONAL_NAMES.includes(i.name))
 // 五险一金各险种默认比例（百分比，如 8 表示 8%）；套用模板时按对话框缴费基数自动计算金额
 const SOCIAL_RATES = {
   '养老保险(个人)': 0,
@@ -351,9 +384,9 @@ function defaultRates() {
 // ── 状态 ──
 const loading = ref(false)
 const saving = ref(false)
+const exporting = ref(false)
 const records = ref([])
 const summary = ref(null)
-const taxSummary = ref(null)
 
 // 月份范围过滤，默认当前年
 const now = new Date()
@@ -385,23 +418,26 @@ const fmt = (n) => '¥' + Number(n || 0).toLocaleString('zh-CN', { minimumFracti
 const catLabel = (c) => (CATEGORY_OPTIONS.find(o => o.value === c) || {}).label || c
 // 从明细行中计算个税合计
 const taxOf = (row) => fmt((row.items || []).filter(i => i.category === 'tax').reduce((s, i) => s + (i.amount || 0), 0))
-// 应纳税所得额的颜色样式
-const taxableClass = computed(() => {
-  if (!taxSummary.value) return ''
-  const ti = taxSummary.value.taxable_income
-  if (ti <= 0) return 'tax-zero'
-  if (ti <= 36000) return 'tax-low'
-  if (ti <= 144000) return 'tax-mid'
-  return 'tax-high'
-})
-
+// 按类别分组（固定顺序：收入→个人扣款→个税→公司承担）
+const GROUP_ORDER = ['income', 'deduction', 'tax', 'company_cost']
+const grouped = (items) => {
+  const map = {}
+  for (const it of (items || [])) {
+    if (!map[it.category]) map[it.category] = []
+    map[it.category].push(it)
+  }
+  const result = {}
+  for (const cat of GROUP_ORDER) {
+    if (map[cat]) result[cat] = map[cat]
+  }
+  return result
+}
 function loadData() {
   loading.value = true
   const [pf, pt] = periodRange.value || []
   return Promise.all([
     getSalaryRecords({ period_from: pf || null, period_to: pt || null }),
     getSalarySummary({ period_from: pf || null, period_to: pt || null }),
-    loadTaxSummary(),
   ]).then(([recs, sum]) => {
     records.value = recs || []
     summary.value = sum
@@ -411,13 +447,30 @@ function loadData() {
   }).finally(() => { loading.value = false })
 }
 
-function loadTaxSummary() {
-  const year = new Date().getFullYear()
-  return getSalaryTaxSummary({ year }).then(ts => {
-    taxSummary.value = ts
-  }).catch(() => {
-    taxSummary.value = null
-  })
+async function doExport() {
+  exporting.value = true
+  try {
+    const [pf, pt] = periodRange.value || []
+    const res = await exportSalary({ period_from: pf || null, period_to: pt || null })
+    // 从响应头提取文件名
+    const disposition = res.headers?.['content-disposition'] || ''
+    const match = disposition.match(/filename\*?=UTF-8''(.+?)(?:;|$)/i) || disposition.match(/filename=(.+?)(?:;|$)/i)
+    const filename = match ? decodeURIComponent(match[1]) : `薪资导出_${pf || 'earliest'}_${pt || 'latest'}.xlsx`
+    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('导出成功')
+  } catch {
+    ElMessage.error('导出失败，请重试')
+  } finally {
+    exporting.value = false
+  }
 }
 
 onMounted(async () => { await loadData(); await loadConfig() })
@@ -468,12 +521,28 @@ async function saveConfig() {
 
 // ── 表单内明细 ──
 function addItem() {
-  form.items.push({ category: 'income', name: '', amount: 0, base: null, rate: null, funded_by: '', sort_order: form.items.length })
+  form.items.push({ category: 'income', name: '', amount: 0, base: null, rate: null, funded_by: '', tax_deductible: false, sort_order: form.items.length })
 }
 function removeItem(idx) { form.items.splice(idx, 1) }
+// 类别变更时：非扣款类自动取消专项扣除勾选
 function onCatChange(item) {
   // 根据类别自动带出 funded_by，便于后续统计
   item.funded_by = (item.category === 'company_cost') ? 'company' : (item.category === 'deduction' || item.category === 'tax' ? 'personal' : '')
+  // 非扣款类自动取消专项扣除
+  if (item.category !== 'deduction') {
+    item.tax_deductible = false
+  }
+  // 非收入项自动选中第一个名称
+  if (item.category !== 'income') {
+    const opts = nameOptions(item.category)
+    if (opts.length && !opts.includes(item.name)) {
+      item.name = opts[0]
+    }
+  }
+}
+// 专项扣除变更时保持一致性（预留扩展）
+function onTaxDeductibleChange(item) {
+  // 仅 deduction 类别可勾选，已在模板中 disabled 控制
 }
 // 基数与比例同时填写 → 金额自动算（基数×比例/100），金额输入禁用
 function isRateMode(item) {
@@ -497,6 +566,7 @@ function applySocialTemplate(silent = false) {
       form.items.push({
         category: t.category, name: t.name, funded_by: t.funded_by,
         base: base, rate: rate, amount: amount,
+        tax_deductible: t.category === 'deduction',
         sort_order: form.items.length,
       })
     }
@@ -517,7 +587,7 @@ function applyIncomeTemplate() {
     if (!exist.has(it.name)) {
       form.items.push({
         category: 'income', name: it.name, amount: it.amount || 0,
-        base: null, rate: null, funded_by: '', sort_order: form.items.length,
+        base: null, rate: null, funded_by: '', tax_deductible: false, sort_order: form.items.length,
       })
     }
   })
@@ -544,6 +614,7 @@ async function calcTax() {
           base: base,
           rate: rate,
           funded_by: it.funded_by || '',
+          tax_deductible: !!it.tax_deductible,
           sort_order: i,
         }
       }),
@@ -569,6 +640,63 @@ async function calcTax() {
     }
     ElMessage.success(`计算个税完成：本月应扣 ¥${taxVal.toFixed(2)}`)
   } catch { /* 拦截器已提示 */ }
+}
+
+async function calcTaxByItems() {
+  if (!form.period) {
+    ElMessage.warning('请先选择薪资月份')
+    return
+  }
+  try {
+    const payload = {
+      period: form.period,
+      edit_id: form.id,
+      use_items: true,
+      items: form.items.map((it, i) => {
+        const base = numOrNull(it.base)
+        const rate = numOrNull(it.rate)
+        const amount = (base != null && rate != null) ? round2(base * rate / 100) : (Number(it.amount) || 0)
+        return {
+          category: it.category,
+          name: it.name,
+          amount: amount,
+          base: base,
+          rate: rate,
+          funded_by: it.funded_by || '',
+          tax_deductible: !!it.tax_deductible,
+          sort_order: i,
+        }
+      }),
+    }
+    const res = await calcSalaryTax(payload)
+    const taxVal = res.tax_amount
+    // 查找明细中是否已有"个税"项，有则更新，无则添加
+    const existing = form.items.find(i => i.category === 'tax')
+    if (existing) {
+      existing.amount = taxVal
+      existing.base = null
+      existing.rate = null
+    } else {
+      form.items.push({
+        category: 'tax',
+        name: '个税',
+        amount: taxVal,
+        base: null,
+        rate: null,
+        funded_by: 'personal',
+        sort_order: form.items.length,
+      })
+    }
+    ElMessage.success(`计算个税完成（往期理论计算）：本月应扣 ¥${taxVal.toFixed(2)}`)
+  } catch { /* 拦截器已提示 */ }
+}
+
+function handleCalcTaxCommand(command) {
+  if (command === 'actual') {
+    calcTax()
+  } else if (command === 'items') {
+    calcTaxByItems()
+  }
 }
 
 const round2 = (n) => Math.round((n + Number.EPSILON) * 100) / 100
@@ -647,7 +775,7 @@ async function openEdit(row) {
         category: it.category, name: it.name, amount: it.amount,
         base: (it.base == null ? null : it.base),
         rate: (it.rate == null ? null : it.rate),
-        funded_by: it.funded_by || '', sort_order: i,
+        funded_by: it.funded_by || '', tax_deductible: !!it.tax_deductible, sort_order: i,
       })),
     })
     dialogVisible.value = true
@@ -674,6 +802,7 @@ async function save() {
         base: base,
         rate: rate,
         funded_by: it.funded_by || '',
+        tax_deductible: !!it.tax_deductible,
         sort_order: i,
       }
     }),
@@ -717,91 +846,8 @@ async function remove(row) {
 .sum-company .sum-value { color: #909399; }
 .sum-avg .sum-value { color: #2c2c2a; }
 
-/* 个税年度汇算卡片 */
-.tax-summary-card {
-  background: linear-gradient(135deg, #f0f5ff 0%, #e8f0fe 100%);
-  border: 1px solid #c8d8f0;
-  border-radius: 10px;
-  padding: 14px 20px;
-  margin-bottom: 18px;
-  display: flex;
-  align-items: stretch;
-  gap: 18px;
-}
-.tax-summary-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #3a5fa8;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.tax-summary-body {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  flex: 1;
-}
-.tax-item {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  padding: 0 18px;
-  min-width: 0;
-  flex: 1;
-}
-.tax-item.tax-sub {
-  flex: 0.7;
-  padding: 0 12px;
-}
-.tax-item-label {
-  font-size: 11px;
-  color: #6b7fa8;
-  margin-bottom: 4px;
-  text-align: center;
-  white-space: nowrap;
-}
-.tax-item-value {
-  font-size: 16px;
-  font-weight: 600;
-  color: #2c3e6b;
-  font-variant-numeric: tabular-nums;
-}
-.tax-item-value.tax-rate {
-  color: #d9534f;
-  font-size: 20px;
-}
-.tax-item-value.tax-remaining {
-  color: #67C23A;
-  font-size: 13px;
-}
-.tax-item-value.tax-zero { color: #909399; }
-.tax-item-value.tax-low { color: #67C23A; }
-.tax-item-value.tax-mid { color: #E6A23C; }
-.tax-item-value.tax-high { color: #d9534f; }
-.tax-divider {
-  width: 1px;
-  background: #c8d8f0;
-  flex-shrink: 0;
-  align-self: stretch;
-}
-.tax-item-label-sub {
-  font-size: 10px;
-  color: #8a9fc8;
-  margin-bottom: 2px;
-  text-align: center;
-  white-space: nowrap;
-}
-.tax-item-value-sub {
-  font-size: 12px;
-  font-weight: 500;
-  color: #5a7ab8;
-  font-variant-numeric: tabular-nums;
-}
-
 .salary-table { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; }
+.salary-table :deep(.el-table__expanded-cell) { padding: 10px 16px !important; }
 .salary-table :deep(.cell) { white-space: nowrap; }
 .table-wrap { width: 100%; }
 .amt { font-variant-numeric: tabular-nums; }
@@ -814,12 +860,40 @@ async function remove(row) {
 .amt-muted { color: #bbb; }
 .amt-company { color: #909399; }
 
-.detail-list { padding: 4px 12px; }
-.detail-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; font-size: 13px; }
-.detail-cat { flex: 0 0 76px; text-align: center; border-radius: 4px; padding: 1px 0; font-size: 12px; color: #fff; }
-.detail-name { flex: 1; color: #2c2c2a; }
-.detail-amt { font-variant-numeric: tabular-nums; color: #555; }
-.detail-formula { color: #aaa; font-size: 11px; margin-left: 4px; }
+/* 展开明细——按标签分组卡片 */
+.detail-cards { display: flex; flex-wrap: wrap; gap: 10px; }
+.dc-card {
+  background: #fff;
+  border: 1px solid #e8e8e4;
+  border-radius: 10px;
+  padding: 14px 16px 14px;
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.dc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.dc-badge { display: inline-block; border-radius: 4px; padding: 2px 10px; font-size: 12px; color: #fff; font-weight: 500; }
+.b-income       { background: #67C23A; }
+.b-deduction    { background: #E6A23C; }
+.b-tax          { background: #F56C6C; }
+.b-company_cost { background: #909399; }
+.dc-count { font-size: 11px; color: #bbb; }
+
+.dc-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; font-size: 13px; gap: 10px; }
+.dc-name-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dc-name { color: #2c2c2a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-formula { color: #b0b0b0; font-size: 11px; font-variant-numeric: tabular-nums; }
+.dc-amt { flex-shrink: 0; font-variant-numeric: tabular-nums; color: #555; }
+
+/* 个人社保合计：淡紫底色块 */
+.dc-sub-box {
+  margin: 6px 0;
+  padding: 8px 12px;
+  background: #f4f1ff;
+  border-radius: 6px;
+}
+.dc-sub-row { display: flex; align-items: center; justify-content: space-between; }
+.dc-sub-label { font-size: 13px; font-weight: 600; color: #3c3489; }
+.dc-sub-val { font-size: 15px; font-weight: 600; color: #534AB7; font-variant-numeric: tabular-nums; }
 .cat-income { background: #67C23A; }
 .cat-deduction { background: #E6A23C; }
 .cat-tax { background: #F56C6C; }
@@ -874,11 +948,15 @@ async function remove(row) {
 .items-head span:nth-child(3), .item-base { flex: 0 0 100px; }
 .items-head span:nth-child(4), .item-rate { flex: 0 0 86px; }
 .items-head span:nth-child(5), .item-amt { flex: 0 0 118px; }
-.items-head span:nth-child(6) { flex: 0 0 32px; }
+.items-head span:nth-child(6) { flex: 0 0 68px; text-align: center; }
+.items-head span:nth-child(7) { flex: 0 0 32px; }
+.item-check { flex: 0 0 68px; display: flex; align-items: center; justify-content: center; }
+.item-del { flex: 0 0 32px; display: flex; align-items: center; justify-content: center; }
 .item-row { padding: 6px 2px; }
 .item-row + .item-row { border-top: 1px solid rgba(0,0,0,.045); }
 .item-row:hover { background: rgba(83,74,183,.045); border-radius: 6px; margin: 0 -4px; padding: 6px; }
 .items-actions { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.actions-spacer { flex: 1; min-width: 12px; }
 
 /* 侧边摘要卡片 */
 .summary-card {

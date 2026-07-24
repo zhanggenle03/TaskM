@@ -37,8 +37,8 @@ const editorRef = shallowRef()
 const mode = 'default'
 
 // 待上传图片（仅新建沟通、commId 尚未生成时）：保存时由父组件先建沟通再回填真实 URL
+// { id: blobUrl, file, blobUrl } — id 复用 blobUrl 以在 HTML 中匹配
 const pendingImages = ref([])
-let pendingSeq = 0
 
 // 完整基础格式工具栏（不含需求详情页专属的引用块颜色 / 需求文件关联菜单）
 const toolbarConfig = {
@@ -81,18 +81,10 @@ const editorConfig = {
           return
         }
         // 新建沟通：暂存文件，编辑期用 blob 预览，保存时回填真实 URL
-        const id = 'p_' + (++pendingSeq)
-        pendingImages.value.push({ id, file })
+        // 注：不能用 data-pending-id 标记，WangEditor 的 Slate 序列化会丢弃自定义属性
         const blobUrl = URL.createObjectURL(file)
+        pendingImages.value.push({ id: blobUrl, file, blobUrl })
         insertFn(blobUrl)
-        nextTick(() => {
-          try {
-            const container = editorRef.value?.getEditableContainer?.()
-            const imgs = container?.querySelectorAll('img') || []
-            const last = imgs[imgs.length - 1]
-            if (last) last.setAttribute('data-pending-id', id)
-          } catch {}
-        })
       },
     },
   },
@@ -104,7 +96,6 @@ const handleCreated = (editor) => {
   editorRef.value = editor
   // 每次创建（外层弹窗 destroy-on-close 会重建）重置待上传队列
   pendingImages.value = []
-  pendingSeq = 0
   // 注入初始内容
   try {
     editor.setHtml(props.initialHtml || '')
@@ -125,10 +116,9 @@ const onEditorChange = (editor) => {
 // 供父组件调用：从外部注入图片文件（粘贴/选择文件），走与工具栏上传相同的 pending 流程
 const injectImage = (file) => {
   if (!file || !editorRef.value) return
-  const id = 'p_' + (++pendingSeq)
-  pendingImages.value.push({ id, file })
   const blobUrl = URL.createObjectURL(file)
-  editorRef.value.dangerouslyInsertHtml(`<img src="${blobUrl}" data-pending-id="${id}" />`)
+  pendingImages.value.push({ id: blobUrl, file, blobUrl })
+  editorRef.value.dangerouslyInsertHtml(`<img src="${blobUrl}" />`)
 }
 
 // 供父组件调用：直接插入已上传的图片 URL（编辑模式使用）

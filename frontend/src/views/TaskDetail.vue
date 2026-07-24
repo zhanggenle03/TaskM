@@ -798,20 +798,6 @@ const onCommEditorChange = (html, pendingImages) => {
   commForm.value.content = html || ''
   commPendingImages.value = pendingImages || []
 }
-// 将 HTML 中占位图片（data-pending-id）替换为真实预览 URL
-const replacePendingImg = (html, id, url) => {
-  try {
-    const doc = new DOMParser().parseFromString(html, 'text/html')
-    const img = doc.querySelector(`img[data-pending-id="${id}"]`)
-    if (img) {
-      img.setAttribute('src', url)
-      img.removeAttribute('data-pending-id')
-    }
-    return doc.body.innerHTML
-  } catch {
-    return html
-  }
-}
 
 const imgState = ref({ x: 0, y: 0, scale: 1 })
 const isDragging = ref(false)
@@ -1339,14 +1325,15 @@ const submitComm = async () => {
         new_status_id: commForm.value.new_status_id
       })
       // 回填编辑器内联图片：先建沟通拿到 ID，再上传并替换占位
+      // 注：用 blobUrl 字符串匹配而非 data-pending-id（WangEditor Slate 序列化会丢弃自定义属性）
       let finalHtml = commForm.value.content
       for (const p of commPendingImages.value) {
-        // 编辑期内被删除的图片（HTML 中已无占位）不再上传，避免产生孤儿文件
-        if (!finalHtml.includes(`data-pending-id="${p.id}"`)) continue
+        // 编辑期内被删除的图片（blob URL 已不在 HTML 中）不再上传，避免产生孤儿文件
+        if (!finalHtml.includes(p.blobUrl)) continue
         try {
           const res = await uploadCommImage(projectId, taskId, comm.id, p.file)
           if (res?.url) {
-            finalHtml = replacePendingImg(finalHtml, p.id, res.url)
+            finalHtml = finalHtml.split(p.blobUrl).join(res.url)
           }
         } catch (e) {
           console.error('沟通图片上传失败', e)

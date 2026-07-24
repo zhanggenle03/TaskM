@@ -1,3 +1,4 @@
+from __future__ import annotations
 from pydantic import BaseModel
 from typing import Optional, List, Dict
 from datetime import datetime, date
@@ -336,6 +337,7 @@ class SalaryItemCreate(BaseModel):
     base: Optional[float] = None                    # 缴费基数（基数×比例自动算时用）
     rate: Optional[float] = None                    # 比例（百分比，如 8 表示 8%）
     funded_by: str = ""                             # personal/company/空
+    tax_deductible: bool = False                    # 是否参与个税专项扣除（仅 deduction 类别生效）
     sort_order: int = 0
 
 class SalaryItemOut(BaseModel):
@@ -346,6 +348,7 @@ class SalaryItemOut(BaseModel):
     base: Optional[float] = None
     rate: Optional[float] = None
     funded_by: str = ""
+    tax_deductible: bool = False
     sort_order: int = 0
     class Config:
         from_attributes = True
@@ -375,6 +378,7 @@ class SalaryRecordOut(BaseModel):
     personal_deduction: float = 0.0                 # 个人扣除 = Σ deduction + Σ tax
     net: float = 0.0                                # 实发 = gross - personal_deduction
     company_cost: float = 0.0                       # 公司承担合计 = Σ company_cost
+    personal_social_total: float = 0.0              # 个人社保合计 = Σ deduction(funded_by=personal)
     class Config:
         from_attributes = True
 
@@ -391,12 +395,23 @@ class SalarySummaryOut(BaseModel):
     total_actual_tax: float = 0.0                   # 实际个税合计
 
 class SalaryTaxSummaryOut(BaseModel):
-    """个税年度汇算汇总（按年累计）"""
+    """个税年度汇算汇总（按年累计，含综合汇算调整）"""
     year: int
     month_count: int = 0                             # 有记录月份数
-    total_gross: float = 0.0                         # 年度累计应发
-    total_social_insurance: float = 0.0              # 年度累计专项扣除（三险一金个人部分）
-    taxable_income: float = 0.0                      # 本年应纳税所得额
+    total_gross: float = 0.0                         # 薪资年度累计应发
+    total_social_insurance: float = 0.0              # 薪资累计专项扣除（三险一金个人部分）
+    actual_tax_paid: float = 0.0                     # 当年实缴税额（各月实际个税之和）
+    deduction_fee: float = 0.0                       # 基本减除费用
+
+    # 调整项汇总
+    other_income_included: float = 0.0               # 其他综合所得收入合计（已乘计入比例）
+    special_deduction_total: float = 0.0             # 专项附加扣除合计
+    other_deduction_total: float = 0.0               # 其他扣除合计
+
+    # 综合计算
+    total_income: float = 0.0                        # 综合所得收入额 = total_gross + other_income_included
+    total_deductions: float = 0.0                    # 各项扣除合计 = deduction_fee + total_social_insurance + special_deduction + other_deduction
+    taxable_income: float = 0.0                      # 应纳税所得额 = total_income - total_deductions
     tax_rate: float = 0.0                            # 当前税率（百分比）
     tax_rate_label: str = ""                         # 税率标注字符串
     bracket_min: float = 0.0                         # 当前级距下限
@@ -405,12 +420,18 @@ class SalaryTaxSummaryOut(BaseModel):
     remaining_to_next: float = 0.0                   # 距下一级距剩余额度
     next_bracket_threshold: float = 0.0              # 下一级距门槛（0 表示无下一级）
     next_tax_rate: float = 0.0                       # 下一级距税率
+    tax_payable: float = 0.0                         # 当年应交税额（应纳税所得额×税率−速算扣除数）
+    tax_difference: float = 0.0                      # 差值（应交−实缴）
+
+    # 调整项列表（供前端编辑）
+    adjustments: List['TaxAdjustmentOut'] = []
 
 class SalaryCalcTaxIn(BaseModel):
     """计算本月应扣个税的请求参数"""
     period: str                                      # "YYYY-MM"
     items: List[SalaryItemCreate] = []
     edit_id: Optional[int] = None                    # 编辑模式传入当前记录 ID 以排除自身
+    use_items: bool = False                          # True=从历史明细行汇总个税，False=从 actual_tax 字段
 
 # ── 薪资通用配置（存于 settings.json 的 salary_config，非独立表）──
 class SalaryConfigOut(BaseModel):
@@ -430,6 +451,81 @@ class SalaryConfigUpdate(BaseModel):
     default_pay_month: Optional[str] = None            # current / next
     default_pay_day: Optional[int] = None
     default_income_items: Optional[List[dict]] = None
+
+
+# ── 个税汇算调整项 ──
+
+# 其他综合所得收入类型（含计入比例）
+INCOME_CONVERSION_TYPES = {
+    "labor_service": {"label": "劳务报酬", "rate": 0.80},
+    "remuneration": {"label": "稿酬", "rate": 0.56},
+    "royalty": {"label": "特许权使用费", "rate": 0.80},
+}
+
+# 专项附加扣除类型
+SPECIAL_DEDUCTION_TYPES = {
+    "children_education": "子女教育",
+    "continuing_education": "继续教育",
+    "medical_treatment": "大病医疗",
+    "housing_loan_interest": "住房贷款利息",
+    "housing_rent": "住房租金",
+    "elderly_care": "赡养老人",
+    "infant_care": "3岁以下婴幼儿照护",
+}
+
+# 其他扣除类型
+OTHER_DEDUCTION_TYPES = {
+    "enterprise_annuity": "企业年金/职业年金",
+    "commercial_health": "商业健康保险",
+    "deferred_pension": "税收递延型商业养老保险",
+    "other_deduction_other": "其他",
+}
+
+
+class TaxAdjustmentCreate(BaseModel):
+    year: int
+    category: str
+    item_type: str
+    label: str = ""
+    period_from: str = ""
+    period_to: str = ""
+    monthly_amount: float = 0.0
+    tax_paid: float = 0.0
+    original_amount: Optional[float] = None
+    amount: float = 0.0
+    remark: str = ""
+    sort_order: int = 0
+
+
+class TaxAdjustmentUpdate(BaseModel):
+    label: Optional[str] = None
+    period_from: Optional[str] = None
+    period_to: Optional[str] = None
+    monthly_amount: Optional[float] = None
+    tax_paid: Optional[float] = None
+    original_amount: Optional[float] = None
+    amount: Optional[float] = None
+    remark: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class TaxAdjustmentOut(BaseModel):
+    id: int
+    year: int
+    category: str
+    item_type: str
+    label: str = ""
+    period_from: str = ""
+    period_to: str = ""
+    monthly_amount: float = 0.0
+    tax_paid: float = 0.0
+    original_amount: Optional[float] = None
+    amount: float
+    remark: str = ""
+    sort_order: int = 0
+
+    class Config:
+        from_attributes = True
 
 
 # ---- Requirement ----

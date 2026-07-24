@@ -419,9 +419,38 @@ class SalaryItem(Base):
     base = Column(Float, nullable=True)  # 缴费基数（基数×比例自动算时用；可空）
     rate = Column(Float, nullable=True)  # 比例（百分比，如 8 表示 8%）；与 base 同时非空时 amount=base*rate/100
     funded_by = Column(String(20), default="")  # personal / company / 空
+    tax_deductible = Column(Boolean, default=False)  # 是否参与个税专项扣除（仅 deduction 类别生效）
     sort_order = Column(Integer, default=0)
 
     record = relationship("SalaryRecord", back_populates="items")
+
+
+class TaxAdjustment(Base):
+    """个税汇算调整项：其他综合所得收入、专项附加扣除、其他扣除。
+
+    category 取值：
+      other_income      其他综合所得收入（劳务报酬/稿酬/特许权使用费）
+      special_deduction 专项附加扣除（子女教育/继续教育/大病医疗等7项）
+      other_deduction   其他扣除（企业年金/商业健康保险等）
+
+    每个条目可指定时间段（period_from ~ period_to），支持同类型多条记录（如上下半年不同租金）。
+    """
+    __tablename__ = "tax_adjustments"
+    id = Column(Integer, primary_key=True, index=True)
+    year = Column(Integer, nullable=False, index=True)            # 所属年份
+    category = Column(String(20), nullable=False, index=True)     # other_income / special_deduction / other_deduction
+    item_type = Column(String(50), nullable=False)               # 子类型标识
+    label = Column(String(200), default="")                       # 自定义标签（如"上半年租金"）
+    period_from = Column(String(10), default="")                  # 起始月份 "YYYY-MM"
+    period_to = Column(String(10), default="")                    # 结束月份 "YYYY-MM"
+    monthly_amount = Column(Float, default=0.0)                   # 月金额（对按月计算的项）
+    tax_paid = Column(Float, default=0.0)                         # 对该项已预缴的个税（如劳务报酬预扣税）
+    original_amount = Column(Float, nullable=True)                # 原始金额（对收入项，未乘计入比例前）
+    amount = Column(Float, default=0.0)                          # 实际计入金额（period内合计）
+    remark = Column(String(200), default="")
+    sort_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
 
 def ensure_salary_item_columns(engine):
@@ -460,6 +489,59 @@ def ensure_salary_record_columns(engine):
             with engine.connect() as conn:
                 conn.execute(text(ddl))
                 conn.commit()
+
+
+def ensure_salary_item_tax_deductible(engine):
+    """幂等迁移：为 salary_items 表补充 tax_deductible 列。
+
+    同时将现有社保公积金项目自动设为 True。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_items" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("salary_items")]
+    added = False
+    if "tax_deductible" not in cols:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE salary_items ADD COLUMN tax_deductible BOOLEAN DEFAULT 0"))
+            conn.commit()
+        added = True
+    if added:
+        SOCIAL_TAX_NAMES = [
+            "养老保险(个人)", "医疗保险(个人)", "失业保险(个人)", "住房公积金(个人)",
+        ]
+        with engine.connect() as conn:
+            for name in SOCIAL_TAX_NAMES:
+                conn.execute(
+                    text("UPDATE salary_items SET tax_deductible = 1 WHERE name = :n AND category = 'deduction'"),
+                    {"n": name},
+                )
+            conn.commit()
+
+
+def ensure_tax_adjustment_table(engine):
+    """幂等迁移：创建 tax_adjustments 表并补充新列"""
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "tax_adjustments" not in inspector.get_table_names():
+        TaxAdjustment.__table__.create(engine)
+        print("[migrate] tax_adjustments 表已创建", flush=True)
+        return
+    # 已存��则补充缺失列
+    cols = [c["name"] for c in inspector.get_columns("tax_adjustments")]
+    for col, ddl in (
+        ("period_from", "ALTER TABLE tax_adjustments ADD COLUMN period_from VARCHAR(10) DEFAULT ''"),
+        ("period_to", "ALTER TABLE tax_adjustments ADD COLUMN period_to VARCHAR(10) DEFAULT ''"),
+        ("monthly_amount", "ALTER TABLE tax_adjustments ADD COLUMN monthly_amount REAL DEFAULT 0.0"),
+        ("label", "ALTER TABLE tax_adjustments ADD COLUMN label VARCHAR(200) DEFAULT ''"),
+        ("tax_paid", "ALTER TABLE tax_adjustments ADD COLUMN tax_paid REAL DEFAULT 0.0"),
+    ):
+        if col not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(ddl))
+                conn.commit()
+            print(f"[migrate] tax_adjustments.{col} 列已添加", flush=True)
 
 
 # ---- 显示ID生成工具函数 ----

@@ -95,6 +95,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .project-nav-menu .nav-vertical-item .el-icon { margin-right: 0 !important; }
 .project-nav-menu .nav-vertical-item span { font-size: 11px; line-height: 1.2; }
 .project-nav-menu .nav-vertical-item.is-active { color: #534ab7 !important; background: #eeedfe !important; border-right: 3px solid #534ab7; }
-.main-content { padding: 28px 32px 0 32px; overflow-y: auto; background: #f7f7f5; display: flex; flex-direction: column; }
+.main-content { padding: 28px 32px 0 32px; overflow-y: auto; scrollbar-gutter: stable; background: #f7f7f5; display: flex; flex-direction: column; }
 .el-menu-item.is-active { color: #534ab7 !important; background: #eeedfe !important; }
+
+/* 美化主内容区滚动条 */
+.main-content::-webkit-scrollbar { width: 6px; }
+.main-content::-webkit-scrollbar-track { background: transparent; }
+.main-content::-webkit-scrollbar-thumb {
+  background: rgba(83, 74, 183, .22);
+  border-radius: 3px;
+  transition: background .2s;
+}
+.main-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(83, 74, 183, .4);
+}
+@supports (scrollbar-color: auto) {
+  .main-content { scrollbar-width: thin; scrollbar-color: rgba(83, 74, 183, .22) transparent; }
+}
 </style>

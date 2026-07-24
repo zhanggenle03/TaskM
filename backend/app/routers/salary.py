@@ -10,14 +10,16 @@
   实发         = 应发合计 − 个人扣除合计
   公司承担合计 = Σ company_cost
 """
+import urllib.parse
 from datetime import datetime, date
 import re
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from ..database import get_db, SalaryRecord, SalaryItem
+from ..database import get_db, SalaryRecord, SalaryItem, TaxAdjustment
 from ..schemas import (
     SalaryRecordCreate,
     SalaryRecordOut,
@@ -27,9 +29,13 @@ from ..schemas import (
     SalaryCalcTaxIn,
     SalaryConfigOut,
     SalaryConfigUpdate,
+    TaxAdjustmentCreate,
+    TaxAdjustmentUpdate,
+    TaxAdjustmentOut,
 )
 from ..schemas import VALID_SALARY_CATEGORIES
 from ..settings_manager import load_settings, save_settings
+from ..salary_export_service import generate_salary_export
 
 router = APIRouter(prefix="/salary")
 
@@ -39,6 +45,10 @@ SOCIAL_RATE_KEYS = [
     "养老保险(公司)", "医疗保险(公司)", "失业保险(公司)",
     "工伤保险(公司)", "生育保险(公司)", "住房公积金(公司)",
 ]
+# 个人社保合计（卡片展示）=养老+医疗+失业，不含公积金
+SOCIAL_PERSONAL_NAMES = {"养老保险(个人)", "医疗保险(个人)", "失业保险(个人)"}
+# 个税专项扣除 = 养老+医疗+失业+公积金（用于 calc-tax 和 tax-summary）
+SOCIAL_TAX_NAMES = SOCIAL_PERSONAL_NAMES | {"住房公积金(个人)"}
 DEFAULT_SALARY_CONFIG = {
     "employer": "",
     "social_bases": {},
@@ -65,16 +75,18 @@ def _parse_date(s: Optional[str]) -> Optional[date]:
 
 
 def _compute_totals(record):
-    """返回 (gross, personal_deduction, net, company_cost)"""
+    """返回 (gross, personal_deduction, net, company_cost, personal_social_total)"""
     gross = sum(i.amount for i in record.items if i.category == "income")
     personal_deduction = sum(i.amount for i in record.items if i.category in ("deduction", "tax"))
     company_cost = sum(i.amount for i in record.items if i.category == "company_cost")
+    personal_social = sum(i.amount for i in record.items
+                          if i.category == "deduction" and i.name in SOCIAL_PERSONAL_NAMES)
     net = gross - personal_deduction
-    return gross, personal_deduction, net, company_cost
+    return gross, personal_deduction, net, company_cost, personal_social
 
 
 def _to_out(record: SalaryRecord) -> SalaryRecordOut:
-    gross, pd, net, cc = _compute_totals(record)
+    gross, pd, net, cc, pst = _compute_totals(record)
     return SalaryRecordOut(
         id=record.id,
         period=record.period,
@@ -94,6 +106,7 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
                 base=i.base,
                 rate=i.rate,
                 funded_by=i.funded_by or "",
+                tax_deductible=i.tax_deductible or False,
                 sort_order=i.sort_order,
             )
             for i in sorted(record.items, key=lambda x: x.sort_order)
@@ -102,6 +115,7 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
         personal_deduction=round(pd, 2),
         net=round(net, 2),
         company_cost=round(cc, 2),
+        personal_social_total=round(pst, 2),
     )
 
 
@@ -119,8 +133,16 @@ def _item_amount(it):
     return round(it.amount or 0.0, 2)
 
 
+def _funded_by(category: str) -> str:
+    if category == "company_cost":
+        return "company"
+    if category in ("deduction", "tax"):
+        return "personal"
+    return ""
+
+
 def _make_salary_item(it, idx, salary_record_id=None):
-    """构造一条 SalaryItem（自动换算 amount 并保留 base/rate）"""
+    """构造一条 SalaryItem（自动换算 amount 并推导 funded_by，前端传值仅作为覆盖提示）"""
     return SalaryItem(
         salary_record_id=salary_record_id,
         category=it.category,
@@ -128,7 +150,8 @@ def _make_salary_item(it, idx, salary_record_id=None):
         amount=_item_amount(it),
         base=it.base,
         rate=it.rate,
-        funded_by=it.funded_by or "",
+        funded_by=_funded_by(it.category) or it.funded_by or "",
+        tax_deductible=it.tax_deductible or False,
         sort_order=it.sort_order or idx,
     )
 
@@ -254,7 +277,7 @@ def salary_summary(
     records = q.all()
     tg = tp = tn = tc = tcrd = tact = 0.0
     for r in records:
-        g, pd, net, cc = _compute_totals(r)
+        g, pd, net, cc, pst = _compute_totals(r)
         tg += g
         tp += pd
         tn += net
@@ -294,15 +317,51 @@ TAX_BRACKETS = [
 MONTHLY_DEDUCTION = 5000  # 每月基本减除费用
 
 
+def _prorate_amount(a: TaxAdjustment, year: int, current_month: int) -> float:
+    """当年汇算时，对超出当前月份的调整项做比例折算。
+
+    仅对当年（year == 当前年）生效：超出 current_month 的部分不计入。
+    对往年年份返回全额。
+    对没有 period 的项返回全额。
+    """
+    if year != datetime.now().year:
+        return a.amount or 0
+    if not a.period_from or not a.period_to or not a.amount:
+        return a.amount or 0
+
+    try:
+        from_m = int(a.period_from.split('-')[1])
+        to_m = int(a.period_to.split('-')[1])
+    except (IndexError, ValueError):
+        return a.amount or 0
+
+    # 全部在已过月份内 → 全额
+    if to_m <= current_month:
+        return a.amount
+    # 全部在未来 → 不计
+    if from_m > current_month:
+        return 0.0
+
+    # 部分跨月：按月份比例折算
+    total_m = to_m - from_m + 1
+    effective_m = current_month - from_m + 1
+
+    if a.monthly_amount:
+        return round(a.monthly_amount * effective_m, 2)
+    else:
+        return round(a.amount * effective_m / total_m, 2)
+
+
 @router.get("/tax-summary", response_model=SalaryTaxSummaryOut)
 def salary_tax_summary(
     year: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
-    """按年计算个税汇算汇总：累计应纳税所得额、适用税率、距下一级距剩余额度"""
+    """按年计算个税汇算汇总（含综合汇算调整项）"""
     if year is None:
         year = datetime.now().year
 
+    # ── 1. 计算薪资基础数据 ──
     records = (
         db.query(SalaryRecord)
         .filter(SalaryRecord.period.like(f"{year}%"))
@@ -310,108 +369,217 @@ def salary_tax_summary(
         .all()
     )
 
-    if not records:
-        return SalaryTaxSummaryOut(
-            year=year,
-            month_count=0,
-            total_gross=0.0,
-            total_social_insurance=0.0,
-            taxable_income=0.0,
-            tax_rate=0.0,
-            tax_rate_label="0%",
-            bracket_min=0.0,
-            bracket_max=0.0,
-            quick_deduction=0.0,
-            remaining_to_next=36_000.0,
-            next_bracket_threshold=36_000.0,
-            next_tax_rate=3.0,
-        )
-
     total_gross = 0.0
     total_social_insurance = 0.0
+    actual_tax_paid = 0.0
     month_count = len(records)
 
     for r in records:
+        if r.actual_tax is not None:
+            actual_tax_paid += r.actual_tax
         for i in r.items:
             if i.category == "income":
                 total_gross += i.amount
-            elif i.category == "deduction":
+            elif i.category == "deduction" and i.tax_deductible:
                 total_social_insurance += i.amount
 
-    # 应纳税所得额 = 年度累计应发 - 累计减除费用(5000×月份数) - 累计专项扣除(社保公积金个人)
-    taxable_income = round(total_gross - MONTHLY_DEDUCTION * month_count - total_social_insurance, 2)
+    # 减除费用：过去年份按整年，当年按实际月数
+    deduction_months = 12 if year < datetime.now().year else (month_count or 1)
+    deduction_fee = MONTHLY_DEDUCTION * deduction_months
 
-    # 查找对应的个税级距
-    bracket_index = -1
+    # ── 2. 加载调整项（当年按月份折算） ──
+    adj_items = (
+        db.query(TaxAdjustment)
+        .filter(TaxAdjustment.year == year)
+        .order_by(TaxAdjustment.category, TaxAdjustment.sort_order)
+        .all()
+    )
+
+    current_month = datetime.now().month
+    is_current_year = (year == datetime.now().year)
+
+    other_income_included = 0.0
+    special_deduction_total = 0.0
+    other_deduction_total = 0.0
+    tax_paid_from_adjustments = 0.0
+
+    for a in adj_items:
+        # 对当年数据做月份比例折算（超出当前月不计入）
+        eff_amt = _prorate_amount(a, year, current_month) if is_current_year else (a.amount or 0)
+
+        if a.category == "other_income":
+            other_income_included += eff_amt
+        elif a.category == "special_deduction":
+            special_deduction_total += eff_amt
+        elif a.category == "other_deduction":
+            other_deduction_total += eff_amt
+        if a.tax_paid:
+            tax_paid_from_adjustments += a.tax_paid
+
+    # ── 3. 综合计算 ──
+    total_income = round(total_gross + other_income_included, 2)
+    total_deductions = round(deduction_fee + total_social_insurance + special_deduction_total + other_deduction_total, 2)
+    taxable_income = round(total_income - total_deductions, 2)
+
+    # ── 4. 查找税率级距 ──
+    bracket_min = bracket_max = 0.0
     tax_rate = 0.0
     quick_deduction = 0.0
+    remaining_to_next = 36_000.0
+    next_threshold = 36_000.0
+    next_rate = 3.0
 
-    if taxable_income <= 0:
-        # 未达起征点（甚至亏损），适用 0%
-        bracket_min, bracket_max = 0.0, 36_000.0
-        remaining_to_next = round(36_000.0 + abs(taxable_income), 2)
-        next_threshold = 36_000.0
-        next_rate = 3.0
-    else:
+    if taxable_income > 0:
         prev_upper = 0
+        bracket_index = -1
         for i, (upper, rate, qd) in enumerate(TAX_BRACKETS):
             if upper == 0 or taxable_income <= upper:
                 bracket_index = i
-                bracket_min = prev_upper
-                bracket_max = upper if upper != 0 else float('inf')
+                bracket_min = round(float(prev_upper), 2)
+                bracket_max = upper if upper != 0 else 0.0
                 tax_rate = rate
-                quick_deduction = qd
+                quick_deduction = float(qd)
                 break
             prev_upper = upper
 
-        # 计算距下一级距额度
-        if bracket_max != float('inf') and taxable_income < bracket_max:
-            # 还在这一级距内，有下一级
-            remaining_to_next = round(bracket_max - taxable_income, 2)
-            # 下一级的信息
-            if bracket_index + 1 < len(TAX_BRACKETS):
-                nu, nr, _ = TAX_BRACKETS[bracket_index + 1]
-                next_threshold = nu if nu != 0 else float('inf')
-                next_rate = nr
+        if bracket_index >= 0:
+            upper_bound = TAX_BRACKETS[bracket_index][0]
+            if upper_bound != 0 and taxable_income < upper_bound:
+                remaining_to_next = round(upper_bound - taxable_income, 2)
+                if bracket_index + 1 < len(TAX_BRACKETS):
+                    nu, nr, _ = TAX_BRACKETS[bracket_index + 1]
+                    next_threshold = nu if nu != 0 else 0.0
+                    next_rate = nr
+                else:
+                    next_threshold = 0.0
+                    next_rate = 0.0
             else:
+                remaining_to_next = 0.0
                 next_threshold = 0.0
                 next_rate = 0.0
-        else:
-            # 已在本级上限或已是最高级
-            remaining_to_next = 0.0
-            next_threshold = 0.0
-            next_rate = 0.0
+    elif taxable_income <= 0:
+        remaining_to_next = round(36_000.0 + abs(taxable_income), 2)
 
     tax_rate_label = f"{tax_rate:.0f}%" if tax_rate == int(tax_rate) else f"{tax_rate:.1f}%"
+
+    # ── 5. 税额 ──
+    tax_payable = round(max(taxable_income * (tax_rate / 100) - quick_deduction, 0), 2)
+    actual_tax_paid = round(actual_tax_paid + tax_paid_from_adjustments, 2)
+    tax_difference = round(tax_payable - actual_tax_paid, 2)
+
+    # ── 6. 构建响应 ──
+    adjustments_out = []
+    for a in adj_items:
+        adjustments_out.append(TaxAdjustmentOut(
+            id=a.id, year=a.year, category=a.category,
+            item_type=a.item_type, label=a.label or '',
+            period_from=a.period_from or '', period_to=a.period_to or '',
+            monthly_amount=a.monthly_amount or 0,
+            tax_paid=a.tax_paid or 0,
+            original_amount=a.original_amount,
+            amount=a.amount, remark=a.remark, sort_order=a.sort_order,
+        ))
 
     return SalaryTaxSummaryOut(
         year=year,
         month_count=month_count,
         total_gross=round(total_gross, 2),
         total_social_insurance=round(total_social_insurance, 2),
+        actual_tax_paid=actual_tax_paid,
+        deduction_fee=round(deduction_fee, 2),
+        other_income_included=round(other_income_included, 2),
+        special_deduction_total=round(special_deduction_total, 2),
+        other_deduction_total=round(other_deduction_total, 2),
+        total_income=total_income,
+        total_deductions=total_deductions,
         taxable_income=taxable_income,
         tax_rate=tax_rate,
         tax_rate_label=tax_rate_label,
-        bracket_min=round(bracket_min, 2),
-        bracket_max=round(bracket_max, 2) if bracket_max != float('inf') else 0.0,
-        quick_deduction=round(quick_deduction, 2),
+        bracket_min=bracket_min,
+        bracket_max=bracket_max,
+        quick_deduction=quick_deduction,
         remaining_to_next=remaining_to_next,
-        next_bracket_threshold=round(next_threshold, 2) if next_threshold != float('inf') else 0.0,
+        next_bracket_threshold=next_threshold,
         next_tax_rate=next_rate,
+        tax_payable=tax_payable,
+        tax_difference=tax_difference,
+        adjustments=adjustments_out,
     )
 
 
+# ── 个税汇算调整项 CRUD ──
+
+@router.get("/tax-adjustments", response_model=List[TaxAdjustmentOut])
+def list_tax_adjustments(
+    year: int = Query(..., description="年份"),
+    db: Session = Depends(get_db),
+):
+    """获取指定年份的所有个税调整项"""
+    items = (
+        db.query(TaxAdjustment)
+        .filter(TaxAdjustment.year == year)
+        .order_by(TaxAdjustment.category, TaxAdjustment.sort_order)
+        .all()
+    )
+    return items
+
+
+@router.post("/tax-adjustments", response_model=TaxAdjustmentOut)
+def create_tax_adjustment(
+    data: TaxAdjustmentCreate,
+    db: Session = Depends(get_db),
+):
+    """创建个税调整项"""
+    item = TaxAdjustment(**data.model_dump())
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.put("/tax-adjustments/{item_id}", response_model=TaxAdjustmentOut)
+def update_tax_adjustment(
+    item_id: int,
+    data: TaxAdjustmentUpdate,
+    db: Session = Depends(get_db),
+):
+    """更新个税调整项"""
+    item = db.query(TaxAdjustment).filter(TaxAdjustment.id == item_id).first()
+    if not item:
+        raise HTTPException(404, "调整项不存在")
+    update_data = data.model_dump(exclude_unset=True)
+    for k, v in update_data.items():
+        setattr(item, k, v)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.delete("/tax-adjustments/{item_id}")
+def delete_tax_adjustment(
+    item_id: int,
+    db: Session = Depends(get_db),
+):
+    """删除个税调整项"""
+    item = db.query(TaxAdjustment).filter(TaxAdjustment.id == item_id).first()
+    if not item:
+        raise HTTPException(404, "调整项不存在")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
 def _cumulate_for_tax(items):
-    """从明细列表计算收入总额与专项扣除"""
+    """从明细列表计算收入总额与专项扣除（按名称过滤社保公积金，不含其他扣款）"""
     income = 0.0
     social = 0.0
     for it in items:
         amt = it.amount or 0.0
         if it.category == "income":
             income += amt
-        elif it.category == "deduction":
+        elif it.category == "deduction" and it.tax_deductible:
             social += amt
-    return income, social
+    return round(income, 2), round(social, 2)
 
 
 @router.post("/calc-tax")
@@ -444,10 +612,17 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
         for i in r.items:
             if i.category == "income":
                 prev_income += i.amount
-            elif i.category == "deduction":
+            elif i.category == "deduction" and i.tax_deductible:
                 prev_social += i.amount
-        prev_actual_tax += r.actual_tax or 0.0
+        if body.use_items:
+            # 从历史明细行 category=tax 汇总个税（往期理论计算）
+            tax_from_items = sum(round(i.amount, 2) for i in r.items if i.category == "tax")
+            prev_actual_tax = round(prev_actual_tax + tax_from_items, 2)
+        else:
+            prev_actual_tax += r.actual_tax or 0.0
         prev_month_count += 1
+    prev_income = round(prev_income, 2)
+    prev_social = round(prev_social, 2)
 
     # 当月数据
     cur_income, cur_social = _cumulate_for_tax(body.items)
@@ -474,6 +649,120 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
         tax_amount = round(max(cumulative_tax_due - prev_actual_tax, 0), 2)
 
     return {"tax_amount": tax_amount}
+
+
+# ──────────────────────────────────────────────── 薪资导出 ────────────────────────────────────────────────
+
+@router.get("/export")
+def export_salary(
+    period_from: Optional[str] = Query(None, description="开始月份 (YYYY-MM)"),
+    period_to: Optional[str] = Query(None, description="结束月份 (YYYY-MM)"),
+    db: Session = Depends(get_db),
+):
+    """导出薪资记录 DOCX 报告：含明细表、总览合计、五险一金基数比例变化。"""
+    try:
+        # 查询记录
+        q = db.query(SalaryRecord)
+        if period_from:
+            q = q.filter(SalaryRecord.period >= period_from)
+        if period_to:
+            q = q.filter(SalaryRecord.period <= period_to)
+        records = q.order_by(SalaryRecord.period.asc()).all()
+
+        # 统计汇总
+        tg = tp = tn = tc = tcrd = tact = 0.0
+        for r in records:
+            g = sum(i.amount for i in r.items if i.category == "income")
+            pd = sum(i.amount for i in r.items if i.category in ("deduction", "tax"))
+            cc = sum(i.amount for i in r.items if i.category == "company_cost")
+            tg += g
+            tp += pd
+            tn += g - pd
+            tc += cc
+            tcrd += r.credited_amount or 0.0
+            tact += r.actual_tax or 0.0
+        count = len(records)
+        summary = {
+            "record_count": count,
+            "total_gross": round(tg, 2),
+            "total_personal_deduction": round(tp, 2),
+            "total_net": round(tn, 2),
+            "total_company_cost": round(tc, 2),
+            "avg_net": round(tn / count, 2) if count else 0.0,
+            "total_credited": round(tcrd, 2),
+            "total_actual_tax": round(tact, 2),
+        }
+
+        # 个税汇算摘要
+        tax_summary = None
+        if records:
+            last_year = int(records[-1].period[:4])
+            # 选取有完整数据的最后一年
+            target_year = last_year
+            year_records = [r for r in records if r.period.startswith(str(target_year))]
+            if year_records:
+                total_gross = 0.0
+                total_social = 0.0
+                for r in year_records:
+                    for i in r.items:
+                        if i.category == "income":
+                            total_gross += i.amount
+                        elif i.category == "deduction" and i.tax_deductible:
+                            total_social += i.amount
+                month_count = len(year_records)
+                taxable = round(total_gross - 5000 * 12 - total_social, 2)
+
+                # 税率级距查找（TAX_BRACKETS 定义在本模块顶部）
+                tax_rate = 0.0
+                qd = 0.0
+                if taxable > 0:
+                    for upper, rate, quick_d in TAX_BRACKETS:
+                        if upper == 0 or taxable <= upper:
+                            tax_rate = rate
+                            qd = quick_d
+                            break
+
+                tax_summary = {
+                    "year": target_year,
+                    "month_count": month_count,
+                    "total_gross": round(total_gross, 2),
+                    "total_social_insurance": round(total_social, 2),
+                    "taxable_income": taxable,
+                    "tax_rate_label": f"{tax_rate:.0f}%",
+                    "quick_deduction": round(qd, 2),
+                }
+
+        # 配置信息
+        from ..settings_manager import load_settings
+        raw_cfg = load_settings().get("salary_config", {})
+        salary_config = {
+            "employer": raw_cfg.get("employer", ""),
+            "social_bases": raw_cfg.get("social_bases", {}),
+            "social_rates": raw_cfg.get("social_rates", {}),
+        }
+
+        xlsx_bytes = generate_salary_export(
+            db, records, period_from, period_to,
+            summary, tax_summary, salary_config,
+        )
+
+        # 文件名
+        pf = period_from or "earliest"
+        pt = period_to or "latest"
+        file_ts = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f'薪资导出_{pf}_{pt}_{file_ts}.xlsx'
+        encoded_filename = urllib.parse.quote(filename)
+
+        return Response(
+            content=xlsx_bytes,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={
+                'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}",
+                'Content-Length': str(len(xlsx_bytes)),
+            }
+        )
+    except Exception as e:
+        raise HTTPException(500, f"导出失败: {str(e)}")
 
 
 # ──────────────────────────────────────────────── 薪资通用配置 ────────────────────────────────────────────────
