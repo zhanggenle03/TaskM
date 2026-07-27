@@ -99,12 +99,16 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         # 2) 总统计
         ws_sum = wb.create_sheet("总统计")
         ws_sum.append(["指标", "数值"])
+        real_leave = (total.get("annualDays", 0) or 0) + (total.get("compensatoryDays", 0) or 0) + (total.get("personalDays", 0) or 0)
         for row in [
             ("统计范围", f"{start} 至 {end}" if (start and end) else "-"),
             ("导出时间", datetime.now().strftime("%Y-%m-%d %H:%M")),
             ("应出勤天数", total.get("requiredWorkDays", 0)),
             ("上班天数", total.get("workDays", 0)),
-            ("请假天数", total.get("leaveDays", 0)),
+            ("年假天数", total.get("annualDays", 0) or 0),
+            ("调休天数", total.get("compensatoryDays", 0) or 0),
+            ("请假天数", total.get("personalDays", 0) or 0),
+            ("缺勤天数", total.get("absenceDays", 0) or 0),
             ("加班天数", total.get("overtimeDays", 0)),
             ("预估天数", total.get("estimatedDays", 0)),
             ("人天合计", total.get("manDays", 0)),
@@ -116,14 +120,17 @@ async def export_attendance_excel(payload: Dict[str, Any]):
 
         # 3) 按月统计
         ws_month = wb.create_sheet("按月统计")
-        m_headers = ["月份", "上班", "请假", "加班", "预估", "人天", "应出勤"]
+        m_headers = ["月份", "上班", "年假", "调休", "请假", "缺勤", "加班", "人天", "应出勤"]
         ws_month.append(m_headers)
         for m in monthly:
-            ws_month.append([m.get("month", ""), m.get("workDays", 0), m.get("leaveDays", 0),
-                             m.get("overtimeDays", 0), m.get("estimatedDays", 0), m.get("manDays", 0),
-                             m.get("requiredWorkDays", 0)])
+            ws_month.append([
+                m.get("month", ""), m.get("workDays", 0),
+                m.get("annualDays", 0) or 0, m.get("compensatoryDays", 0) or 0, m.get("personalDays", 0) or 0,
+                m.get("absenceDays", 0) or 0, m.get("overtimeDays", 0), m.get("manDays", 0),
+                m.get("requiredWorkDays", 0),
+            ])
         _header_style(ws_month, len(m_headers), len(monthly))
-        for c, w in enumerate([14, 8, 8, 8, 8, 8, 8], start=1):
+        for c, w in enumerate([14, 8, 8, 8, 8, 8, 8, 8, 8], start=1):
             ws_month.column_dimensions[get_column_letter(c)].width = w
 
         # 4) 按项目统计
@@ -140,21 +147,28 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         ws_chart = wb.create_sheet("统计图表")
         ws_chart.append(m_headers)
         for m in monthly:
-            ws_chart.append([m.get("month", ""), m.get("workDays", 0), m.get("leaveDays", 0),
-                             m.get("overtimeDays", 0), m.get("estimatedDays", 0), m.get("manDays", 0)])
+            ws_chart.append([
+                m.get("month", ""), m.get("workDays", 0),
+                m.get("annualDays", 0) or 0, m.get("compensatoryDays", 0) or 0, m.get("personalDays", 0) or 0,
+                m.get("absenceDays", 0) or 0, m.get("overtimeDays", 0), m.get("manDays", 0),
+                m.get("requiredWorkDays", 0),
+            ])
         month_last = len(monthly) + 1
-        # 类型分布表（G/H 列，供饼图引用）
-        ws_chart["G1"] = "类型"
-        ws_chart["H1"] = "天数"
+        # 类型分布表（J/K 列，供饼图引用；A-I 已被月度趋势占用）
+        ws_chart["J1"] = "类型"
+        ws_chart["K1"] = "天数"
         dist = [
             ("上班", total.get("workDays", 0)),
-            ("请假", total.get("leaveDays", 0)),
+            ("年假", total.get("annualDays", 0) or 0),
+            ("调休", total.get("compensatoryDays", 0) or 0),
+            ("请假", total.get("personalDays", 0) or 0),
+            ("缺勤", total.get("absenceDays", 0) or 0),
             ("加班", total.get("overtimeDays", 0)),
             ("预估", total.get("estimatedDays", 0)),
         ]
         for i, (label, val) in enumerate(dist, start=2):
-            ws_chart.cell(row=i, column=7, value=label)
-            ws_chart.cell(row=i, column=8, value=val)
+            ws_chart.cell(row=i, column=10, value=label)
+            ws_chart.cell(row=i, column=11, value=val)
 
         if monthly:
             bar = BarChart()
@@ -162,7 +176,7 @@ async def export_attendance_excel(payload: Dict[str, Any]):
             bar.title = "按月出勤趋势"
             bar.y_axis.title = "天数"
             bar.x_axis.title = "月份"
-            bar.add_data(Reference(ws_chart, min_col=2, max_col=5, min_row=1, max_row=month_last),
+            bar.add_data(Reference(ws_chart, min_col=2, max_col=8, min_row=1, max_row=month_last),
                          titles_from_data=True)
             bar.set_categories(Reference(ws_chart, min_col=1, min_row=2, max_row=month_last))
             bar.height = 8
@@ -171,13 +185,13 @@ async def export_attendance_excel(payload: Dict[str, Any]):
 
         pie = PieChart()
         pie.title = "出勤类型分布"
-        pie.add_data(Reference(ws_chart, min_col=8, min_row=1, max_row=5), titles_from_data=True)
-        pie.set_categories(Reference(ws_chart, min_col=7, min_row=2, max_row=5))
+        pie.add_data(Reference(ws_chart, min_col=11, min_row=1, max_row=8), titles_from_data=True)
+        pie.set_categories(Reference(ws_chart, min_col=10, min_row=2, max_row=8))
         pie.height = 8
         pie.width = 12
-        ws_chart.add_chart(pie, "G" + str(month_last + 3))
+        ws_chart.add_chart(pie, "J" + str(month_last + 3))
 
-        for c in range(1, 9):
+        for c in range(1, 12):
             ws_chart.column_dimensions[get_column_letter(c)].width = 12
 
         # 写出并返回
