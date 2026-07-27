@@ -327,7 +327,10 @@ function getHolidayInfo(dateStr) {
 /**
  * 获取指定日期完整的农历+节日信息
  */
+// 农历/节日计算记忆化：同一天只算一次（避免切月首次访问某月时同步重算导致卡顿）
+const _dayExtraCache = {}
 export function getDayExtraInfo(dateStr) {
+  if (_dayExtraCache[dateStr]) return _dayExtraCache[dateStr]
   const [y, m, d] = dateStr.split('-').map(Number)
   const solar = Solar.fromYmd(y, m, d)
   const lunar = solar.getLunar()
@@ -362,7 +365,7 @@ export function getDayExtraInfo(dateStr) {
     badgeType = 'off'
   }
 
-  return {
+  const result = {
     lunarDate,
     lunarMonth,
     lunarDay,
@@ -372,4 +375,6 @@ export function getDayExtraInfo(dateStr) {
     badgeType,
     override, // 'holiday'|'workday'|'normal'|'off'|null
   }
+  _dayExtraCache[dateStr] = result
+  return result
 }

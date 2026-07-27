@@ -15,6 +15,7 @@
         <el-button type="success" :disabled="isCheckinDisabled(selectedDate || todayStr)" @click="openCheckinDialog">
           <el-icon><Select /></el-icon> 签到
         </el-button>
+        <el-button type="warning" :disabled="isLeaveDisabled(selectedDate || todayStr)" @click="openLeaveDialog()">请假</el-button>
       </div>
     </div>
 
@@ -66,7 +67,7 @@
                 'batch-selected': batchMode && batchDates.includes(day.date),
                 'batch-disabled': (batchMode && checkinsByDate[day.date]),
                 'delete-selected': deleteBatchMode && deleteDates.includes(day.date),
-                'delete-disabled': (deleteBatchMode && !checkinsByDate[day.date]),
+                'delete-disabled': (deleteBatchMode && !checkinsByDate[day.date] && (!day.leaveTypes || !day.leaveTypes.length)),
                 'cal-cell-disabled': (batchMode && (day.beforeEntry || day.isFuture)),
               }"
               @click="onCellClick(day)"
@@ -76,10 +77,17 @@
                 <span v-if="day.holiday && day.holiday.badge" class="cal-cell-badge" :class="'cb-' + day.holiday.badgeType">{{ day.holiday.badge }}</span>
                 <span v-if="day.status === 'attendance' && !batchMode && !deleteBatchMode" class="cal-cell-dot"></span>
                 <span v-if="day.status === 'overtime' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-overtime">加</span>
-                <span v-if="day.status === 'leave' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-leave">请</span>
+                <span v-if="day.status === 'leave' && !batchMode && !deleteBatchMode" class="cal-cell-label cal-cell-absence">缺</span>
+                <template v-for="lt in day.leaveTypes" :key="lt">
+                  <span
+                    v-if="!batchMode && !deleteBatchMode"
+                    class="cal-cell-label"
+                    :class="'cal-cell-leave-' + lt"
+                  >{{ leaveTypeShort(lt) }}</span>
+                </template>
                 <span v-if="mandayByDate[day.date] > 1 && !batchMode && !deleteBatchMode" class="cal-cell-manday">{{ mandayByDate[day.date] }}</span>
                 <span v-if="batchMode && checkinsByDate[day.date]" class="cal-cell-checked">已签</span>
-                <span v-if="deleteBatchMode && checkinsByDate[day.date]" class="cal-cell-has-data">已签</span>
+                <span v-if="deleteBatchMode && (checkinsByDate[day.date] || (day.leaveTypes && day.leaveTypes.length))" class="cal-cell-has-data">有记录</span>
               </template>
             </div>
           </div>
@@ -109,13 +117,20 @@
         <div class="cal-stats-card">
           <div class="cal-stats-title">{{ calYear }}年{{ calMonth }}月出勤</div>
           <div class="cal-stats-row">
-            <span class="cal-stats-item">应出勤 <strong>{{ monthStats.requiredWorkDays }}</strong> 天</span>
+            <span class="cal-stats-item">应出勤 <strong>{{ monthStats.requiredWorkDays }}</strong></span>
             <span class="cal-stats-divider"></span>
-            <span class="cal-stats-item">上班 <strong>{{ monthStats.workDays }}</strong> 天</span>
+            <span class="cal-stats-item">上班 <strong>{{ monthStats.workDays }}</strong></span>
             <span class="cal-stats-divider"></span>
-            <span class="cal-stats-item">请假 <strong>{{ monthStats.leaveDays }}</strong> 天</span>
+            <span class="cal-stats-item">加班 <strong>{{ monthStats.overtimeDays }}</strong></span>
+            <span class="cal-stats-divider"></span>
+            <span class="cal-stats-item">人天 <strong class="cal-manday-num">{{ monthStats.manDays }}</strong></span>
           </div>
-          <div class="cal-stats-overtime">其中加班 <strong>{{ monthStats.overtimeDays }}</strong> 天，人天合计 <strong class="cal-manday-num">{{ monthStats.manDays }}</strong> 天</div>
+          <div class="cal-stats-overtime">
+            缺勤 <strong>{{ monthStats.absenceDays }}</strong> ·
+            年假 <strong class="cal-leave-annual">{{ monthStats.annualDays }}</strong> ·
+            调休 <strong class="cal-leave-comp">{{ monthStats.compensatoryDays }}</strong> ·
+            请假 <strong class="cal-leave-personal">{{ monthStats.personalDays }}</strong>
+          </div>
         </div>
 
       <!-- 右侧详情 -->
@@ -139,19 +154,31 @@
               <div class="cal-cc-content">{{ chk.content || '已签到' }}</div>
             </div>
           </div>
-          <el-empty v-else description="该日无签到记录" :image-size="60" />
+          <div v-if="leavesByDate[selectedDate]?.length" class="cal-leaves">
+            <div v-for="lv in leavesByDate[selectedDate]" :key="lv.id" class="cal-leave-card">
+              <span class="cal-leave-type" :class="'clt-' + lv.leave_type">{{ leaveTypeLabel(lv.leave_type) }}</span>
+              <span v-if="lv.subtype" class="cal-leave-sub">{{ lv.subtype }}</span>
+              <span class="cal-leave-days">{{ lv.days }} 天</span>
+              <span class="cal-leave-actions">
+                <el-button size="small" text type="primary" @click="openLeaveDialog(lv)">编辑</el-button>
+                <el-button size="small" text type="danger" @click="removeLeave(lv)"><el-icon><Delete /></el-icon></el-button>
+              </span>
+              <div v-if="lv.reason" class="cal-leave-reason">{{ lv.reason }}</div>
+            </div>
+          </div>
+          <el-empty v-if="!checkinsByDate[selectedDate]?.length && !leavesByDate[selectedDate]?.length" description="该日无记录" :image-size="60" />
         </template>
         <template v-else-if="deleteBatchMode">
-          <div class="cal-detail-header"><h3>批量删除签到</h3></div>
+          <div class="cal-detail-header"><h3>批量删除记录</h3></div>
           <p style="font-size:13px;color:#888;line-height:1.6">
-            请在左侧日历中点击<span style="color:#f56c6c;font-weight:500">已有签到</span>的日期进行选择，
-            选完后点击「删除选中」按钮批量删除。
+            请在左侧日历中点击<span style="color:#f56c6c;font-weight:500">已有记录</span>的日期进行选择，
+            选完后点击「删除选中」按钮批量删除签到和请假记录。
           </p>
           <div v-if="deleteDates.length" style="margin-top:16px">
             <p style="font-size:13px;font-weight:500;color:#f56c6c;margin-bottom:8px">已选 {{ deleteDates.length }} 天：</p>
             <div v-for="d in deleteDates" :key="d" class="delete-date-item">
               <span>{{ d }}</span>
-              <span style="color:#999;font-size:12px">{{ checkinsByDate[d]?.length || 0 }} 条记录</span>
+              <span style="color:#999;font-size:12px">{{ (checkinsByDate[d]?.length || 0) + (leavesByDate[d]?.length || 0) }} 条记录</span>
             </div>
           </div>
         </template>
@@ -274,6 +301,44 @@
       </template>
     </el-dialog>
 
+    <!-- 新增/编辑请假 -->
+    <el-dialog v-model="showLeaveDlg" :title="editingLeaveId ? '编辑请假' : '新增请假'" width="480px" @close="resetLeaveForm">
+      <el-form :model="leaveForm" label-width="80px">
+        <el-form-item label="类型" required>
+          <el-select v-model="leaveForm.leave_type" style="width:100%">
+            <el-option v-for="t in LEAVE_TYPES" :key="t.value" :value="t.value" :label="t.label" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="leaveForm.leave_type === 'personal'" label="子类">
+          <el-select v-model="leaveForm.subtype" placeholder="可选" style="width:100%" filterable allow-create default-first-option>
+            <el-option v-for="s in LEAVE_SUBTYPES" :key="s" :value="s" :label="s" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="日期" required>
+          <el-date-picker v-model="leaveForm.date" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" style="width:100%" @change="computeLeaveWorkdays" />
+        </el-form-item>
+        <el-form-item v-if="!editingLeaveId" label="结束日期（留空=单日）">
+          <el-date-picker v-model="leaveForm.date_end" type="date" value-format="YYYY-MM-DD" placeholder="选范围=批量按工作日逐日生成" style="width:100%" :disabled-date="disabledEndDate" @change="computeLeaveWorkdays" />
+        </el-form-item>
+        <el-form-item v-if="!editingLeaveId" label="工作日">
+          <span v-if="leaveWorkdaysLoading" style="font-size:13px;color:#888">
+            <el-icon class="is-loading"><Loading /></el-icon> 计算中…
+          </span>
+          <span v-else>
+            <strong style="font-size:16px;color:#e67e22">{{ leaveWorkdays }}</strong> 天
+            <span style="margin-left:8px;font-size:12px;color:#888">将生成 {{ leaveWorkdays }} 条请假记录（自动排除周末/法定假，仅含应上班的工作日）</span>
+          </span>
+        </el-form-item>
+        <el-form-item label="事由">
+          <el-input v-model="leaveForm.reason" type="textarea" :rows="3" placeholder="可选" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showLeaveDlg = false">取消</el-button>
+        <el-button type="primary" :loading="leaveLoading" @click="submitLeave">{{ editingLeaveId ? '保存' : '确定' }}</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 出勤计算器 -->
     <el-dialog v-model="showCalcDlg" title="出勤计算器" width="680px" top="5vh">
       <div class="calc-range">
@@ -315,7 +380,19 @@
             <span class="calc-summary-label">上班</span>
           </div>
           <div class="calc-summary-item">
-            <span class="calc-summary-num" style="color:#e67e22">{{ calcResult.total.leaveDays }}</span>
+            <span class="calc-summary-num" style="color:#8c8c8c">{{ calcResult.total.absenceDays }}</span>
+            <span class="calc-summary-label">缺勤</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#185fa5">{{ calcResult.total.annualDays }}</span>
+            <span class="calc-summary-label">年假</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#3b6d11">{{ calcResult.total.compensatoryDays }}</span>
+            <span class="calc-summary-label">调休</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#e67e22">{{ calcResult.total.personalDays }}</span>
             <span class="calc-summary-label">请假</span>
           </div>
           <div class="calc-summary-item">
@@ -340,6 +417,9 @@
                 <th class="calc-month-th-name">月份</th>
                 <th>应出勤</th>
                 <th>上班</th>
+                <th>缺勤</th>
+                <th>年假</th>
+                <th>调休</th>
                 <th>请假</th>
                 <th>加班</th>
                 <th>人天</th>
@@ -353,7 +433,10 @@
                 </td>
                 <td style="color:#2f54eb;font-weight:600">{{ m.requiredWorkDays }}</td>
                 <td style="color:#534ab7;font-weight:600">{{ m.workDays }}</td>
-                <td style="color:#e67e22;font-weight:600">{{ m.leaveDays }}</td>
+                <td style="color:#8c8c8c;font-weight:600">{{ m.absenceDays }}</td>
+                <td style="color:#185fa5;font-weight:600">{{ m.annualDays }}</td>
+                <td style="color:#3b6d11;font-weight:600">{{ m.compensatoryDays }}</td>
+                <td style="color:#e67e22;font-weight:600">{{ m.personalDays }}</td>
                 <td style="color:#d48806;font-weight:600">{{ m.overtimeDays }}</td>
                 <td style="color:#0f6e56;font-weight:600">{{ m.manDays }}</td>
               </tr>
@@ -472,6 +555,7 @@ dayjs.extend(utc)
 dayjs.locale('zh-cn')
 import {
   getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks, exportAttendanceExcel,
+  getLeaves, getLeaveWorkdays, createLeave, updateLeave, deleteLeave, batchDeleteLeaves,
 } from '../api'
 import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer } from '../utils/holiday'
 
@@ -529,6 +613,23 @@ const holidayVersion = ref(1)
 // 数据库签到数据就绪标志：网格照常秒开，但"出勤/请假/加班"状态徽标与出勤统计
 // 在签到数据返回前保持中性，避免首屏把过去工作日全算成"请假"的一闪假状态。
 const dataReady = ref(false)
+
+// 请假记录（年假/调休/请假），与签到独立
+const allLeaves = ref([])
+const showLeaveDlg = ref(false)
+const leaveLoading = ref(false)
+const editingLeaveId = ref(null)
+const leaveForm = ref({ leave_type: 'personal', subtype: '', date: null, date_end: null, days: 1, reason: '' })
+const LEAVE_TYPES = [
+  { value: 'annual', label: '年假' },
+  { value: 'compensatory', label: '调休' },
+  { value: 'personal', label: '请假' },
+]
+const LEAVE_SUBTYPES = ['事假', '病假', '婚假', '产假', '陪产假', '丧假', '其他']
+const LEAVE_LABEL = { annual: '年假', compensatory: '调休', personal: '请假' }
+const leaveTypeLabel = (t) => LEAVE_LABEL[t] || '请假'
+const leaveTypeShort = (t) => ({ annual: '年', compensatory: '调', personal: '假' }[t] || '假')
+
 const loadHolidayForYear = async (year) => {
   await loadHolidayData(year)
   // 也预加载前后一年，方便月份切换
@@ -579,12 +680,25 @@ const runCalc = async () => {
     if (!rangeCheckinsByDate[d]) rangeCheckinsByDate[d] = []
     rangeCheckinsByDate[d].push(c)
   }
+  // 拉取整个日期范围的请假数据（年假/调休/请假），多日请假展开到覆盖的每一天
+  const rangeLeavesRaw = await getLeaves({ start_date: startStr, end_date: endStr })
+  const rangeLeavesByDate = {}
+  for (const lv of rangeLeavesRaw) {
+    const ls = dayjs(lv.date)
+    const le = dayjs(lv.date_end || lv.date)
+    for (let dd = ls; dd.isBefore(le) || dd.isSame(le); dd = dd.add(1, 'day')) {
+      const ds = dd.format('YYYY-MM-DD')
+      if (!rangeLeavesByDate[ds]) rangeLeavesByDate[ds] = []
+      rangeLeavesByDate[ds].push(lv)
+    }
+  }
 
   const byMonth = {}
   const byProject = {}
   const multiProjectDays = [] // 多项目签到的日期列表
   const days = [] // 逐日明细
-  let totalWork = 0, totalLeave = 0, totalOvertime = 0, totalEstimated = 0, totalManDays = 0, totalRequired = 0
+  let totalWork = 0, totalAbsence = 0, totalOvertime = 0, totalEstimated = 0, totalManDays = 0, totalRequired = 0
+  const totalType = { annual: 0, compensatory: 0, personal: 0 } // 真实请假按类型计数（覆盖天数）
   const today = dayjs().startOf('day')
 
   for (let d = start; d.isBefore(end) || d.isSame(end); d = d.add(1, 'day')) {
@@ -607,7 +721,7 @@ const runCalc = async () => {
 
     if (beforeEntry) continue
 
-    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, leaveDays: 0, overtimeDays: 0, estimatedDays: 0, manDays: 0, requiredWorkDays: 0 }
+    if (!byMonth[monthKey]) byMonth[monthKey] = { workDays: 0, absenceDays: 0, overtimeDays: 0, estimatedDays: 0, manDays: 0, requiredWorkDays: 0, annualDays: 0, compensatoryDays: 0, personalDays: 0 }
 
     if (hasCheckin) {
       totalWork++
@@ -636,7 +750,8 @@ const runCalc = async () => {
             const alloc = totalMD / projCount
             if (!byProject[p.id]) byProject[p.id] = { projectId: p.id, projectName: p.name, days: 0, manDays: 0 }
             byProject[p.id].manDays += alloc
-            byProject[p.id].days += totalMD > 0 ? alloc / totalMD : 0
+            // 天数：人天>0时按比例分配，人天≤0时天数按项目数均分（单项目=1天）
+            byProject[p.id].days += totalMD > 0 ? alloc / totalMD : 1 / projCount
           }
           continue
         }
@@ -649,8 +764,8 @@ const runCalc = async () => {
           const name = rawName && rawName.startsWith('#') ? '已删除项目' : rawName
           if (!byProject[pid]) byProject[pid] = { projectId: pid, projectName: name, days: 0, manDays: 0 }
           byProject[pid].manDays += alloc
-          // 天数按人天占比拆分：单项目占比=1（保持“出勤 1 天”语义），多项目按分配比例分，避免跨项目重复计数
-          byProject[pid].days += totalMD > 0 ? alloc / totalMD : 0
+          // 天数：人天>0时按人天比例分配；人天≤0时按项目均分（单项目=1天，多项目各1/N）
+          byProject[pid].days += totalMD > 0 ? alloc / totalMD : 1 / pmdKeys.length
         }
         // 当天有人天但未分配到任何项目（关联已删且无保留分配）→ 归入“未关联项目”
         const remainder = totalMD - accounted
@@ -707,10 +822,20 @@ const runCalc = async () => {
     else if (weekday === 0 || weekday === 6) effIsRest = true
     else effIsRest = false
 
+    const dayLeaves = rangeLeavesByDate[dateStr] || []
+    const dayLeaveTypes = [...new Set(dayLeaves.map((l) => l.leave_type))]
     if (effIsRest) {
       if (hasCheckin) { totalOvertime++; byMonth[monthKey].overtimeDays++ }
     } else {
-      if (!hasCheckin && !isFuture) { totalLeave++; byMonth[monthKey].leaveDays++ }
+      // 工作日、无签到、且无真实请假记录 → 缺口（漏签到）
+      if (!hasCheckin && !isFuture && !dayLeaveTypes.length) { totalAbsence++; byMonth[monthKey].absenceDays++ }
+    }
+    // 真实请假按类型统计（仅工作日计入，休息日请假不占用出勤缺口）
+    if (!effIsRest && dayLeaveTypes.length) {
+      for (const lt of dayLeaveTypes) {
+        totalType[lt] = (totalType[lt] || 0) + 1
+        byMonth[monthKey][lt + 'Days'] = (byMonth[monthKey][lt + 'Days'] || 0) + 1
+      }
     }
 
     // 应出勤：所有非休息日（排除周末/法定假/手动假日，且入职后）计入应上班天数
@@ -724,11 +849,15 @@ const runCalc = async () => {
     if (hasCheckin) dayType = effIsRest ? '加班' : '上班'
     else if (effIsRest) dayType = '休息'
     else if (isFuture) dayType = '预估上班'
-    else dayType = '请假'
+    else if (dayLeaveTypes.length) dayType = leaveTypeLabel(dayLeaveTypes[0]) + (dayLeaveTypes.length > 1 ? '等' : '')
+    else dayType = '缺勤'
     // 当天工作记录与人天说明（多签到记录用换行拼接）
     const dayContents = dayCheckins.map(c => (c.content && c.content.trim()) ? c.content.trim() : '已签到')
     const dayReasons = dayCheckins.map(c => (c.man_day_reason && c.man_day_reason.trim()) ? c.man_day_reason.trim() : '').filter(Boolean)
-    const dayContent = dayContents.join('\n')
+    const dayLeaveReasons = dayLeaves.map(lv => (lv.reason && lv.reason.trim()) ? lv.reason.trim() : '').filter(Boolean)
+    const parts = [...dayContents]
+    if (dayLeaveReasons.length) parts.push(...dayLeaveReasons.map(r => `请假: ${r}`))
+    const dayContent = parts.length ? parts.join('\n') : (dayLeaves.length ? '' : '已签到')
     const dayManDayReason = dayReasons.join('\n')
     days.push({
       date: dateStr,
@@ -743,7 +872,17 @@ const runCalc = async () => {
   }
 
   calcResult.value = {
-    total: { workDays: totalWork, leaveDays: totalLeave, overtimeDays: totalOvertime, estimatedDays: totalEstimated, manDays: totalManDays, requiredWorkDays: totalRequired },
+    total: {
+      workDays: totalWork,
+      absenceDays: totalAbsence,
+      annualDays: totalType.annual,
+      compensatoryDays: totalType.compensatory,
+      personalDays: totalType.personal,
+      overtimeDays: totalOvertime,
+      estimatedDays: totalEstimated,
+      manDays: totalManDays,
+      requiredWorkDays: totalRequired,
+    },
     monthly: Object.entries(byMonth).map(([month, data]) => ({ month, ...data })),
     byProject: Object.values(byProject)
       .map((p) => ({ ...p, days: Math.round(p.days * 100) / 100, manDays: Math.round(p.manDays * 100) / 100 }))
@@ -817,6 +956,18 @@ const mandayByDate = computed(() => {
   return map
 })
 
+// 每天对应的请假记录（多日请假会展开到覆盖的每个日期）
+// 每条请假 = 一天 = 一条独立记录（与签到同构），无需按范围展开
+const leavesByDate = computed(() => {
+  const map = {}
+  for (const lv of allLeaves.value) {
+    const ds = lv.date
+    if (!map[ds]) map[ds] = []
+    map[ds].push(lv)
+  }
+  return map
+})
+
 // 农历/节日信息缓存：整个月的数据预先计算一次，calendarDays 和 monthStats 共享
 const monthExtraInfo = computed(() => {
   // eslint-disable-next-line no-unused-expressions
@@ -853,6 +1004,8 @@ const calendarDays = computed(() => {
     const extra = monthExtraInfo.value[d] // 从缓存获取
     const hasCheckin = !!checkinsByDate.value[dateStr]
     const isFuture = dayjs(dateStr).isAfter(dayjs().startOf('day'))
+    const dayLeaves = leavesByDate.value[dateStr] || []
+    const leaveTypes = [...new Set(dayLeaves.map((l) => l.leave_type))]
 
     // 判断当日有效类型（覆盖优先于默认）
     let effectiveIsRest
@@ -865,7 +1018,9 @@ const calendarDays = computed(() => {
 
     let statusType = null
     if (dataReady.value && !isFuture && !beforeEntry) {
-      if (effectiveIsRest) {
+      if (dayLeaves.length) {
+        statusType = null // 真实请假由 leaveTypes 徽标呈现，不显示"缺口"
+      } else if (effectiveIsRest) {
         if (hasCheckin) statusType = 'overtime'
       } else {
         statusType = hasCheckin ? 'attendance' : 'leave'
@@ -879,6 +1034,7 @@ const calendarDays = computed(() => {
       isToday: dateStr === todayStr,
       holiday: extra,
       status: statusType,
+      leaveTypes,
       beforeEntry,
       isFuture,
     })
@@ -898,7 +1054,7 @@ const monthStats = computed(() => {
   dataReady.value      // 签到数据未就绪时返回中性占位，避免首屏闪现"全缺勤"
   if (!dataReady.value) {
     const daysInMonth = dayjs(`${calYear.value}-${calMonth.value}-01`).daysInMonth()
-    return { workDays: 0, leaveDays: 0, overtimeDays: 0, requiredWorkDays: 0, manDays: 0, absences: 0, total: daysInMonth, isCurrent: false, loading: true }
+    return { workDays: 0, absenceDays: 0, overtimeDays: 0, requiredWorkDays: 0, manDays: 0, annualDays: 0, compensatoryDays: 0, personalDays: 0, total: daysInMonth, isCurrent: false, loading: true }
   }
   const year = calYear.value
   const month = calMonth.value
@@ -910,10 +1066,11 @@ const monthStats = computed(() => {
   const lastDay = isCurrent ? today.date() : daysInMonth
 
   let workDays = 0        // 有签到记录的总天数（含加班）
-  let leaveDays = 0        // 应上班但没签到
+  let absenceDays = 0      // 工作日无签到且无真实请假（漏签到缺口）
   let overtimeDays = 0
   let requiredWorkDays = 0 // 应上班天数（排除周末/节假日/手动假日）
   let manDays = 0          // 人天合计（该月所有签到记录 man_days 之和）
+  const typeDays = { annual: 0, compensatory: 0, personal: 0 } // 真实请假按类型覆盖天数
 
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = dayjs(`${year}-${month}-${d}`).format('YYYY-MM-DD')
@@ -944,38 +1101,48 @@ const monthStats = computed(() => {
       manDays += dm
     }
 
+    const dayLeaves = leavesByDate.value[dateStr] || []
+    const dayLeaveTypes = [...new Set(dayLeaves.map((l) => l.leave_type))]
     if (effectiveIsRest) {
       if (hasCheckin) overtimeDays++
     } else {
-      if (!hasCheckin) leaveDays++
+      // 真实请假按类型统计（仅工作日）；工作日无签到且无真实请假 → 缺口
+      if (dayLeaveTypes.length) {
+        for (const lt of dayLeaveTypes) typeDays[lt] = (typeDays[lt] || 0) + 1
+      } else if (!hasCheckin) {
+        absenceDays++
+      }
     }
   }
 
   // 整月未到来时清零签到相关统计，仅保留应出勤
   if (isFutureMonth) {
     workDays = 0
-    leaveDays = 0
+    absenceDays = 0
     overtimeDays = 0
     manDays = 0
   }
 
-  const absences = requiredWorkDays - workDays // 应出勤 - 实际出勤 = 缺勤天数
-
-  return { workDays, leaveDays, overtimeDays, requiredWorkDays, manDays, absences, total: lastDay, isCurrent }
+  // 缺勤 = 当月日历上"缺少打卡"的天数（工作日、未请假、无签到、且非未来/入职前），
+  // 与日历格子 status==='leave' 完全一致；不再使用 应出勤-出勤-请假 的 gap 公式
+  return { workDays, overtimeDays, requiredWorkDays, manDays, annualDays: typeDays.annual, compensatoryDays: typeDays.compensatory, personalDays: typeDays.personal, absenceDays, total: lastDay, isCurrent }
 })
 
 const load = async () => {
   // 按当前年月过滤签到数据，避免全量加载
-  const [p, c] = await Promise.all([
+  const [p, c, lv] = await Promise.all([
     getProjects(),
     getAllCheckins({ year: calYear.value, month: calMonth.value }),
-    loadHolidayForYear(calYear.value),
+    getLeaves({ year: calYear.value, month: calMonth.value }),
   ])
   projects.value = p
   allCheckins.value = c
+  allLeaves.value = lv
   dataReady.value = true // 签到数据已就绪，状态徽标与出勤统计可正常显示
   selectedDate.value = todayStr
   loadStatusForDate(todayStr)
+  // 节假日异步补，不阻塞首屏
+  loadHolidayForYear(calYear.value).then(() => { holidayVersion.value++ })
 }
 onMounted(async () => {
   // 并行：从 settings.json/DB 加载节假日覆盖 + 主数据
@@ -992,39 +1159,43 @@ const formatDateFull = (d) => dayjs(d).format('YYYY年M月D日 dddd')
 const prevMonth = async () => {
   const newMonth = calMonth.value === 1 ? 12 : calMonth.value - 1
   const newYear  = calMonth.value === 1 ? calYear.value - 1 : calYear.value
-  const [newCheckins] = await Promise.all([
+  const [newCheckins, newLeaves] = await Promise.all([
     getAllCheckins({ year: newYear, month: newMonth }),
-    loadHolidayForYear(newYear),
+    getLeaves({ year: newYear, month: newMonth }),
   ])
   calYear.value = newYear
   calMonth.value = newMonth
   allCheckins.value = newCheckins
-  holidayVersion.value++
+  allLeaves.value = newLeaves
+  // 节假日异步补，不阻塞换页
+  loadHolidayForYear(newYear).then(() => { holidayVersion.value++ })
 }
 const nextMonth = async () => {
   const newMonth = calMonth.value === 12 ? 1 : calMonth.value + 1
   const newYear  = calMonth.value === 12 ? calYear.value + 1 : calYear.value
-  const [newCheckins] = await Promise.all([
+  const [newCheckins, newLeaves] = await Promise.all([
     getAllCheckins({ year: newYear, month: newMonth }),
-    loadHolidayForYear(newYear),
+    getLeaves({ year: newYear, month: newMonth }),
   ])
   calYear.value = newYear
   calMonth.value = newMonth
   allCheckins.value = newCheckins
-  holidayVersion.value++
+  allLeaves.value = newLeaves
+  loadHolidayForYear(newYear).then(() => { holidayVersion.value++ })
 }
 const goToday = async () => {
   const targetYear  = dayjs().year()
   const targetMonth = dayjs().month() + 1
-  const [newCheckins] = await Promise.all([
+  const [newCheckins, newLeaves] = await Promise.all([
     getAllCheckins({ year: targetYear, month: targetMonth }),
-    loadHolidayForYear(targetYear),
+    getLeaves({ year: targetYear, month: targetMonth }),
   ])
   calYear.value = targetYear
   calMonth.value = targetMonth
   selectedDate.value = todayStr
   allCheckins.value = newCheckins
-  holidayVersion.value++
+  allLeaves.value = newLeaves
+  loadHolidayForYear(targetYear).then(() => { holidayVersion.value++ })
 }
 
 // 点击日历标题跳转指定年月
@@ -1036,14 +1207,15 @@ const onPickerVisible = (v) => {
 }
 const changeMpYear = (delta) => { mpYear.value += delta }
 const jumpToMonth = async (year, month) => {
-  const [newCheckins] = await Promise.all([
+  const [newCheckins, newLeaves] = await Promise.all([
     getAllCheckins({ year, month }),
-    loadHolidayForYear(year),
+    getLeaves({ year, month }),
   ])
   calYear.value = year
   calMonth.value = month
   allCheckins.value = newCheckins
-  holidayVersion.value++
+  allLeaves.value = newLeaves
+  loadHolidayForYear(year).then(() => { holidayVersion.value++ })
 }
 const pickMonth = async (m) => {
   await jumpToMonth(mpYear.value, m)
@@ -1157,6 +1329,15 @@ const isCheckinDisabled = (dateStr) => {
   const entryDateStr = getEntryDate()
   if (entryDateStr && dateStr < entryDateStr) return true
   if (dayjs(dateStr).isAfter(dayjs().startOf('day'))) return true
+  if (leavesByDate.value[dateStr]?.length) return true // 当天已请假，不可签到
+  return false
+}
+const isLeaveDisabled = (dateStr) => {
+  if (!dateStr) return true
+  const entryDateStr = getEntryDate()
+  if (entryDateStr && dateStr < entryDateStr) return true
+  if (dayjs(dateStr).isAfter(dayjs().startOf('day'))) return true
+  if (checkinsByDate.value[dateStr]?.length) return true // 当天已签到，不可请假
   return false
 }
 const openCheckinDialog = () => {
@@ -1250,6 +1431,110 @@ const removeCheckin = async (chk) => {
   loadStatusForDate(selectedDate.value)
 }
 
+// ---- 请假（年假/调休/请假） ----
+const refreshLeaves = async () => {
+  allLeaves.value = await getLeaves({ year: calYear.value, month: calMonth.value })
+}
+// 选好范围后自动计算「应上班的工作日」天数（后端按周末/法定假/覆盖判定）
+const leaveWorkdays = ref(0)
+const leaveWorkdaysLoading = ref(false)
+const computeLeaveWorkdays = async () => {
+  const start = leaveForm.value.date
+  const end = leaveForm.value.date_end || leaveForm.value.date
+  if (!start) { leaveWorkdays.value = 0; return }
+  leaveWorkdaysLoading.value = true
+  try {
+    const res = await getLeaveWorkdays({ start_date: start, end_date: end })
+    leaveWorkdays.value = res.count || 0
+  } catch {
+    leaveWorkdays.value = 0
+  } finally {
+    leaveWorkdaysLoading.value = false
+  }
+}
+// 结束日期选择器：不可早于开始日期
+const disabledEndDate = (time) => {
+  if (!leaveForm.value.date) return false
+  return dayjs(time).isBefore(dayjs(leaveForm.value.date), 'day')
+}
+const resetLeaveForm = () => {
+  leaveForm.value = { leave_type: 'personal', subtype: '', date: null, date_end: null, days: 1, reason: '' }
+  leaveWorkdays.value = 0
+}
+const openLeaveDialog = (lv = null) => {
+  if (lv) {
+    editingLeaveId.value = lv.id
+    leaveForm.value = {
+      leave_type: lv.leave_type,
+      subtype: lv.subtype || '',
+      date: lv.date,
+      date_end: lv.date_end || null,
+      days: lv.days,
+      reason: lv.reason || '',
+    }
+  } else {
+    editingLeaveId.value = null
+    resetLeaveForm()
+    const date = selectedDate.value || todayStr
+    if (checkinsByDate.value[date]?.length) {
+      ElMessage.warning('当天已有签到记录，不可再请假')
+      return
+    }
+    leaveForm.value.date = date
+    computeLeaveWorkdays() // 新增模式：按已选开始日预计算工作日
+  }
+  showLeaveDlg.value = true
+}
+const submitLeave = async () => {
+  if (!leaveForm.value.leave_type) { ElMessage.warning('请选择类型'); return }
+  if (!leaveForm.value.date) { ElMessage.warning('请选择开始日期'); return }
+  if (!leaveForm.value.date_end) leaveForm.value.date_end = leaveForm.value.date
+  // 多日请假按「应上班的工作日」逐日落库，由后端拆分；此处只传范围与类型
+  if (!editingLeaveId.value && leaveWorkdays.value <= 0) {
+    ElMessage.warning('所选范围内没有需要上班的工作日（周末/法定假不计入），无法生成请假记录')
+    return
+  }
+  leaveLoading.value = true
+  try {
+    if (editingLeaveId.value) {
+      const payload = {
+        leave_type: leaveForm.value.leave_type,
+        subtype: leaveForm.value.subtype || null,
+        date: leaveForm.value.date,
+        reason: leaveForm.value.reason || '',
+      }
+      await updateLeave(editingLeaveId.value, payload)
+      ElMessage.success('请假已更新')
+    } else {
+      const payload = {
+        leave_type: leaveForm.value.leave_type,
+        subtype: leaveForm.value.subtype || null,
+        date: leaveForm.value.date,
+        date_end: leaveForm.value.date_end,
+        reason: leaveForm.value.reason || '',
+      }
+      const res = await createLeave(payload)
+      const n = (res && res.count) || 0
+      const msg = `已记录 ${n} 天请假（按工作日逐日生成）`
+      if (res && res.conflicts?.length) {
+        ElMessage.warning(`${msg}，以下日期因已有签到/请假记录已跳过：${res.conflicts.join('、')}`)
+      } else {
+        ElMessage.success(msg)
+      }
+    }
+    showLeaveDlg.value = false
+    await refreshLeaves()
+  } finally { leaveLoading.value = false }
+}
+const removeLeave = async (lv) => {
+  try {
+    await ElMessageBox.confirm('确定删除该请假记录？', '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  await deleteLeave(lv.id)
+  ElMessage.success('已删除')
+  await refreshLeaves()
+}
+
 // ---- 批量删除签到（日历选日期） ----
 const toggleDeleteBatchMode = () => {
   deleteBatchMode.value = !deleteBatchMode.value
@@ -1258,24 +1543,39 @@ const toggleDeleteBatchMode = () => {
 }
 const confirmBatchDelete = async () => {
   if (!deleteDates.value.length) return
-  // 收集所有选中日期的签到 ID
-  const ids = []
+  // 收集所有选中日期的签到和请假 ID
+  const checkinIds = []
+  const leaveIds = []
   for (const d of deleteDates.value) {
-    const records = checkinsByDate.value[d] || []
-    for (const r of records) ids.push(r.id)
+    const crecs = checkinsByDate.value[d] || []
+    for (const r of crecs) checkinIds.push(r.id)
+    const lrecs = leavesByDate.value[d] || []
+    for (const r of lrecs) leaveIds.push(r.id)
   }
-  if (!ids.length) { ElMessage.warning('未找到可删除的签到记录'); return }
+  const total = checkinIds.length + leaveIds.length
+  if (!total) { ElMessage.warning('未找到可删除的记录'); return }
+  const detail = []
+  if (checkinIds.length) detail.push(`${checkinIds.length} 条签到`)
+  if (leaveIds.length) detail.push(`${leaveIds.length} 条请假`)
   try {
     await ElMessageBox.confirm(
-      `确定删除 ${deleteDates.value.length} 天的共 ${ids.length} 条签到记录？此操作不可恢复。`,
+      `确定删除 ${deleteDates.value.length} 天的共 ${total} 条记录（${detail.join('，')}）？此操作不可恢复。`,
       '确认批量删除',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
-  await batchDeleteCheckins(ids)
-  ElMessage.success(`已删除 ${ids.length} 条签到记录（${deleteDates.value.length} 天）`)
+  const calls = []
+  if (checkinIds.length) calls.push(batchDeleteCheckins(checkinIds))
+  if (leaveIds.length) calls.push(batchDeleteLeaves(leaveIds))
+  await Promise.all(calls)
+  ElMessage.success(`已删除 ${total} 条记录（${deleteDates.value.length} 天）`)
   deleteDates.value = []
-  allCheckins.value = await getAllCheckins({ year: calYear.value, month: calMonth.value })
+  const [newCheckins, newLeaves] = await Promise.all([
+    getAllCheckins({ year: calYear.value, month: calMonth.value }),
+    getLeaves({ year: calYear.value, month: calMonth.value }),
+  ])
+  allCheckins.value = newCheckins
+  allLeaves.value = newLeaves
   loadStatusForDate(selectedDate.value)
 }
 
@@ -1294,8 +1594,9 @@ const onCellClick = (day) => {
     else batchDates.value.push(day.date)
     batchDates.value.sort()
   } else if (deleteBatchMode.value) {
-    // 批量删除模式：仅已有签到的日期可选
-    if (!day.isCurrent || !checkinsByDate.value[day.date]) return
+    // 批量删除模式：已有签到或请假的日期可选
+    const hasAnyRecord = checkinsByDate.value[day.date] || (day.leaveTypes && day.leaveTypes.length)
+    if (!day.isCurrent || !hasAnyRecord) return
     const idx = deleteDates.value.indexOf(day.date)
     if (idx >= 0) deleteDates.value.splice(idx, 1)
     else deleteDates.value.push(day.date)
@@ -1404,6 +1705,25 @@ const submitBatch = async () => {
 .cal-cell-label { position: absolute; bottom: 3px; font-size: 9px; font-weight: 600; line-height: 1; }
 .cal-cell-overtime { color: #d48806; }
 .cal-cell-leave { color: #e67e22; }
+.cal-cell-label.cal-cell-leave-annual { color: #2196f3; }
+.cal-cell-label.cal-cell-leave-compensatory { color: #2196f3; }
+.cal-cell-label.cal-cell-leave-personal { color: #e53935; }
+/* 漏签到缺口：中性灰，与真实请假彩色徽标区分 */
+.cal-cell-label.cal-cell-absence { color: #b0b0b0; font-weight: 500; }
+.cal-leave-annual { color: #2196f3; }
+.cal-leave-comp { color: #2196f3; }
+.cal-leave-personal { color: #e53935; }
+
+.cal-leaves { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.cal-leave-card { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 10px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cal-leave-type { font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 500; }
+.clt-annual { background: #e3f2fd; color: #2196f3; }
+.clt-compensatory { background: #e3f2fd; color: #2196f3; }
+.clt-personal { background: #ffebee; color: #e53935; }
+.cal-leave-sub { font-size: 12px; color: #666; }
+.cal-leave-days { font-size: 12px; color: #333; font-weight: 500; }
+.cal-leave-reason { font-size: 12px; color: #999; flex: 1 1 100%; }
+.cal-leave-actions { margin-left: auto; display: flex; gap: 4px; }
 .cal-cell-badge { position: absolute; top: 1px; right: 2px; font-size: 9px; font-weight: 600; line-height: 1.2; border-radius: 3px; padding: 0 3px; max-width: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cal-cell-badge.cb-holiday { color: #e74c3c; background: #fde8e8; }
 .cal-cell-badge.cb-workday { color: #d48806; background: #fff7e6; }
