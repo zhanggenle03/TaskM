@@ -61,6 +61,14 @@ export const updateCheckin = (id, data) => http.put(`/projects/checkins/${id}`, 
 export const deleteCheckin = (projectId, id) => http.delete(`/projects/${projectId}/checkins/${id}`)
 export const batchDeleteCheckins = (ids) => http.post('/projects/checkins/batch-delete', { ids })
 
+// --- Leaves（请假：年假/调休/请假） ---
+export const getLeaves = (params) => http.get('/leave', { params })
+export const getLeaveWorkdays = (params) => http.get('/leave/workdays', { params })
+export const createLeave = (data) => http.post('/leave', data)
+export const updateLeave = (id, data) => http.put(`/leave/${id}`, data)
+export const deleteLeave = (id) => http.delete(`/leave/${id}`)
+export const batchDeleteLeaves = (ids) => http.post('/leave/batch-delete', { ids })
+
 // --- Tasks ---
 export const getTasks = (projectId, params) => http.get(`/projects/${projectId}/tasks`, { params })
 export const createTask = (projectId, data) => http.post(`/projects/${projectId}/tasks`, data)

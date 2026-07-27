@@ -369,6 +369,25 @@ class HolidayBase(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Leave(Base):
+    """请假记录（年假/调休/请假），与签到独立的真实请假数据。
+
+    与现有"派生请假"（工作日月≤今天无签到=请假）解耦：本表是用户主动录入的请假，
+    日历优先展示本表记录，仅在无本表记录且工作日无签到时才显示"缺口"。
+    """
+    __tablename__ = "leaves"
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=False)                 # 当日（逐日一条，永远是单日，与签到同构）
+    date_end = Column(Date, nullable=True)               # 兼容旧多日记录；逐日记录恒为 NULL
+    leave_type = Column(String(20), nullable=False, default="personal")  # annual|compensatory|personal
+    subtype = Column(String(50), nullable=True)          # 请假子类型（事假/病假…）
+    days = Column(Float, nullable=False, default=1.0)    # 该日请假天数（逐日记录恒为 1.0）
+    reason = Column(Text, nullable=True)
+    status = Column(String(20), nullable=False, default="recorded")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class TagPool(Base):
     """标签池 —— 项目级别的标签定义"""
     __tablename__ = "tag_pools"
