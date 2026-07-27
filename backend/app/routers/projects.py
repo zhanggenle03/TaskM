@@ -3,7 +3,7 @@ import os
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import update
 from typing import List, Optional
-from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
+from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, Leave, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
 from ..holiday_service import get_year, ensure_year_async
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
@@ -332,6 +332,9 @@ def list_all_checkins(
 def create_checkin_global(data: CheckinCreate, db: Session = Depends(get_db)):
     from datetime import date as date_type
     chk_date = date_type.fromisoformat(data.date) if data.date else date_type.today()
+    # 当天已有请假则不可签到
+    if db.query(Leave).filter(Leave.date == chk_date).first():
+        raise HTTPException(status_code=409, detail=f"{chk_date.isoformat()} 当天已有请假记录，不能重复签到")
     chk = Checkin(
         date=chk_date,
         content=data.content,
@@ -369,7 +372,11 @@ def update_checkin(checkin_id: int, data: CheckinCreate, db: Session = Depends(g
     if not chk:
         raise HTTPException(404, "签到记录不存在")
     from datetime import date as date_type
-    chk.date = date_type.fromisoformat(data.date) if data.date else chk.date
+    new_date = date_type.fromisoformat(data.date) if data.date else chk.date
+    # 如果更换了日期，检查新日期是否有请假
+    if new_date != chk.date and db.query(Leave).filter(Leave.date == new_date).first():
+        raise HTTPException(status_code=409, detail=f"{new_date.isoformat()} 当天已有请假记录，不能签���")
+    chk.date = new_date
     chk.content = data.content
     chk.multi_project = data.multi_project
     chk.man_day_reason = data.man_day_reason
