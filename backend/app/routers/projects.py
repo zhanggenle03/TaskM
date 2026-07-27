@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import update
 from typing import List, Optional
 from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
-from ..holiday_service import get_year
+from ..holiday_service import get_year, ensure_year_async
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
     StatusPoolCreate, StatusPoolUpdate, StatusPoolOut,
@@ -160,8 +160,19 @@ def delete_holiday_overrides(dates: List[str], db: Session = Depends(get_db)):
 # ---- 节假日数据（服务端缓存，应用启动即预取） ----
 @router.get("/holidays")
 def get_holidays(year: int):
-    """返回某年法定节假日数据（timor.tech 格式），未缓存时为 null。"""
-    return {"year": year, "holiday": get_year(year)}
+    """返回某年法定节假日数据（timor.tech 格式）。
+
+    读取路径：仅从内存热缓存取，毫秒级返回，绝不在请求线程内联网。
+    若本地缺失：立即返回 null（不阻塞前端），并 fire-and-forget 后台线程补拉，
+    下次请求该年即命中。
+    """
+    data = get_year(year)
+    if data is None:
+        try:
+            ensure_year_async(year)
+        except Exception:
+            pass
+    return {"year": year, "holiday": data}
 
 @router.get("", response_model=List[ProjectOut])
 def list_projects(
