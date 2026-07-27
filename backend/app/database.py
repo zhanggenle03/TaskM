@@ -357,6 +357,18 @@ class HolidayOverride(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class HolidayBase(Base):
+    """节假日基准数据表（timor.tech 来源），作为本地快速读取源。
+
+    读取路径：请求内只从内存热缓存 _CACHE（启动时由本表预热）取，绝不联网。
+    刷新路径：后台线程拉取 timor.tech，与已存数据 diff，有变化才 upsert 本表。
+    """
+    __tablename__ = "holiday_base"
+    year = Column(Integer, primary_key=True)
+    data = Column(Text, nullable=False)            # JSON 字符串：{ 'MM-DD': {...} }
+    fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
 class TagPool(Base):
     """标签池 —— 项目级别的标签定义"""
     __tablename__ = "tag_pools"
