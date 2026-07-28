@@ -1859,9 +1859,18 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
     # 建立列表编号定义（bullet + decimal）
     numbering_part = doc.part.numbering_part
     numbering_elem = numbering_part.element
-    # 使用独立 numId: 70=bullet, 71=decimal（避开99占用）
+    # bullet 使用固定 numId: 70（无序列表无序号，多个列表可共用同一实例）
     _NUM_BULLET = 70
-    _NUM_DECIMAL = 71
+
+    # 计算当前 numbering 已占用的最大 numId，后续每个有序列表分配独立 numId，
+    # 避免多个彼此独立的有序序列在导出 DOCX 时合并为连续编号。
+    _existing_num_ids = [
+        int(n.get(qn('w:numId')))
+        for n in numbering_elem.findall(qn('w:num'))
+        if (n.get(qn('w:numId')) or '').isdigit()
+    ]
+    # 用可变容器在多次渲染（同一文档多个沟通记录）间保持计数唯一
+    _next_ol_num_id = [max(_existing_num_ids) + 1 if _existing_num_ids else 200]
 
     def _setup_list_num(num_id, fmt, text_pattern, start=1, levels=4):
         """为列表建立抽象编号定义，返回 num_id"""
@@ -1895,6 +1904,10 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             ind.set(qn('w:left'), str(480 + ilvl * 480))
             ind.set(qn('w:hanging'), '240')
             lvl.append(ind)
+            # 编号后分隔符：空格（覆盖 Word 默认 tab 制表符）
+            suff = OxmlElement('w:suff')
+            suff.set(qn('w:val'), 'space')
+            lvl.append(suff)
             ab.append(lvl)
         numbering_elem.append(ab)
         num = OxmlElement('w:num')
@@ -1906,7 +1919,8 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
         return num_id
 
     _setup_list_num(_NUM_BULLET, 'bullet', '\u2022', levels=4)    # 实心圆点
-    _setup_list_num(_NUM_DECIMAL, 'decimal', '%1.', levels=4)     # 1. 2. 3.
+    # 注意：有序列表（decimal）不再预创建固定实例，改为每个 <ol> 动态分配独立 numId，
+    # 使多个独立有序序列各自从 1 开始编号，而非连续累加。
 
     class _HtmlRenderer(HTMLParser):
         def __init__(self, doc, img_base_dir=None):
@@ -1923,6 +1937,7 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             self._list_type = None
             self._list_depth = 0
             self._list_num_id = None
+            self._list_stack = []   # 各层级开放列表的 (type, num_id)，用于正确还原嵌套的编号实例
             self._skip_p = False
             self._code_mode = False    # 在 <pre>/<code> 内部
             self._heading_level = None   # 当前标题级别（1-6），None 表示非标题
@@ -2289,11 +2304,15 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 pPr.append(pBdr)
             elif tag in ('ul', 'ol'):
                 if tag == 'ul':
-                    self._list_type = 'ul'
-                    self._list_num_id = _NUM_BULLET
+                    num_id = _NUM_BULLET
                 else:
-                    self._list_type = 'ol'
-                    self._list_num_id = _NUM_DECIMAL
+                    # 每个独立有序列表分配独立 numId + 抽象编号定义，从 1 重新开始
+                    num_id = _next_ol_num_id[0]
+                    _next_ol_num_id[0] += 1
+                    _setup_list_num(num_id, 'decimal', '%1.', levels=4)
+                self._list_type = tag
+                self._list_num_id = num_id
+                self._list_stack.append((tag, num_id))
                 self._list_depth += 1
                 self.stack.append(tag)
             elif tag == 'li':
@@ -2359,11 +2378,16 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 self._bq_cell = None
                 self._pop_stack(tag)
             elif tag in ('ul', 'ol'):
-                if tag == 'ul':
-                    self._list_type = 'ul' if self._has_type_above('ul') else None
+                if self._list_stack and self._list_stack[-1][0] == tag:
+                    self._list_stack.pop()
+                if self._list_stack:
+                    self._list_type = self._list_stack[-1][0]
+                    self._list_num_id = self._list_stack[-1][1]
+                    self._list_depth = len(self._list_stack)
                 else:
-                    self._list_type = 'ol' if self._has_type_above('ol') else None
-                self._list_depth = max(0, self._list_depth - 1)
+                    self._list_type = None
+                    self._list_num_id = None
+                    self._list_depth = 0
                 self._pop_stack(tag)
             elif tag == 'li':
                 self._flush_paragraph()
@@ -2386,14 +2410,6 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 self.stack.pop()
             elif self.stack and isinstance(self.stack[-1], tuple) and self.stack[-1][0] == tag:
                 self.stack.pop()
-
-        def _has_type_above(self, target):
-            for item in reversed(self.stack[:-1]):
-                if item == target:
-                    return True
-                if item == ('ul' if target == 'ol' else 'ol'):
-                    return False
-            return False
 
         def handle_data(self, data):
             if not data.strip() and not self._code_mode:
