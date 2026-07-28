@@ -1648,6 +1648,7 @@ const removeAtt = async (a) => {
 .comm-status { font-size: 12px; color: #666; display: inline-flex; align-items: center; gap: 3px; margin-left: 8px; }
 .comm-arrow { color: #bbb; font-size: 12px; margin: 0 2px; }
 .status-dot-mini { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+.comm-subject { font-size: 15px; font-weight: 600; color: #534ab7; margin: 2px 0 8px; padding-left: 10px; border-left: 3px solid #534ab7; line-height: 1.4; word-break: break-word; }
 .comm-content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
 .comm-content :deep(ul), .comm-content :deep(ol) { padding-left: 24px; margin: 6px 0; }
 .comm-content :deep(img) { max-width: 100%; max-height: 50vh; height: auto; border-radius: 4px; cursor: zoom-in; }
