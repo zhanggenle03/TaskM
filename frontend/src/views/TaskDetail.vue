@@ -98,6 +98,7 @@
                   <el-button size="small" text @click="openEditComm(c)"><el-icon><Edit /></el-icon></el-button>
                   <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
                 </div>
+                <div v-if="c.subject" class="comm-subject">{{ c.subject }}</div>
                 <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染 -->
                 <div class="comm-content" v-if="c.content && !isAutoStatusContent(c)" v-html="renderCommContent(c)" @click="onCommContentClick"></div>
                 <!-- 沟通附件 -->
