@@ -334,6 +334,7 @@ def build_export_data(
             'contacts': comm_contacts,
             'old_status_id': c.old_status_id,
             'new_status_id': c.new_status_id,
+            'subject': c.subject or '',
             'old_status_name': old_status_name,
             'new_status_name': new_status_name,
             'attachments': att_list,
@@ -623,7 +624,11 @@ def generate_export_package(
         record_num = idx + 1
         comm_time = comm['comm_at'].strftime('%Y-%m-%d %H:%M') if comm['comm_at'] else '未知时间'
 
-        h2 = doc.add_heading(f'{comm_time} 记录', level=2)
+        # 二级标题：有主题时用"时间戳 主题"，否则保持"时间戳 记录"
+        if comm['subject'].strip():
+            h2 = doc.add_heading(f'{comm_time} {comm["subject"].strip()}', level=2)
+        else:
+            h2 = doc.add_heading(f'{comm_time} 记录', level=2)
         _apply_numbering(h2, num_id, 1)
 
         if not comm_minimal:

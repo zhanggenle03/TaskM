@@ -167,6 +167,7 @@ class CommunicationCreate(BaseModel):
     contact_ids: List[int] = []
     comm_at: Optional[datetime] = None
     comm_type: str = "note"
+    subject: str = ""
     old_status_id: Optional[int] = None
     new_status_id: Optional[int] = None
 
@@ -175,6 +176,7 @@ class CommunicationUpdate(BaseModel):
     contact_ids: Optional[List[int]] = None
     comm_at: Optional[datetime] = None
     comm_type: Optional[str] = None
+    subject: Optional[str] = None
     old_status_id: Optional[int] = None
     new_status_id: Optional[int] = None
 
@@ -192,6 +194,7 @@ class CommunicationOut(BaseModel):
     old_status_id: Optional[int] = None
     new_status_id: Optional[int] = None
     content: str
+    subject: str = ""
     comm_at: datetime
     comm_type: str
     created_at: datetime

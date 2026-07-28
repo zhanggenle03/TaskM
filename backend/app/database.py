@@ -264,6 +264,7 @@ class Communication(Base):
     old_status_id = Column(Integer, ForeignKey("status_pools.id"), nullable=True)
     new_status_id = Column(Integer, ForeignKey("status_pools.id"), nullable=True)
     content = Column(Text, nullable=False)
+    subject = Column(String(300), default="", nullable=False)  # 沟通主题（导出二级标题用，可空）
     # 与 add_communication 中 datetime.now() 保持一致，统一用本地时间，
     # 避免个别记录走默认 utcnow 差 8 小时，影响按日期筛选沟通记录。
     comm_at = Column(DateTime, default=datetime.now)
@@ -573,6 +574,24 @@ def ensure_tax_adjustment_table(engine):
                 conn.execute(text(ddl))
                 conn.commit()
             print(f"[migrate] tax_adjustments.{col} 列已添加", flush=True)
+
+
+def ensure_communication_subject_column(engine):
+    """幂等迁移：为已存在的 communications 表补充 subject 列。
+
+    全新库由 Base.metadata.create_all 建表时直接带出该列；
+    仅对已存在但缺列的旧库执行 ALTER，保证「老库无损」。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "communications" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("communications")]
+    if "subject" not in cols:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE communications ADD COLUMN subject VARCHAR(300) DEFAULT ''"))
+            conn.commit()
+        print("[migrate] communications.subject 列已添加", flush=True)
 
 
 # ---- 显示ID生成工具函数 ----

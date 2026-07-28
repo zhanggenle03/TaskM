@@ -88,11 +88,12 @@ async def lifespan(app: FastAPI):
 Base.metadata.create_all(bind=engine)
 
 # 幂等迁移：为已存在的 salary_items 表补充 base/rate 列（全新库由 create_all 直接带出）
-from .database import ensure_salary_item_columns, ensure_salary_record_columns, ensure_salary_item_tax_deductible, ensure_tax_adjustment_table
+from .database import ensure_salary_item_columns, ensure_salary_record_columns, ensure_salary_item_tax_deductible, ensure_tax_adjustment_table, ensure_communication_subject_column
 ensure_salary_item_columns(engine)
 ensure_salary_record_columns(engine)
 ensure_salary_item_tax_deductible(engine)
 ensure_tax_adjustment_table(engine)
+ensure_communication_subject_column(engine)
 
 app = FastAPI(title="TaskM API", version="1.0.0", lifespan=lifespan, debug=True)
 

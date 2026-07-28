@@ -235,6 +235,9 @@
           </div>
           <!-- 右：其它设置，一列排下 -->
           <div class="comm-edit-right">
+            <el-form-item label="主题">
+              <el-input v-model="commForm.subject" placeholder="选填，导出时作为沟通记录标题" clearable style="width:100%" maxlength="100" show-word-limit />
+            </el-form-item>
             <el-form-item label="对接人">
               <el-select v-model="commForm.contact_ids" placeholder="选择对接人" multiple clearable style="width:100%">
                 <el-option v-for="c in task?.contacts || []" :key="c.id" :value="c.id" :label="c.name">
@@ -681,7 +684,7 @@ const goRequirement = (req) => {
 const showAddComm = ref(false)
 const commLoading = ref(false)
 const editComm = ref(null)
-const commForm = ref({ content: '', contact_ids: [], comm_type: '', comm_at: null, files: [], old_status_id: null, new_status_id: null })
+const commForm = ref({ content: '', contact_ids: [], comm_type: '', comm_at: null, subject: '', files: [], old_status_id: null, new_status_id: null })
 const pastedFiles = ref([])  // 粘贴或选择的临时文件，提交时一起上传
 // 内联富文本编辑器相关
 const commPendingImages = ref([])  // 新建沟通时编辑器内联图片的待上传队列（保存时回填）
@@ -1279,7 +1282,7 @@ const removeTask = async () => {
 }
 
 const resetCommForm = () => {
-  commForm.value = { content: '', contact_ids: [], comm_type: '', comm_at: null, files: [], old_status_id: null, new_status_id: null }
+  commForm.value = { content: '', contact_ids: [], comm_type: '', comm_at: null, subject: '', files: [], old_status_id: null, new_status_id: null }
   pastedFiles.value = []
   editComm.value = null
   commPendingImages.value = []
@@ -1296,6 +1299,7 @@ const openEditComm = (c) => {
     contact_ids: (c.contacts || []).map(cn => cn.id),
     comm_type: c.comm_type,
     comm_at: c.comm_at,
+    subject: c.subject || '',
     files: [],
     old_status_id: c.old_status_id ?? null,
     new_status_id: c.new_status_id ?? null
@@ -1311,6 +1315,7 @@ const submitComm = async () => {
         content: commForm.value.content,
         contact_ids: commForm.value.contact_ids,
         comm_type: commForm.value.comm_type,
+        subject: commForm.value.subject,
         comm_at: commForm.value.comm_at,
         old_status_id: commForm.value.old_status_id,
         new_status_id: commForm.value.new_status_id
@@ -1320,6 +1325,7 @@ const submitComm = async () => {
         content: commForm.value.content,
         contact_ids: commForm.value.contact_ids,
         comm_type: commForm.value.comm_type,
+        subject: commForm.value.subject,
         comm_at: commForm.value.comm_at,
         old_status_id: commForm.value.old_status_id,
         new_status_id: commForm.value.new_status_id
