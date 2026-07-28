@@ -649,7 +649,8 @@ def generate_export_package(
         # 沟通内容
         # 自动生成的状态变更文本与上方状态行重复，跳过不渲染（#8）
         if not _is_auto_status_text(comm['content'], comm['old_status_id'], comm['new_status_id']):
-            _new_paragraph(doc, '沟通内容：', size=BODY_SIZE, bold=True, before=80)
+            if not comm_minimal:
+                _new_paragraph(doc, '沟通内容：', size=BODY_SIZE, bold=True, before=80)
             if comm['content']:
                 # 富文本内容（如带格式/图片/超链接）复用需求描述的 HTML→DOCX 渲染器（#4）
                 if _looks_like_html(comm['content']):
