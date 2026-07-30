@@ -1968,6 +1968,10 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 self._skip_p = False
                 return
 
+            # 纯空行：仅由 <br> 撑高的空段落（wangEditor 空行写为 <p><br></p>）。
+            # 若把 <br> 当成额外换行，会让「一个空行」在 DOCX 里变成「两行」。
+            # 因此整段内容均为 '\n' 时，只输出一个空白段落即可。
+            is_blank_line = bool(self._p_texts) and all(t[0] == '\n' for t in self._p_texts)
 
             p = (self._bq_cell.add_paragraph() if self._in_bq and self._bq_cell
                  else self.doc.add_paragraph())
@@ -1978,6 +1982,10 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             spacing.set(qn('w:before'), '0')
             spacing.set(qn('w:after'), '0')
             pPr.append(spacing)
+
+            if is_blank_line:
+                self._p_texts = []
+                return
 
             # 列表编号
             if self._list_type and self._list_num_id is not None:
