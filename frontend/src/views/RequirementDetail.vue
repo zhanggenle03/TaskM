@@ -913,6 +913,100 @@ const escapeLinkBoundary = (editor) => {
   return false
 }
 
+// ── 复制清洗 ──
+// 问题：wangEditor 的空白行，粘到 Word/WPS 时会「一行变两行」。根因有两种形态：
+//   1) <p><br></p>                                  —— <br> 撑高，Word 再补一个换行；
+//   2) <p><span data-slate-zero-width>\u200b</span></p>  —— Slate 实时 DOM 里空文本
+//      被包成零宽字符叶子，Word 把零宽字符当成内容，于是空段落+换行=两行。
+// 注意：存储进数据库的 HTML 是干净的 <p><br></p>，但**编辑器实时 DOM** 多为第 2 种
+// （含 data-slate-* 叶子包裹），所以直接网页 Ctrl+C 复制走的是第 2 种结构。
+// 这里拦截编辑器内复制，重构为干净 HTML 写回剪贴板：
+//   纯文本 → 扁平化为「单个 <p style="margin:0"> + <br> 软换行」（内容是 <span> 包裹、样式保留），
+//            空行 = 连续两个 <br>（中间一行空白）。这样 Word 不会给每个 <p> 加段后间距，杜绝翻倍。
+//   含图片/音视频/表格等复杂结构 → 保留段落结构（仅清空白行 + 剥内部属性），避免压进 <br> 变形。
+// 选区在编辑器外(如复制页面 UI 文字) 一律交给浏览器原生逻辑，不影响图片等富复制。
+const _onEditorCopy = (e) => {
+  try {
+    const sel = window.getSelection()
+    if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return
+    const range = sel.getRangeAt(0)
+    const anchor = range.commonAncestorContainer
+    const root = anchor.nodeType === 1 ? anchor : anchor.parentElement
+    if (!root || !root.closest('.w-e-text-container')) return
+
+    const frag = range.cloneContents()
+    const tmp = document.createElement('div')
+    tmp.style.position = 'fixed'
+    tmp.style.left = '-9999px'
+    tmp.style.top = '0'
+    tmp.style.opacity = '0'
+    tmp.style.pointerEvents = 'none'
+    document.body.appendChild(tmp)
+    tmp.appendChild(frag)
+
+    // 判定「空白行」：把零宽字符(\u200b 等)与纯空白都视为空。
+    // Slate 的空段落有两种形态，都会导致粘到 Word 变两行：
+    //   1) <p><br></p>                                  —— <br> 撑高；
+    //   2) <p><span data-slate-zero-width>\u200b</span></p>  —— 零宽字符被 Word 当成内容。
+    // 两种形态的 textContent(剥离零宽后) 都为空。命中即把整块清空为干净的 <p></p>，
+    // 真实换行(上<br>下) 因块内有可见文字会被保留。
+    const isBlank = (s) => !s || s.replace(/[\u200b\u200c\u200d\uFEFF]/g, '').trim() === ''
+
+    // 含图片/音视频/表格等复杂结构时，保留原有段落结构（仅清空白行 + 剥内部属性），
+    // 避免压进 <br> 软换行导致图片/表格变形；纯文本才扁平化为 <br> 换行。
+    const hasComplex = !!tmp.querySelector('img,video,audio,iframe,embed,object,canvas,table')
+
+    let html, text
+    if (hasComplex) {
+      tmp.querySelectorAll('p,div,li,blockquote,h1,h2,h3,h4,h5,h6,pre,td,th').forEach((el) => {
+        if (el.querySelector('img,video,audio,iframe,embed,object,canvas')) return
+        if (isBlank(el.textContent)) { while (el.firstChild) el.removeChild(el.firstChild) }
+      })
+      html = tmp.innerHTML
+      text = tmp.innerText
+    } else {
+      // 纯文本：扁平化为「单个 <p style="margin:0"> + <br> 软换行」，
+      // 避免 Word 给每个 <p> 加段后间距导致「一行变两行」。
+      // 内容行 → 文字<br>；空行 → 多一个 <br>（即 文字<br><br>下一行 = 中间一行空白）。
+      const segs = []
+      const textLines = []
+      tmp.childNodes.forEach((node) => {
+        if (node.nodeType === 1) {
+          if (isBlank(node.textContent)) {
+            segs.push('<br>')
+            textLines.push('')
+          } else {
+            segs.push(node.innerHTML + '<br>')
+            textLines.push(node.textContent.replace(/[\u200b\u200c\u200d\uFEFF]/g, ''))
+          }
+        } else if (node.nodeType === 3) {
+          const t = node.textContent.replace(/[\u200b\u200c\u200d\uFEFF]/g, '')
+          if (t.trim() !== '') {
+            segs.push(t + '<br>')
+            textLines.push(t)
+          }
+        }
+      })
+      // 去掉结尾多余的 <br>，避免末尾多一行空白
+      while (segs.length && segs[segs.length - 1] === '<br>') segs.pop()
+      html = '<p style="margin:0">' + segs.join('') + '</p>'
+      text = textLines.join('\n')
+    }
+
+    // 剥掉 wangEditor 内部属性(data-slate-* / id)，产出干净、跨软件兼容的标准 HTML。
+    // 保留 style/src/href 等真实格式与链接。
+    html = html.replace(/\s(data-slate-[a-z-]+|id)="[^"]*"/g, '')
+
+    const finalText = text || tmp.innerText || ''
+    document.body.removeChild(tmp)
+
+    if (!html) return
+    e.clipboardData.setData('text/html', html)
+    e.clipboardData.setData('text/plain', finalText)
+    e.preventDefault()
+  } catch {}
+}
+
 const onEditorCreated = (editor) => {
   editorRef.value = editor
 
@@ -945,6 +1039,8 @@ const onEditorCreated = (editor) => {
         container.addEventListener('dblclick', onEditorDblClick)
         // 链接点击：只读模式下拦截，补全协议后新标签页打开
         container.addEventListener('click', handleEditorClick)
+        // 复制清洗：剥掉空段落里多余的 <br>，避免粘到 Word 变两行
+        container.addEventListener('copy', _onEditorCopy)
         // selectionchange：光标移动后更新
         document.addEventListener('selectionchange', handleSelectionChange)
       }
@@ -1345,6 +1441,7 @@ onBeforeUnmount(() => {
         container.removeEventListener('mouseup', handleLinkBoundaryClick)
         container.removeEventListener('dblclick', onEditorDblClick)
         container.removeEventListener('click', handleEditorClick)
+        container.removeEventListener('copy', _onEditorCopy)
       }
     } catch {}
     document.removeEventListener('selectionchange', handleSelectionChange)
