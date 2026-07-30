@@ -997,7 +997,8 @@ const handleSelectionChange = () => {
       if (allBq) { for (const el of allBq) { if (el !== bq) el.removeAttribute('data-bq-active') } }
     }
     // 光标移动（方向键/点击/Tab 等）时同样保持可见并保有底部空白
-    ensureCaretVisible()
+    // 仅折叠光标才跟随，选择文字时不强制滚动（避免回弹）
+    if (isCaretCollapsed()) ensureCaretVisible()
   } catch {}
 }
 
@@ -1090,14 +1091,23 @@ const onEditorChange = (editor) => {
   scheduleBuildToc()
   // 编辑态：确保光标不被固定工具栏遮挡，并即时清理已删除的附件文件
   if (isEditing.value) {
-    ensureCaretVisible()
+    if (isCaretCollapsed()) ensureCaretVisible()
     scheduleSyncDeletedFiles()
   }
 }
 
 // ── 光标可见性：固定工具栏遮挡顶部则上滚露出；并始终保持光标下方留有 1.5 行空白 ──
+/** 当前选区是否为折叠光标（即未在选择文字）。用于避免拖拽选词时强制滚动导致回弹 */
+const isCaretCollapsed = () => {
+  const sel = window.getSelection()
+  if (!sel || sel.rangeCount === 0) return true
+  return sel.isCollapsed
+}
 let _caretRaf = null
 const ensureCaretVisible = () => {
+  // 仅编辑态 + 折叠光标时跟随：正在选择文字（拖拽/Shift 扩展选区）期间不强制滚动，
+  // 否则会与浏览器原生选择滚动互相打架，导致光标位置回弹、无法选到屏幕外的文字
+  if (!isEditing.value || !isCaretCollapsed()) return
   // 下一帧再计算：回车后新段落刚插入，需等浏览器完成布局，光标 rect 才准确
   if (_caretRaf) cancelAnimationFrame(_caretRaf)
   _caretRaf = requestAnimationFrame(() => {
