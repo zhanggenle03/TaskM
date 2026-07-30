@@ -252,14 +252,14 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, List } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
-import { Boot, SlateEditor, SlateTransforms, SlateRange } from '@wangeditor/editor'
+import { Boot, DomEditor, SlateEditor, SlateTransforms, SlateRange } from '@wangeditor/editor'
 import {
   getRequirement, updateRequirement, deleteRequirement, deleteRequirementImage,
   getReqCustomFields, getReqStatusPools, getReqPriorityPools,
@@ -340,10 +340,12 @@ class BqColorMenu {
     }
 
     const border = bqBorderColorMap[color] || color
-    const text = (bqEl.textContent || '').trim()
 
-    // 写入持久化存储（JS 变量，Slate 不干涉）
-    bqColorStore[_bqKey(text)] = { color, border }
+    // 以「真实的 slate 节点对象」为键（而非文本/序号）：
+    // 改文字、删除其他引用块、Slate 重渲染都不会改变该节点的身份，
+    // 因此颜色始终归位到正确的引用块，彻底避免「改字失配」「删块移位串色」两类问题。
+    const node = getBqNode(bqEl)
+    if (node) bqColorStore.set(node, { color, border })
 
     // 同时设置 DOM 属性（CSS 属性选择器驱动即时视觉反馈）
     bqEl.setAttribute('data-bq-color', color)
@@ -1360,7 +1362,7 @@ const load = async (id) => {
     // 检测本地未保存草稿（防丢失）：比已保存内容新则提示恢复
     const draft = loadDraft(rId)
     // 切换需求（组件实例复用）：清空上一需求残留的引用块颜色 store，否则会串色
-    Object.keys(bqColorStore).forEach(k => delete bqColorStore[k])
+    bqColorStore = new WeakMap()
     // 先设 descDraft，再设 req，确保编辑器创建时 v-model 已是目标内容
     descDraft.value = desc
     req.value = reqRes
@@ -1448,19 +1450,33 @@ const doSaveTitle = async () => {
 const bqBorderColorMap = Object.fromEntries(BQ_PRESETS.map(p => [p.value, p.border]))
 
 /**
- * 引用块颜色持久化存储：以规范化文本为键，记录 {color, border}。
- * 不依赖 DOM 属性（Slate 会重建 DOM 导致属性丢失），
- * 而是作为独立的 JS 数据源驱动保存/加载/显示。
+ * 引用块颜色持久化存储：以「文档顺序序号」为键，记录 {color, border}。
+ * 不依赖 DOM 属性（Slate 会重建 DOM 导致属性丢失），也不依赖引用块文本内容
+ * （文本编辑后键会失配导致颜色丢失），而是作为独立的 JS 数据源驱动保存/加载/显示。
+ * 序号即 HTML 中 blockquote 出现的先后顺序，编辑文字不会改变序号，因此最稳定。
  */
-const bqColorStore = reactive({})
+/**
+ * 引用块颜色持久化存储：以「真实的 slate 节点对象」为键，记录 { color, border }。
+ * 不使用文本（改字会失配）也不使用文档序号（删块会移位串色），
+ * 而是以 slate 节点对象身份为锚点——它在改字、删兄弟块、重渲染后均保持稳定。
+ * 用 WeakMap 可随节点被销毁自动回收条目，无需手动清理。
+ */
+let bqColorStore = new WeakMap()
 
-/** 规范化文本：去空白 + 零宽字符 + 控制字符，截断为稳定键 */
-const _bqKey = (text) => (text || '')
-  .replace(/[\s\uFEFF\u200B-\u200D\u2060\u200E\u200F]/g, '')
-  .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-  .slice(0, 80)
+/**
+ * 将 DOM blockquote 元素反查为真实的 slate 节点对象。
+ * wangEditor 暴露的 DomEditor.toSlateNode 会返回编辑器树中对应的节点对象本身，
+ * 其身份在重渲染/改字/删块后保持不变，可作为稳定的颜色映射键。
+ */
+const getBqNode = (bqEl) => {
+  try {
+    return DomEditor.toSlateNode(editorRef.value, bqEl)
+  } catch {
+    return null
+  }
+}
 
-/** 将 bqColorStore 的颜色同步到编辑器 DOM 中所有 blockquote（Slate 重建 DOM 后恢复） */
+/** 将 bqColorStore 的颜色按节点身份同步到编辑器 DOM 中对应的 blockquote（Slate 重建 DOM 后恢复） */
 const syncBqColorsToDom = () => {
   if (!editorRef.value) return
   try {
@@ -1469,116 +1485,98 @@ const syncBqColorsToDom = () => {
       document.querySelector('.w-e-text-container [data-slate-editor]') ||
       document.querySelector('.w-e-text-container')
     if (!container) return
-    const bqs = container.querySelectorAll('blockquote')
-    for (const bq of bqs) {
-      const text = (bq.textContent || '').trim()
-      // 精确匹配优先（_bqKey 已清洗零宽字符）
-      let key = _bqKey(text)
-      let entry = bqColorStore[key]
-      // 模糊匹配：查找 store 中以 bq 文本开头或 bq 文本以 store key 开头的项
-      if (!entry && text.length > 3) {
-        for (const [k, v] of Object.entries(bqColorStore)) {
-          if (k.startsWith(key) || key.startsWith(k)) { entry = v; break }
-        }
-      }
-      // 兼容兜底：旧版 store key 可能残留零宽字符，用清洗后的 key 再查一遍
-      if (!entry) {
-        const cleanStoreKey = _bqKey(key)
-        for (const [k, v] of Object.entries(bqColorStore)) {
-          const cleanK = _bqKey(k)
-          if (cleanK === cleanStoreKey || cleanK.startsWith(cleanStoreKey) || cleanStoreKey.startsWith(cleanK)) { entry = v; break }
-        }
-      }
+    container.querySelectorAll('blockquote').forEach((bq) => {
+      const node = getBqNode(bq)
+      // 无法定位节点时保留 DOM 现状，不强行清除（避免瞬时状态误删视觉）
+      if (!node) return
+      const entry = bqColorStore.get(node)
       if (entry) {
         bq.setAttribute('data-bq-color', entry.color)
         bq.setAttribute('data-bq-border', entry.border)
+      } else {
+        // 无颜色记录的引用块清除可能残留的内联颜色属性
+        bq.removeAttribute('data-bq-color')
+        bq.removeAttribute('data-bq-border')
       }
-    }
+    })
   } catch {}
 }
 
 /**
  * 保存前注入引用块颜色到 HTML 字符串。
- * 数据源是 bqColorStore（JS 变量），不依赖编辑器 DOM。
+ * 数据源是 bqColorStore（JS 变量，按 slate 节点对象键），不依赖编辑器 DOM。
  * 同时注入 data-bq-border 供后端导出 DOCX 渲染左侧彩色竖线。
+ *
+ * 保存瞬间按「文档顺序」从当前编辑器 DOM 收集各块颜色，再一一对应注入到
+ * 同一顺序的 HTML 字符串中（保存是瞬时快照，顺序与 DOM 完全一致，安全）。
  */
 const injectBqColorsToHtml = (html) => {
   if (!html || html.indexOf('blockquote') === -1) return html
-  const storeKeys = Object.keys(bqColorStore)
-  if (!storeKeys.length) return html
+
+  // 按文档顺序收集当前编辑器 DOM 中每个 blockquote 的颜色
+  const colorsInOrder = []
+  const container =
+    editorRef.value?.getEditableContainer?.() ||
+    document.querySelector('.w-e-text-container [data-slate-editor]') ||
+    document.querySelector('.w-e-text-container')
+  if (container) {
+    container.querySelectorAll('blockquote').forEach((bq) => {
+      const node = getBqNode(bq)
+      colorsInOrder.push(node ? bqColorStore.get(node) || null : null)
+    })
+  }
 
   const tmpDiv = document.createElement('div')
   tmpDiv.innerHTML = html
   const parsedBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
-  if (!parsedBqs.length) return html
+  if (!parsedBqs.length) return tmpDiv.innerHTML
 
-  for (const bq of parsedBqs) {
-    const text = (bq.textContent || '').trim()
-    const key = _bqKey(text)
-    let entry = bqColorStore[key]
-    // 模糊匹配
-    if (!entry && text.length > 3) {
-      for (const [k, v] of Object.entries(bqColorStore)) {
-        if (k.startsWith(key) || key.startsWith(k)) { entry = v; break }
-      }
-    }
-    // 兼容兜底：旧版 store key 可能残留零宽字符
-    if (!entry) {
-      const cleanStoreKey = _bqKey(key)
-      for (const [k, v] of Object.entries(bqColorStore)) {
-        const cleanK = _bqKey(k)
-        if (cleanK === cleanStoreKey || cleanK.startsWith(cleanStoreKey) || cleanStoreKey.startsWith(cleanK)) { entry = v; break }
-      }
-    }
+  // 按文档顺序一一对应注入
+  parsedBqs.forEach((bq, idx) => {
+    const entry = colorsInOrder[idx]
     if (entry) {
       bq.setAttribute('data-bq-color', entry.color)
       bq.setAttribute('data-bq-border', entry.border)
     }
-  }
-
-  // 传播：未匹配的相邻块继承最近有色块的颜色
-  const resultBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
-  for (let i = 0; i < resultBqs.length; i++) {
-    if (resultBqs[i].hasAttribute('data-bq-color')) {
-      const color = resultBqs[i].getAttribute('data-bq-color')
-      const border = resultBqs[i].getAttribute('data-bq-border')
-      for (let j = i + 1; j < resultBqs.length; j++) {
-        if (resultBqs[j].hasAttribute('data-bq-color')) break
-        resultBqs[j].setAttribute('data-bq-color', color)
-        if (border) resultBqs[j].setAttribute('data-bq-border', border)
-      }
-    }
-  }
-  for (let i = resultBqs.length - 1; i >= 0; i--) {
-    if (resultBqs[i].hasAttribute('data-bq-color')) {
-      const color = resultBqs[i].getAttribute('data-bq-color')
-      const border = resultBqs[i].getAttribute('data-bq-border')
-      for (let j = i - 1; j >= 0; j--) {
-        if (resultBqs[j].hasAttribute('data-bq-color')) break
-        resultBqs[j].setAttribute('data-bq-color', color)
-        if (border) resultBqs[j].setAttribute('data-bq-border', border)
-      }
-    }
-  }
+  })
 
   return tmpDiv.innerHTML
 }
 
 /**
- * 从已保存 HTML 中提取颜色信息填充 bqColorStore 并同步到编辑器 DOM。
+ * 从已保存 HTML 中提取颜色信息，按「文档顺序」映射到当前编辑器 DOM 中对应的
+ * blockquote 节点对象，填充 bqColorStore 并同步到编辑器 DOM。
  * 页面加载/内容重置后调用。
  */
 const restoreBqColors = () => {
   if (!req.value?.description) return
+  // 重置为新的 WeakMap，避免切换需求/重置内容时残留旧块的颜色
+  bqColorStore = new WeakMap()
+
+  // 按文档顺序从已保存 HTML 收集颜色
   const tmpDiv = document.createElement('div')
   tmpDiv.innerHTML = req.value.description
-  const rawBqs = Array.from(tmpDiv.querySelectorAll('blockquote'))
-  for (const bq of rawBqs) {
+  const savedColors = Array.from(tmpDiv.querySelectorAll('blockquote')).map((bq) => {
     const color = bq.getAttribute('data-bq-color')
-    if (!color) continue
-    const text = (bq.textContent || '').trim()
+    if (!color) return null
     const border = bq.getAttribute('data-bq-border') || bqBorderColorMap[color] || color
-    bqColorStore[_bqKey(text)] = { color, border }
+    return { color, border }
+  })
+
+  // 将颜色按文档顺序映射到当前编辑器 DOM 中真实存在的 blockquote 节点对象。
+  // 加载是 1:1 重建，顺序与已保存 HTML 一致，故此处按序对应是安全的；
+  // 之后用户删/改任意块，均因节点身份稳定而互不干扰。
+  const container =
+    editorRef.value?.getEditableContainer?.() ||
+    document.querySelector('.w-e-text-container [data-slate-editor]') ||
+    document.querySelector('.w-e-text-container')
+  if (container) {
+    container.querySelectorAll('blockquote').forEach((bq, idx) => {
+      const entry = savedColors[idx]
+      if (!entry) return
+      const node = getBqNode(bq)
+      if (node) bqColorStore.set(node, entry)
+    })
   }
   syncBqColorsToDom()
 }
