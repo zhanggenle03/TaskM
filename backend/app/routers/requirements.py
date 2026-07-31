@@ -1601,7 +1601,7 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
     from ..database import RequirementStatusPool, RequirementPriorityPool, UPLOAD_DIR
     from ..export_service import (
         _add_run, _new_paragraph, _set_run_font, _set_heading_style,
-        _setup_numbering, _apply_numbering, _set_cell_shading,
+        _setup_numbering, _setup_content_numbering, _apply_numbering, _set_cell_shading,
         _apply_table_widths, _add_h1,
         FONT_FAMILY, FONT_FAMILY_HEADING,
         BODY_SIZE, SMALL_SIZE, HEADING1_SIZE, HEADING2_SIZE, TITLE_SIZE, SUBTITLE_SIZE,
@@ -1638,7 +1638,8 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
     pSpacing.set(qn('w:lineRule'), 'auto')
     pPr.append(pSpacing)
 
-    # 设置标题样式（1-6 级均设为 Word 原生 Heading 样式：黑体、黑色、加粗、公文间距）
+    # 设置标题样式（1-6 级均设为 Word 原生 Heading 样式：黑体、黑色、加粗、单倍行距，
+    # 与任务导出一致；line=240 单倍，避免默认模板 Heading 3+ 蓝色/斜体）
     _heading_sizes = {
         1: HEADING1_SIZE,
         2: HEADING2_SIZE,
@@ -1648,7 +1649,7 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
         6: Pt(10.5),
     }
     for _lv, _sz in _heading_sizes.items():
-        _set_heading_style(doc, _lv, FONT_FAMILY_HEADING, _sz)
+        _set_heading_style(doc, _lv, FONT_FAMILY_HEADING, _sz, line=240)
 
     # 建立自动编号
     num_id = _setup_numbering(doc)
@@ -1699,7 +1700,14 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
     if req.description:
         if not only_description:
             _add_h1(doc, '详细描述', num_id, 0)
-        _render_html_to_docx(doc, req.description, status_pools, priority_pools, img_base_dir=UPLOAD_DIR)
+            # 与任务导出一致：内容标题下移 2 级（h1->Heading3 ...），
+            # 套用独立阿拉伯编号实例（1 / 1.1 / (1)，从 1 开始），编号后空格
+            content_num_id = _setup_content_numbering(doc, 88)
+            _render_html_to_docx(doc, req.description, status_pools, priority_pools,
+                                 img_base_dir=UPLOAD_DIR, comm_content=True, num_id=content_num_id)
+        else:
+            # 仅描述模式：无结构标题包裹，内容标题保留原层级（Heading1/2/3，手动 1/1.1/(1) 标签）
+            _render_html_to_docx(doc, req.description, status_pools, priority_pools, img_base_dir=UPLOAD_DIR)
     elif only_description:
         _new_paragraph(doc, '（该需求暂无详情描述）', size=SMALL_SIZE)
 
@@ -1849,27 +1857,18 @@ def _darken_color(hex_color: str, factor: float = 0.6) -> str:
     except ValueError:
         return '#888888'
 
-def _cn(n):
-    """阿拉伯数字转中文数字（1-99），用于标题一级编号 一、二、三"""
-    if n <= 0:
-        return '0'
-    digits = '零一二三四五六七八九'
-    if n < 10:
-        return digits[n]
-    if n < 20:
-        return '十' + (digits[n % 10] if n % 10 else '')
-    if n < 100:
-        t, o = divmod(n, 10)
-        return digits[t] + '十' + (digits[o] if o else '')
-    return str(n)
 
-
-def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_pools: dict = None, img_base_dir: str = None):
+def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_pools: dict = None,
+                         img_base_dir: str = None, comm_content: bool = False, num_id: int = None):
     """
     将 WangEditor 生成的 HTML 描述渲染到 docx 文档中，
     尽可能复刻 Web 上看到的效果。
     支持：加粗/斜体/下划线/删除线、字体颜色/背景色、引用块、列表、
          代码块、分割线、超链接、换行、图片。
+
+    comm_content=True 时：作为「任务沟通内容」渲染，标题层级下移 2 级
+    （h1->Heading3 / h2->Heading4 / h3->Heading5），并套用文档统一多级
+    编号（num_id），不再手填 一、/1.1/(1)。需求描述渲染保持 comm_content=False。
     """
     from html.parser import HTMLParser
     from docx.shared import RGBColor, Inches, Pt as PtSize
@@ -1943,10 +1942,12 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
     # 使多个独立有序序列各自从 1 开始编号，而非连续累加。
 
     class _HtmlRenderer(HTMLParser):
-        def __init__(self, doc, img_base_dir=None):
+        def __init__(self, doc, img_base_dir=None, comm_content=False, num_id=None):
             super().__init__()
             self.doc = doc
             self.img_base_dir = img_base_dir
+            self._comm_content = comm_content   # 任务沟通内容：标题层级下移 2 级 + 用文档统一编号
+            self._num_id = num_id               # 统一多级编号的 numId（任务文档为 99）
             self.stack = []           # 标签栈
             self._p_texts = []        # 当前段落内 (text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name)
             self._in_bq = False
@@ -2040,10 +2041,10 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             self._p_texts = []
 
         def _heading_label(self, level):
-            """根据当前多级计数器生成标题编号文本：一、/ 1.1 / (n)"""
+            """根据当前多级计数器生成标题编号文本：1 / 1.1 / (n)（与任务导出内容标题编号一致）"""
             c = self._h_counters
             if level == 1:
-                return _cn(c[0]) + '、'
+                return f'{c[0]} '
             if level == 2:
                 return f'{c[0]}.{c[1]} '
             return f'({c[2]}) '
@@ -2053,6 +2054,41 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             if not self._p_texts:
                 self._p_texts = []
                 return
+
+            # ── 任务沟通内容：标题层级下移 2 级，套用独立的阿拉伯编号（1 / 1.1 / (1)） ──
+            if self._comm_content:
+                level = self._heading_level or 3
+                offset_level = min(level + 2, 6)   # h1->Heading3, h2->Heading4, h3->Heading5
+                # 内容编号使用独立实例：h1->内容列表 ilvl0(1), h2->ilvl1(1.1), h3->ilvl2((1))
+                content_ilvl = min(offset_level - 3, 2)
+                # 三四五级（内容）标题统一：小四(12pt) + 单倍行距
+                size = PtSize(12)
+                fn = FONT_FAMILY_HEADING
+                p = self.doc.add_paragraph()
+                try:
+                    p.style = self.doc.styles[f'Heading {offset_level}']
+                except Exception:
+                    pass
+                pPr = p._p.get_or_add_pPr()
+                spacing = OxmlElement('w:spacing')
+                spacing.set(qn('w:before'), '200')
+                spacing.set(qn('w:after'), '120')
+                spacing.set(qn('w:line'), '240')   # 单倍行距
+                spacing.set(qn('w:lineRule'), 'auto')
+                pPr.append(spacing)
+                # 套用本记录独立的阿拉伯编号（由 Word 自动计算 1 / 1.1 / (1)）
+                if self._num_id:
+                    _apply_numbering(p, self._num_id, content_ilvl)
+                for text, bold, italic, underline, strikethrough, color, bg_color, link_url, font_name in self._p_texts:
+                    if link_url:
+                        _add_hyperlink(p, text, link_url, size=size)
+                    else:
+                        run = p.add_run(text)
+                        _set_run_font(run, size=size, bold=True, font_name=fn)
+                self._p_texts = []
+                return
+
+            # ── 需求描述渲染（保持原 一、/1.1/(1) 中文编号逻辑） ──
             level = self._heading_level or 3
             # 更新多级计数器（进入更高级别时重置更深层）
             if level == 1:
@@ -2507,7 +2543,8 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
         if m:
             html = m.group(1)
 
-    renderer = _HtmlRenderer(doc, img_base_dir=img_base_dir)
+    renderer = _HtmlRenderer(doc, img_base_dir=img_base_dir,
+                             comm_content=comm_content, num_id=num_id)
     renderer.feed(html)
     renderer._flush_paragraph()
 

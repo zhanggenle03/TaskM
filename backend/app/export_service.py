@@ -40,6 +40,10 @@ BODY_SIZE = Pt(12)        # 小四
 SMALL_SIZE = Pt(10)       # 五号
 HEADING1_SIZE = Pt(16)    # 三号
 HEADING2_SIZE = Pt(14)    # 四号
+HEADING3_SIZE = Pt(13)    # 小三号
+HEADING4_SIZE = Pt(12)    # 小四号
+HEADING5_SIZE = Pt(11)    # 五号
+HEADING6_SIZE = Pt(10.5)  # 小五号
 TITLE_SIZE = Pt(22)       # 二号
 SUBTITLE_SIZE = Pt(14)    # 四号
 
@@ -149,12 +153,15 @@ def _add_hyperlink(paragraph, text, url, size=Pt(12)):
     return hyperlink
 
 
-def _set_heading_style(doc, level, font_name=FONT_FAMILY_HEADING, size=HEADING1_SIZE):
-    """设置标题样式"""
+def _set_heading_style(doc, level, font_name=FONT_FAMILY_HEADING, size=HEADING1_SIZE, line=360):
+    """设置标题样式（line 为行距：360=1.5 倍，240=单倍，单位 1/240 行）"""
     style = doc.styles[f'Heading {level}']
     style.font.name = font_name
     style.font.size = size
     style.font.bold = True
+    # 显式清除斜体：python-docx 默认模板中 Heading 4/5/6 自带斜体，
+    # 若不覆盖，任务导出里四级标题（内容 h2 -> Heading4）会渲染成斜体
+    style.font.italic = False
     style.font.color.rgb = RGBColor(0, 0, 0)
     style.element.rPr.rFonts.set(qn('w:eastAsia'), font_name)
     # 段落格式
@@ -165,37 +172,54 @@ def _set_heading_style(doc, level, font_name=FONT_FAMILY_HEADING, size=HEADING1_
         pPr.append(spacing)
     spacing.set(qn('w:before'), '200')
     spacing.set(qn('w:after'), '200')
-    spacing.set(qn('w:line'), '360')
+    spacing.set(qn('w:line'), str(line))
     spacing.set(qn('w:lineRule'), 'auto')
+
+
+def _ml(ilvl, fmt, text, start=1, suff='tab'):
+    """构造一个多级编号的 w:lvl 元素。
+
+    按 OOXML CT_Lvl 顺序：start -> numFmt -> suff -> lvlText -> lvlJc。
+    suff 决定编号后的分隔符：tab(默认，Word 会插入制表符) / space(空格) / nothing(无)。
+    注意：lvlText 中 %1 恒指第一级计数、%2 指第二级、%3 指第三级，依此类推；
+          不要用 %1 表示"本级"，否则所有同级标题会显示同一个上级编号。
+    """
+    lvl = OxmlElement('w:lvl')
+    lvl.set(qn('w:ilvl'), str(ilvl))
+    for tag, val in [('start', str(start)), ('numFmt', fmt)]:
+        el = OxmlElement(f'w:{tag}')
+        el.set(qn('w:val'), val)
+        lvl.append(el)
+    suff_el = OxmlElement('w:suff')
+    suff_el.set(qn('w:val'), suff)
+    lvl.append(suff_el)
+    lvlText = OxmlElement('w:lvlText')
+    lvlText.set(qn('w:val'), text)
+    lvl.append(lvlText)
+    jc = OxmlElement('w:lvlJc')
+    jc.set(qn('w:val'), 'left')
+    lvl.append(jc)
+    return lvl
 
 
 def _setup_numbering(doc):
     """
-    在文档中建立多级自动编号定义。
-    一级：1、2、3、...（用于段落标题）
-    二级：1.1、1.2、2.1、...（用于每条沟通记录）
-    返回 numId，供 _apply_numbering 使用。
+    建立任务导出的【结构标题】编号（公文中文风，2 级）：
+      一级（章节）：一、 二、 三、   -> 任务基本信息 / 沟通记录
+      二级（每条记录）： （一） （二） （三） -> 各条沟通记录
+    返回 numId=99，供 _apply_numbering 使用。
     """
     numbering_part = doc.part.numbering_part
     numbering = numbering_part.element
     for n in numbering.findall(qn('w:num')):
         if n.get(qn('w:numId')) == '99':
             return 99
-    def _ml(ilvl, fmt, text, start=1):
-        lvl = OxmlElement('w:lvl')
-        lvl.set(qn('w:ilvl'), str(ilvl))
-        for tag, val in [('start', str(start)), ('numFmt', fmt), ('lvlText', text)]:
-            el = OxmlElement(f'w:{tag}')
-            el.set(qn('w:val'), val)
-            lvl.append(el)
-        jc = OxmlElement('w:lvlJc')
-        jc.set(qn('w:val'), 'left')
-        lvl.append(jc)
-        return lvl
     ab = OxmlElement('w:abstractNum')
     ab.set(qn('w:abstractNumId'), '99')
-    ab.append(_ml(0, 'decimal', '%1、'))
-    ab.append(_ml(1, 'decimal', '%1.%2、'))
+    # 一级：一、后面直接接标题（suff=nothing，顿号即分隔，无制表符）
+    ab.append(_ml(0, 'chineseCounting', '%1、', suff='nothing'))
+    # 二级：%2=本级计数（每个一级标题后从（一）重新开始），编号后接空格（非制表符）
+    ab.append(_ml(1, 'chineseCounting', '（%2）', suff='space'))
     numbering.append(ab)
     num = OxmlElement('w:num')
     num.set(qn('w:numId'), '99')
@@ -204,6 +228,37 @@ def _setup_numbering(doc):
     num.append(ref)
     numbering.append(num)
     return 99
+
+
+def _setup_content_numbering(doc, num_id):
+    """
+    建立任务沟通【内容标题】的独立编号（阿拉伯风，3 级），与结构标题的中文编号分离：
+      一级（内容 h1 -> Heading3）：1
+      二级（内容 h2 -> Heading4）：1.1
+      三级（内容 h3 -> Heading5）：(1)
+    每条沟通记录使用独立实例（num_id 不同），编号从 1 重新开始。
+    返回 num_id。
+    """
+    numbering_part = doc.part.numbering_part
+    numbering = numbering_part.element
+    for n in numbering.findall(qn('w:num')):
+        if n.get(qn('w:numId')) == str(num_id):
+            return num_id
+    ab_id = str(1000 + num_id)
+    ab = OxmlElement('w:abstractNum')
+    ab.set(qn('w:abstractNumId'), ab_id)
+    # 内容标题编号后统一接空格（suff=space，非制表符）；%3 为本级(h3)计数 -> (1)(2)...
+    ab.append(_ml(0, 'decimal', '%1', suff='space'))      # 1
+    ab.append(_ml(1, 'decimal', '%1.%2', suff='space'))   # 1.1
+    ab.append(_ml(2, 'decimal', '(%3)', suff='space'))    # (1)
+    numbering.append(ab)
+    num = OxmlElement('w:num')
+    num.set(qn('w:numId'), str(num_id))
+    ref = OxmlElement('w:abstractNumId')
+    ref.set(qn('w:val'), ab_id)
+    num.append(ref)
+    numbering.append(num)
+    return num_id
 
 
 def _apply_numbering(paragraph, num_id, ilvl):
@@ -557,9 +612,14 @@ def generate_export_package(
     pSpacing.set(qn('w:lineRule'), 'auto')
     pPr.append(pSpacing)
 
-    # 设置标题样式
-    _set_heading_style(doc, 1, FONT_FAMILY_HEADING, HEADING1_SIZE)
-    _set_heading_style(doc, 2, FONT_FAMILY_HEADING, HEADING2_SIZE)
+    # 设置标题样式（1-6 级均设为黑体、黑色、加粗，避免 Word 默认模板中
+    # Heading 3+ 的蓝色/青色；与需求导出（routers/requirements.py）保持一致）
+    # 任务文档标题统一单倍行距（line=240）；需求导出仍用默认 360（1.5 倍）
+    for _lv, _sz in {
+        1: HEADING1_SIZE, 2: HEADING2_SIZE, 3: HEADING3_SIZE,
+        4: HEADING4_SIZE, 5: HEADING5_SIZE, 6: HEADING6_SIZE,
+    }.items():
+        _set_heading_style(doc, _lv, FONT_FAMILY_HEADING, _sz, line=240)
 
     # ---- 封面 ----
     for _ in range(6):
@@ -620,9 +680,16 @@ def generate_export_package(
     h1 = _add_h1(doc, '沟通记录', num_id, 0)
     _new_paragraph(doc, f'共 {len(communications)} 条记录，按时间先后顺序排列。', size=SMALL_SIZE)
 
+    # 内容编号实例分配器：每条记录独立实例（88, 87, 86...），避免与结构编号(99)/列表(70,200+)冲突
+    _content_num_seed = [88]
+
     for idx, comm in enumerate(communications):
         record_num = idx + 1
         comm_time = comm['comm_at'].strftime('%Y-%m-%d %H:%M') if comm['comm_at'] else '未知时间'
+
+        # 每条沟通记录使用独立的内容编号实例（从 1 重新开始），与结构标题的中文编号分离
+        content_num_id = _setup_content_numbering(doc, _content_num_seed[0])
+        _content_num_seed[0] -= 1
 
         # 二级标题：有主题时用"时间戳 主题"，否则保持"时间戳 记录"
         if comm['subject'].strip():
@@ -661,7 +728,11 @@ def generate_export_package(
                 if _looks_like_html(comm['content']):
                     try:
                         from .routers.requirements import _render_html_to_docx
-                        _render_html_to_docx(doc, comm['content'], {}, {}, img_base_dir=UPLOAD_DIR)
+                        # 沟通内容作为 comm_content 渲染：标题层级下移 2 级（h1->Heading3 ...），
+                        # 套用本记录独立的阿拉伯编号实例（content_num_id：1 / 1.1 / (1)），
+                        # 不再手填 一、/1.1/(1)
+                        _render_html_to_docx(doc, comm['content'], {}, {}, img_base_dir=UPLOAD_DIR,
+                                             comm_content=True, num_id=content_num_id)
                     except Exception:
                         for line in comm['content'].split('\n'):
                             if line.strip():
