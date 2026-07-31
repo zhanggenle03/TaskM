@@ -1339,7 +1339,18 @@ const scheduleBuildToc = () => {
 }
 const scrollToHeading = (idx) => {
   const el = _tocEls[idx]
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  if (!el) return
+  const wrapper = el.closest('.editor-wrapper')
+  // 兜底：找不到编辑器滚动容器时才回退 scrollIntoView
+  if (!wrapper) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    return
+  }
+  // 仅滚动编辑器内部容器（.editor-wrapper），页面整体不滑动。
+  // 顶部留白取标题自身 scroll-margin-top（与 CSS 一致，避开 sticky 工具栏），兜底 56
+  const margin = parseFloat(getComputedStyle(el).scrollMarginTop) || 56
+  const target = wrapper.scrollTop + el.getBoundingClientRect().top - wrapper.getBoundingClientRect().top - margin
+  wrapper.scrollTo({ top: Math.max(0, target), behavior: 'smooth' })
 }
 
 // ── 自动草稿（localStorage 防丢失） ──
