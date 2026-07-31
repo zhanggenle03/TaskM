@@ -22,6 +22,7 @@ import { onBeforeUnmount, nextTick, shallowRef, ref } from 'vue'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { ElMessage } from 'element-plus'
 import { uploadCommImage } from '../api'
+import { updateHeadingNumbers } from '../utils/headingNumber'
 
 const props = defineProps({
   initialHtml: { type: String, default: '' },
@@ -89,6 +90,9 @@ const editorConfig = {
     },
   },
 }
+// 标题多级编号逻辑（1/1.1/(1)，与任务导出内容标题编号一致）抽离到共享工具
+// utils/headingNumber，任务沟通编辑器与只读展示（RichContent）共用。
+
 // ⚠️ 注意：editorConfig.onChange 在此库版本中已废弃，使用会抛异常中断编辑。
 // 内容变化同步改为在模板 @onChange 中处理。
 
@@ -102,6 +106,8 @@ const handleCreated = (editor) => {
   } catch (e) {
     console.error('设置编辑器内容失败', e)
   }
+  // 初始内容渲染后重算标题编号（等 DOM 稳定）
+  setTimeout(() => updateHeadingNumbers(editorRef.value?.getEditableContainer?.()), 60)
   // 自动聚焦定位光标（等 DOM 稳定后执行）
   nextTick(() => {
     try { editor.focus() } catch (e) {}
@@ -110,6 +116,8 @@ const handleCreated = (editor) => {
 
 // 内容变化实时回传父组件（HTML + 待上传图片队列），由父组件在提交时统一落库
 const onEditorChange = (editor) => {
+  // 内容变化后重算标题多级编号（写入 data-heading-num，仅显示）
+  updateHeadingNumbers(editorRef.value?.getEditableContainer?.())
   emit('change', editor.getHtml(), pendingImages.value.slice())
 }
 
@@ -164,6 +172,21 @@ onBeforeUnmount(() => {
 .comm-editor-body :deep(.w-e-text-container [data-slate-editor] p) {
   margin: 0;
   line-height: 1.5;
+}
+/* ── 标题多级自动编号（JS 写入 data-heading-num，仅显示，不影响存储的 HTML） ── */
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] h1) {
+  font-size: 18px; font-weight: 700; color: #1f1f1f; margin: 18px 0 8px; scroll-margin-top: 56px;
+}
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] h2) {
+  font-size: 16px; font-weight: 700; color: #1f1f1f; margin: 14px 0 6px; scroll-margin-top: 56px;
+}
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] h3) {
+  font-size: 14px; font-weight: 600; color: #333; margin: 12px 0 4px; scroll-margin-top: 56px;
+}
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] h1)::before,
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] h2)::before,
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] h3)::before {
+  content: attr(data-heading-num); font-weight: 700; margin-right: 2px;
 }
 .comm-editor-body :deep(.w-e-text-placeholder) {
   left: 20px;

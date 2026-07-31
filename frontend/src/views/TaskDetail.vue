@@ -99,8 +99,12 @@
                   <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
                 </div>
                 <div v-if="c.subject" class="comm-subject">{{ c.subject }}</div>
-                <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染 -->
-                <div class="comm-content" v-if="c.content && !isAutoStatusContent(c)" v-html="renderCommContent(c)" @click="onCommContentClick"></div>
+                <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染并加标题多级编号 -->
+                <RichContent
+                  v-if="c.content && !isAutoStatusContent(c)"
+                  :html="renderCommContent(c)"
+                  @click="onCommContentClick"
+                />
                 <!-- 沟通附件 -->
                 <div v-if="c.attachments?.length" class="att-list">
                   <div v-for="a in c.attachments" :key="a.id" class="att-item">
@@ -577,6 +581,7 @@ import {
   uploadCommImage
 } from '../api'
 import CommRichEditor from '../components/CommRichEditor.vue'
+import RichContent from '../components/RichContent.vue'
 
 const route = useRoute()
 const router = useRouter()

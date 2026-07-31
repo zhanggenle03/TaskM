@@ -1301,17 +1301,9 @@ const syncDeletedFiles = () => {
 const tocVisible = ref(false)
 const tocItems = ref([])
 let _tocEls = []
-// 1-99 阿拉伯数字转中文（目录/标题一级编号使用，与后端 _cn 一致）
-const cnNum = (n) => {
-  const d = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九']
-  if (n <= 10) return n === 10 ? '十' : d[n]
-  if (n < 20) return '十' + d[n % 10]
-  const t = Math.floor(n / 10)
-  const o = n % 10
-  return d[t] + '十' + (o ? d[o] : '')
-}
 
-// ── 标题多级编号：遍历编辑器内的 h1/h2/h3，计算「一、/1.1 /(n)」写入 data-heading-num ──
+// ── 标题多级编号：遍历编辑器内的 h1/h2/h3，计算「1/1.1 /(n)」写入 data-heading-num ──
+// 与任务沟通编辑器/导出内容标题编号一致（一级不再是中文「一、」）
 // 存储的 HTML 来自 Slate model，不携带该属性，故不污染数据库；每次渲染后重算即可（与后端 _heading_label 一致）
 const updateHeadingNumbers = (container) => {
   container = container || editorRef.value?.getEditableContainer?.() ||
@@ -1321,7 +1313,7 @@ const updateHeadingNumbers = (container) => {
   let c1 = 0, c2 = 0, c3 = 0
   hs.forEach((el) => {
     const lv = Number(el.tagName[1])
-    if (lv === 1) { c1 += 1; c2 = 0; c3 = 0; el.dataset.headingNum = cnNum(c1) + '、' }
+    if (lv === 1) { c1 += 1; c2 = 0; c3 = 0; el.dataset.headingNum = `${c1} ` }
     else if (lv === 2) { c2 += 1; c3 = 0; el.dataset.headingNum = `${c1}.${c2} ` }
     else { c3 += 1; el.dataset.headingNum = `(${c3}) ` }
   })
