@@ -1606,7 +1606,7 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
         FONT_FAMILY, FONT_FAMILY_HEADING,
         BODY_SIZE, SMALL_SIZE, HEADING1_SIZE, HEADING2_SIZE, TITLE_SIZE, SUBTITLE_SIZE,
     )
-    from docx.shared import Cm
+    from docx.shared import Cm, Pt
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     # 获取池颜色
@@ -1638,9 +1638,17 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
     pSpacing.set(qn('w:lineRule'), 'auto')
     pPr.append(pSpacing)
 
-    # 设置标题样式
-    _set_heading_style(doc, 1, FONT_FAMILY_HEADING, HEADING1_SIZE)
-    _set_heading_style(doc, 2, FONT_FAMILY_HEADING, HEADING2_SIZE)
+    # 设置标题样式（1-6 级均设为 Word 原生 Heading 样式：黑体、黑色、加粗、公文间距）
+    _heading_sizes = {
+        1: HEADING1_SIZE,
+        2: HEADING2_SIZE,
+        3: Pt(13),
+        4: Pt(12),
+        5: Pt(11),
+        6: Pt(10.5),
+    }
+    for _lv, _sz in _heading_sizes.items():
+        _set_heading_style(doc, _lv, FONT_FAMILY_HEADING, _sz)
 
     # 建立自动编号
     num_id = _setup_numbering(doc)
@@ -2062,10 +2070,16 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
             elif level == 2:
                 size = HEADING2_SIZE
             else:
-                size = PtSize(13)
+                size = {3: PtSize(13), 4: PtSize(12), 5: PtSize(11), 6: PtSize(10.5)}.get(level, PtSize(13))
             fn = FONT_FAMILY_HEADING
 
             p = self.doc.add_paragraph()
+            # 应用 Word 原生 Heading 样式（大纲/导航/目录可识别标题层级），
+            # 字体仍由 run 级设置覆盖为公文风格（黑体、加粗、指定字号）
+            try:
+                p.style = self.doc.styles[f'Heading {level}']
+            except Exception:
+                pass
             pPr = p._p.get_or_add_pPr()
             spacing = OxmlElement('w:spacing')
             spacing.set(qn('w:before'), '200')
