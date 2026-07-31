@@ -1590,10 +1590,13 @@ def delete_requirement(
 
 # ── 导出 ────────────────────────────────────────────────
 
-def generate_requirement_doc_bytes(req, proj, db) -> bytes:
+def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False) -> bytes:
     """
     生成需求的 DOCX 文档字节（公文风格），供导出端点和任务导出共用。
     依赖 req.custom_values 已 eager load。
+
+    参数 only_description=True 时仅渲染「详细描述」正文（保留标题层级与富文本样式），
+    跳过封面、基本信息表与自定义字段表，便于只导出需求描述。
     """
     from ..database import RequirementStatusPool, RequirementPriorityPool, UPLOAD_DIR
     from ..export_service import (
@@ -1642,50 +1645,55 @@ def generate_requirement_doc_bytes(req, proj, db) -> bytes:
     # 建立自动编号
     num_id = _setup_numbering(doc)
 
-    # ---- 封面 ----
-    for _ in range(6):
-        _new_paragraph(doc, '', size=BODY_SIZE, alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    # ── 仅导出详情描述：跳过封面、基本信息与自定义字段，直接渲染描述正文 ──
+    if not only_description:
+        # ---- 封面 ----
+        for _ in range(6):
+            _new_paragraph(doc, '', size=BODY_SIZE, alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
-    _new_paragraph(doc, '需求说明文档', size=TITLE_SIZE, bold=True,
-                   font_name=FONT_FAMILY_HEADING, alignment=WD_ALIGN_PARAGRAPH.CENTER,
-                   before=200, after=100)
-    _new_paragraph(doc, req.title or '(无标题)', size=SUBTITLE_SIZE,
-                   font_name=FONT_FAMILY_HEADING, alignment=WD_ALIGN_PARAGRAPH.CENTER,
-                   before=100, after=200)
-    _new_paragraph(doc, '', size=BODY_SIZE)
-    _new_paragraph(doc, f'项目名称：{proj.name}（{proj.display_id}）', size=SMALL_SIZE,
-                   alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _new_paragraph(doc, f'导出日期：{datetime.now().strftime("%Y年%m月%d日")}', size=SMALL_SIZE,
-                   alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _new_paragraph(doc, '需求说明文档', size=TITLE_SIZE, bold=True,
+                       font_name=FONT_FAMILY_HEADING, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                       before=200, after=100)
+        _new_paragraph(doc, req.title or '(无标题)', size=SUBTITLE_SIZE,
+                       font_name=FONT_FAMILY_HEADING, alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                       before=100, after=200)
+        _new_paragraph(doc, '', size=BODY_SIZE)
+        _new_paragraph(doc, f'项目名称：{proj.name}（{proj.display_id}）', size=SMALL_SIZE,
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        _new_paragraph(doc, f'导出日期：{datetime.now().strftime("%Y年%m月%d日")}', size=SMALL_SIZE,
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
-    meta_items = [
-        ("需求名称", req.title or "-"),
-        ("显示ID", req.display_id or "-"),
-        ("状态", STATUS_LABEL_MAP.get(req.status, req.status or "-")),
-        ("优先级", PRIORITY_LABEL_MAP.get(req.priority, req.priority or "-")),
-        ("创建时间", req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "-"),
-        ("更新时间", req.updated_at.strftime("%Y-%m-%d %H:%M") if req.updated_at else "-"),
-    ]
+        meta_items = [
+            ("需求名称", req.title or "-"),
+            ("显示ID", req.display_id or "-"),
+            ("状态", STATUS_LABEL_MAP.get(req.status, req.status or "-")),
+            ("优先级", PRIORITY_LABEL_MAP.get(req.priority, req.priority or "-")),
+            ("创建时间", req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "-"),
+            ("更新时间", req.updated_at.strftime("%Y-%m-%d %H:%M") if req.updated_at else "-"),
+        ]
 
-    # 收集自定义字段
-    custom_items = []
-    if req.custom_values:
-        for cv in req.custom_values:
-            if cv.field and cv.value:
-                custom_items.append((cv.field.field_name, cv.value))
+        # 收集自定义字段
+        custom_items = []
+        if req.custom_values:
+            for cv in req.custom_values:
+                if cv.field and cv.value:
+                    custom_items.append((cv.field.field_name, cv.value))
 
-    _add_h1(doc, '需求基本信息', num_id, 0)
-    _apply_table_widths(doc, meta_items)
+        _add_h1(doc, '需求基本信息', num_id, 0)
+        _apply_table_widths(doc, meta_items)
 
-    if custom_items:
-        doc.add_paragraph()
-        _add_h1(doc, '自定义字段', num_id, 0)
-        _apply_table_widths(doc, custom_items)
+        if custom_items:
+            doc.add_paragraph()
+            _add_h1(doc, '自定义字段', num_id, 0)
+            _apply_table_widths(doc, custom_items)
 
-    # ---- 详细描述 ----
+    # ---- 详细描述（仅导出模式不包裹父级「详细描述」标题，直接渲染以保留原层级）----
     if req.description:
-        _add_h1(doc, '详细描述', num_id, 0)
+        if not only_description:
+            _add_h1(doc, '详细描述', num_id, 0)
         _render_html_to_docx(doc, req.description, status_pools, priority_pools, img_base_dir=UPLOAD_DIR)
+    elif only_description:
+        _new_paragraph(doc, '（该需求暂无详情描述）', size=SMALL_SIZE)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -1696,11 +1704,14 @@ def generate_requirement_doc_bytes(req, proj, db) -> bytes:
 def export_requirement_doc(
     project_id: str,
     requirement_id: str,
+    mode: str = Query('full', description="导出模式：full=完整文档（封面+基本信息+自定义字段+详细描述），description=仅导出详情描述"),
     db: Session = Depends(get_db),
 ):
     """导出需求信息为 ZIP 压缩包（DOCX + 附件文件）"""
     import zipfile
     from ..database import Requirement, RequirementCustomField, RequirementCustomValue
+
+    only_description = (mode == 'description')
 
     proj = resolve_project(db, project_id)
     req = resolve_requirement(db, proj.id, requirement_id)
@@ -1709,13 +1720,14 @@ def export_requirement_doc(
         joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
     ).filter(Requirement.id == req.id).first()
 
-    doc_bytes = generate_requirement_doc_bytes(req, proj, db)
+    doc_bytes = generate_requirement_doc_bytes(req, proj, db, only_description=only_description)
 
     # 创建 ZIP 压缩包
+    mode_tag = '详情描述' if only_description else '需求文档'
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         # 写入 DOCX
-        doc_name = f'{req.title}_需求文档_{datetime.now().strftime("%Y%m%d%H%M%S")}.docx'
+        doc_name = f'{req.title}_{mode_tag}_{datetime.now().strftime("%Y%m%d%H%M%S")}.docx'
         zf.writestr(doc_name, doc_bytes)
 
         # 收集描述中引用的附件文件
@@ -1741,7 +1753,7 @@ def export_requirement_doc(
     zip_bytes = zip_buf.getvalue()
 
     file_ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = f'{req.title}_{file_ts}.zip'
+    filename = f'{req.title}_{mode_tag}_{file_ts}.zip'
     encoded_filename = urllib.parse.quote(filename)
 
     return Response(

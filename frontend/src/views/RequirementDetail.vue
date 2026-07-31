@@ -39,7 +39,7 @@
               {{ saveStatus === 'saving' ? '保存中…' : saveStatus === 'saved' ? '已保存' : '保存失败' }}
             </span>
             <el-button
-              size="small" @click="doExportRequirement" :loading="exportLoading"
+              size="small" @click="showReqExportDialog = true" :loading="exportLoading"
             >
               <el-icon><Download /></el-icon> 导出文档
             </el-button>
@@ -246,6 +246,26 @@
       <template #footer>
         <el-button @click="previewDialog = false">关闭</el-button>
         <el-button type="primary" @click="downloadPreview">下载</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 需求导出文档弹窗 -->
+    <el-dialog
+      v-model="showReqExportDialog"
+      title="导出需求文档"
+      width="480px"
+      @close="resetReqExportDialog"
+    >
+      <div style="margin-bottom:8px;color:#666">请选择导出内容：</div>
+      <el-radio-group v-model="reqExportMode">
+        <el-radio value="full">完整文档（封面 + 基本信息 + 自定义字段 + 详细描述）</el-radio>
+        <el-radio value="description">仅导出详情描述（保留标题层级）</el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="showReqExportDialog = false">取消</el-button>
+        <el-button type="primary" :loading="exportLoading" @click="submitReqExport">
+          <el-icon><Download /></el-icon> 导出
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -865,6 +885,9 @@ const editorRef = shallowRef()
 const isEditing = ref(false)
 const exportLoading = ref(false)
 const hasUnsaved = ref(false)
+// 导出文档弹窗
+const showReqExportDialog = ref(false)
+const reqExportMode = ref('full')
 
 const toolbarConfig = {
   toolbarKeys: [
@@ -1731,11 +1754,11 @@ const doSaveDesc = async () => {
   }
 }
 
-const doExportRequirement = async () => {
+const doExportRequirement = async (mode = 'full') => {
   if (!req.value) return
   exportLoading.value = true
   try {
-    const res = await exportRequirementDoc(projectId.value, req.value.id)
+    const res = await exportRequirementDoc(projectId.value, req.value.id, { mode })
     const blob = new Blob([res.data], { type: 'application/zip' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
@@ -1743,7 +1766,8 @@ const doExportRequirement = async () => {
     const pad = (n) => String(n).padStart(2, '0')
     const now = new Date()
     const ts = `${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`
-    a.download = `${req.value.title}_${ts}.zip`
+    const modeTag = mode === 'description' ? '详情描述' : '需求文档'
+    a.download = `${req.value.title}_${modeTag}_${ts}.zip`
     a.click()
     window.URL.revokeObjectURL(url)
   } catch (e) {
@@ -1751,6 +1775,18 @@ const doExportRequirement = async () => {
   } finally {
     exportLoading.value = false
   }
+}
+
+// 导出弹窗：确认后按所选模式导出
+const submitReqExport = async () => {
+  const mode = reqExportMode.value || 'full'
+  showReqExportDialog.value = false
+  await doExportRequirement(mode)
+}
+
+const resetReqExportDialog = () => {
+  exportLoading.value = false
+  reqExportMode.value = 'full'
 }
 
 // ── 右侧栏快速编辑 ──
