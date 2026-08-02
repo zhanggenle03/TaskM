@@ -1603,7 +1603,7 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
         _add_run, _new_paragraph, _set_run_font, _set_heading_style,
         _setup_numbering, _setup_content_numbering, _apply_numbering, _set_cell_shading,
         _apply_table_widths, _add_h1,
-        FONT_FAMILY, FONT_FAMILY_HEADING,
+        FONT_FAMILY, FONT_FAMILY_HEADING, LATIN_FONT,
         BODY_SIZE, SMALL_SIZE, HEADING1_SIZE, HEADING2_SIZE, TITLE_SIZE, SUBTITLE_SIZE,
     )
     from docx.shared import Cm, Pt
@@ -1629,7 +1629,7 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
 
     # 设置默认样式
     style = doc.styles['Normal']
-    style.font.name = FONT_FAMILY
+    style.font.name = LATIN_FONT
     style.font.size = BODY_SIZE
     style.element.rPr.rFonts.set(qn('w:eastAsia'), FONT_FAMILY)
     pPr = style.element.get_or_add_pPr()

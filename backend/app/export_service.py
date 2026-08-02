@@ -36,6 +36,8 @@ PRIORITY_LABELS = {'low': '低', 'normal': '普通', 'high': '高', 'urgent': '�
 # 公文风格字号常量
 FONT_FAMILY = '仿宋'
 FONT_FAMILY_HEADING = '黑体'
+# 西文（英文/数字）字体：标题与内容统一使用新罗马，中文仍用上述中文字体
+LATIN_FONT = 'Times New Roman'
 BODY_SIZE = Pt(12)        # 小四
 SMALL_SIZE = Pt(10)       # 五号
 HEADING1_SIZE = Pt(16)    # 三号
@@ -56,10 +58,11 @@ def _set_cell_shading(cell, color: str):
 
 
 def _set_run_font(run, size=BODY_SIZE, bold=False, color=None, font_name=FONT_FAMILY):
-    """为 run 设置标准的公文风格字体"""
+    """为 run 设置标准的公文风格字体：西文（英文/数字）统一新罗马，中文用 font_name"""
     run.bold = bold
     run.font.size = size
-    run.font.name = font_name
+    # 西文字体固定为新罗马（w:ascii + w:hAnsi），英文/数字标题与内容统一
+    run.font.name = LATIN_FONT
     if color:
         run.font.color.rgb = color
     # 设置东亚字体
@@ -126,6 +129,8 @@ def _add_hyperlink(paragraph, text, url, size=Pt(12)):
 
     # 字体
     rFonts = OxmlElement('w:rFonts')
+    rFonts.set(qn('w:ascii'), LATIN_FONT)
+    rFonts.set(qn('w:hAnsi'), LATIN_FONT)
     rFonts.set(qn('w:eastAsia'), FONT_FAMILY)
     rPr.append(rFonts)
     # 字号
@@ -154,9 +159,10 @@ def _add_hyperlink(paragraph, text, url, size=Pt(12)):
 
 
 def _set_heading_style(doc, level, font_name=FONT_FAMILY_HEADING, size=HEADING1_SIZE, line=360):
-    """设置标题样式（line 为行距：360=1.5 倍，240=单倍，单位 1/240 行）"""
+    """设置标题样式（line 为行距：360=1.5 倍，240=单倍，单位 1/240 行）。
+    西文（英文/数字）统一新罗马，中文用 font_name（黑体）。"""
     style = doc.styles[f'Heading {level}']
-    style.font.name = font_name
+    style.font.name = LATIN_FONT
     style.font.size = size
     style.font.bold = True
     # 显式清除斜体：python-docx 默认模板中 Heading 4/5/6 自带斜体，
@@ -176,11 +182,13 @@ def _set_heading_style(doc, level, font_name=FONT_FAMILY_HEADING, size=HEADING1_
     spacing.set(qn('w:lineRule'), 'auto')
 
 
-def _ml(ilvl, fmt, text, start=1, suff='tab'):
+def _ml(ilvl, fmt, text, start=1, suff='tab', lvl_font=None, lvl_size_pt=None):
     """构造一个多级编号的 w:lvl 元素。
 
-    按 OOXML CT_Lvl 顺序：start -> numFmt -> suff -> lvlText -> lvlJc。
+    按 OOXML CT_Lvl 顺序：start -> numFmt -> suff -> lvlText -> lvlJc -> rPr。
     suff 决定编号后的分隔符：tab(默认，Word 会插入制表符) / space(空格) / nothing(无)。
+    lvl_font/lvl_size_pt：给序号文本显式设置样式——西文(英文/数字)新罗马 + 中文 lvl_font
+    + 加粗 + 字号，使序号与标题文字保持一致（Word 默认序号用普通字体，不与标题同步）。
     注意：lvlText 中 %1 恒指第一级计数、%2 指第二级、%3 指第三级，依此类推；
           不要用 %1 表示"本级"，否则所有同级标题会显示同一个上级编号。
     """
@@ -199,6 +207,22 @@ def _ml(ilvl, fmt, text, start=1, suff='tab'):
     jc = OxmlElement('w:lvlJc')
     jc.set(qn('w:val'), 'left')
     lvl.append(jc)
+    # 序号文本样式（rPr 位于 lvlJc 之后）
+    if lvl_font and lvl_size_pt:
+        rPr = OxmlElement('w:rPr')
+        rFonts = OxmlElement('w:rFonts')
+        rFonts.set(qn('w:ascii'), LATIN_FONT)
+        rFonts.set(qn('w:hAnsi'), LATIN_FONT)
+        rFonts.set(qn('w:eastAsia'), lvl_font)
+        rPr.append(rFonts)
+        rPr.append(OxmlElement('w:b'))
+        sz = OxmlElement('w:sz')
+        sz.set(qn('w:val'), str(int(lvl_size_pt * 2)))
+        rPr.append(sz)
+        szCs = OxmlElement('w:szCs')
+        szCs.set(qn('w:val'), str(int(lvl_size_pt * 2)))
+        rPr.append(szCs)
+        lvl.append(rPr)
     return lvl
 
 
@@ -217,9 +241,11 @@ def _setup_numbering(doc):
     ab = OxmlElement('w:abstractNum')
     ab.set(qn('w:abstractNumId'), '99')
     # 一级：一、后面直接接标题（suff=nothing，顿号即分隔，无制表符）
-    ab.append(_ml(0, 'chineseCounting', '%1、', suff='nothing'))
+    ab.append(_ml(0, 'chineseCounting', '%1、', suff='nothing',
+                  lvl_font=FONT_FAMILY_HEADING, lvl_size_pt=HEADING1_SIZE.pt))
     # 二级：%2=本级计数（每个一级标题后从（一）重新开始），编号后接空格（非制表符）
-    ab.append(_ml(1, 'chineseCounting', '（%2）', suff='space'))
+    ab.append(_ml(1, 'chineseCounting', '（%2）', suff='space',
+                  lvl_font=FONT_FAMILY_HEADING, lvl_size_pt=HEADING2_SIZE.pt))
     numbering.append(ab)
     num = OxmlElement('w:num')
     num.set(qn('w:numId'), '99')
@@ -248,9 +274,13 @@ def _setup_content_numbering(doc, num_id):
     ab = OxmlElement('w:abstractNum')
     ab.set(qn('w:abstractNumId'), ab_id)
     # 内容标题编号后统一接空格（suff=space，非制表符）；%3 为本级(h3)计数 -> (1)(2)...
-    ab.append(_ml(0, 'decimal', '%1', suff='space'))      # 1
-    ab.append(_ml(1, 'decimal', '%1.%2', suff='space'))   # 1.1
-    ab.append(_ml(2, 'decimal', '(%3)', suff='space'))    # (1)
+    # 序号样式与内容标题一致：黑体 + 小四(12pt) + 加粗 + 西文新罗马
+    ab.append(_ml(0, 'decimal', '%1', suff='space',
+                  lvl_font=FONT_FAMILY_HEADING, lvl_size_pt=BODY_SIZE.pt))      # 1
+    ab.append(_ml(1, 'decimal', '%1.%2', suff='space',
+                  lvl_font=FONT_FAMILY_HEADING, lvl_size_pt=BODY_SIZE.pt))      # 1.1
+    ab.append(_ml(2, 'decimal', '(%3)', suff='space',
+                  lvl_font=FONT_FAMILY_HEADING, lvl_size_pt=BODY_SIZE.pt))      # (1)
     numbering.append(ab)
     num = OxmlElement('w:num')
     num.set(qn('w:numId'), str(num_id))
@@ -602,7 +632,7 @@ def generate_export_package(
 
     # 设置默认样式
     style = doc.styles['Normal']
-    style.font.name = FONT_FAMILY
+    style.font.name = LATIN_FONT
     style.font.size = BODY_SIZE
     style.element.rPr.rFonts.set(qn('w:eastAsia'), FONT_FAMILY)
     # Normal 段落间距
