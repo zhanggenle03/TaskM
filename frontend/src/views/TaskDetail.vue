@@ -1314,6 +1314,12 @@ const openEditComm = (c) => {
 }
 const submitComm = async () => {
   if (isRichEmpty(commForm.value.content)) { ElMessage.warning('内容不能为空'); return }
+  // 变更前后状态相同（如改了"当前"使其与新状态一致）→ 无实际变更，自动转空并提示，
+  // 避免后端整链重建将其判为伪变更后清空，造成"改了没反应"
+  if (commForm.value.new_status_id != null && commForm.value.new_status_id === commForm.value.old_status_id) {
+    ElMessage.info('变更前后状态相同，已按"无状态变更"保存')
+    commForm.value.new_status_id = null
+  }
   commLoading.value = true
   try {
     if (editComm.value) {

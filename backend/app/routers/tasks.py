@@ -257,48 +257,56 @@ def get_kanban_tasks(project_id: str, db: Session = Depends(get_db)):
 
     task_ids = [t.id for t in tasks]
 
-    # ponytail: 批量查每条任务的状态变更时间（最新一条有 new_status_id 的记录）
+    # ponytail: 批量取每条任务的最新沟通记录（按人为设置的 comm_at,id 降序取每组第一条）
     from sqlalchemy import func as sa_func
-    max_subq = db.query(
-        Communication.task_id,
-        sa_func.max(Communication.id).label("max_id")
-    ).filter(
-        Communication.task_id.in_(task_ids),
-        Communication.new_status_id.isnot(None)
-    ).group_by(Communication.task_id).subquery()
+    _rn = sa_func.row_number().over(
+        partition_by=Communication.task_id,
+        order_by=(Communication.comm_at.desc(), Communication.id.desc())
+    ).label("rn")
+    _ranked = db.query(
+        Communication.task_id, Communication.id, _rn
+    ).filter(Communication.task_id.in_(task_ids)).subquery()
+    latest_comm_ids = [r[0] for r in db.query(_ranked.c.id).filter(_ranked.c.rn == 1).all()]
 
-    status_change_comms = db.query(
-        Communication.task_id,
-        Communication.new_status_id,
-        Communication.comm_at
-    ).join(max_subq, Communication.id == max_subq.c.max_id).all()
-
-    status_change_map = {}  # task_id -> {new_status_id, comm_at}
-    for sc in status_change_comms:
-        status_change_map[sc.task_id] = {"new_status_id": sc.new_status_id, "comm_at": sc.comm_at}
-
-    # ponytail: 批量查每条任务的最新沟通记录（含对接人）
-    max_comm_subq = db.query(
-        Communication.task_id,
-        sa_func.max(Communication.id).label("max_id")
-    ).filter(
-        Communication.task_id.in_(task_ids)
-    ).group_by(Communication.task_id).subquery()
-
-    latest_comms = db.query(Communication).join(
-        max_comm_subq,
-        Communication.id == max_comm_subq.c.max_id
+    latest_comms = db.query(Communication).filter(
+        Communication.id.in_(latest_comm_ids)
     ).options(
         joinedload(Communication.communication_contacts)
             .joinedload(CommunicationContact.contact)
     ).all()
+
     comm_contact_map = {}
+    latest_status_map = {}  # task_id -> {old_status_id, new_status_id}
     for c in latest_comms:
+        latest_status_map[c.task_id] = {
+            "old_status_id": c.old_status_id,
+            "new_status_id": c.new_status_id,
+        }
         if c.communication_contacts:
             names = [cc.contact.name for cc in c.communication_contacts if cc.contact]
             comm_contact_map[c.task_id] = "、".join(names) if names else "无"
         else:
             comm_contact_map[c.task_id] = "无"
+
+    # ponytail: 批量查每条任务最后一次"状态变更"的时间（最新一条有 new_status_id 的记录），
+    # 用于看板显示"当前状态持续时长"
+    _rn2 = sa_func.row_number().over(
+        partition_by=Communication.task_id,
+        order_by=(Communication.comm_at.desc(), Communication.id.desc())
+    ).label("rn2")
+    _ranked2 = db.query(
+        Communication.task_id, Communication.new_status_id, Communication.comm_at, _rn2
+    ).filter(
+        Communication.task_id.in_(task_ids),
+        Communication.new_status_id.isnot(None)
+    ).subquery()
+    status_change_comms = db.query(
+        _ranked2.c.task_id, _ranked2.c.new_status_id, _ranked2.c.comm_at
+    ).filter(_ranked2.c.rn2 == 1).all()
+
+    status_change_map = {}  # task_id -> {new_status_id, comm_at}
+    for sc in status_change_comms:
+        status_change_map[sc.task_id] = {"new_status_id": sc.new_status_id, "comm_at": sc.comm_at}
 
     # ponytail: 构建状态名称映射
     all_status_pools = db.query(StatusPool).filter(
@@ -309,9 +317,16 @@ def get_kanban_tasks(project_id: str, db: Session = Depends(get_db)):
     now = datetime.now()
     status_groups = {}
     for t in tasks:
+        # 状态口径与 derive_task_status 一致：最新沟通记录（按人为设置的 comm_at）有 new 用 new，否则沿用 old
+        latest = latest_status_map.get(t.id)
+        if latest is not None:
+            if latest["new_status_id"] is not None:
+                t.status_id = latest["new_status_id"]
+            elif latest["old_status_id"] is not None:
+                t.status_id = latest["old_status_id"]
+        # 状态持续时长：仍以最后一次真正"状态变更"的 comm_at 为准
         sc_info = status_change_map.get(t.id)
         if sc_info:
-            t.status_id = sc_info["new_status_id"]
             hours = (now - sc_info["comm_at"]).total_seconds() / 3600
             days = int(hours // 24)
             hrs = int(hours % 24)
@@ -454,16 +469,24 @@ def update_task(project_id: str, task_id: str, data: TaskUpdate, db: Session = D
         new_pool = db.query(StatusPool).filter(StatusPool.id == status_id).first()
         new_label = new_pool.name if new_pool else ''
 
+        # 状态变更记录必须落在时间线末尾：comm_at 取「时间线最新 comm_at」与 now 的较大者，
+        # 避免存在未来时间沟通时，新状态被判定逻辑忽略（A2 修复）。
+        latest_comm = db.query(Communication.comm_at).filter(
+            Communication.task_id == task.id
+        ).order_by(Communication.comm_at.desc(), Communication.id.desc()).first()
+        latest_comm_at = latest_comm[0] if latest_comm else None
+        comm_at = latest_comm_at if (latest_comm_at and latest_comm_at > datetime.now()) else datetime.now()
+
         comm = Communication(
             task_id=task.id,
             content=f"状态变更：{old_label or '未设置'} → {new_label}",
-            comm_at=datetime.now(),
+            comm_at=comm_at,
             comm_type=_get_comm_type_name(db, proj.id),
             old_status_id=current_status,
             new_status_id=status_id
         )
         db.add(comm)
-        task.status_id = status_id
+        # 状态写回交给 sync_task_status（整链重建）统一处理，不直接改字段，避免破坏链起点锚定
 
     if tag_ids is not None:
         db.query(TaskTag).filter(TaskTag.task_id == task.id).delete()
@@ -471,12 +494,10 @@ def update_task(project_id: str, task_id: str, data: TaskUpdate, db: Session = D
             db.add(TaskTag(task_id=task.id, tag_id=tid))
 
     db.commit()
-    touch_project(db, proj.id)
+    # 状态写回统一走整链重建（reconcile），替代"直接改字段 + derive 回写"
+    sync_task_status(db, task.id)
     db.refresh(task)
-
-    derived = derive_task_status(db, task.id)
-    if derived is not None:
-        task.status_id = derived
+    touch_project(db, proj.id)
     return task
 
 
@@ -619,18 +640,16 @@ def add_communication(project_id: str, task_id: str, data: CommunicationCreate, 
     contact_ids = comm_data.pop("contact_ids", [])
     comm = Communication(task_id=task.id, **comm_data)
     db.add(comm)
-
-    new_status = comm_data.get("new_status_id")
-    if new_status is not None:
-        if task:
-            task.status_id = new_status
-
     db.commit()
 
     for cid in contact_ids:
         cc = CommunicationContact(communication_id=comm.id, contact_id=cid)
         db.add(cc)
     db.commit()
+
+    # 状态统一走推导：最新沟通记录（按人为设置的 comm_at）有 new 用 new，否则沿用 old。
+    # 不再无条件 task.status_id = new_status，避免 comm_at 设为过去时把状态错改成历史状态。
+    sync_task_status(db, task.id)
     db.refresh(comm)
     touch_project(db, proj.id)
     return comm
@@ -643,23 +662,14 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
     comm = db.query(Communication).filter(Communication.id == comm_id, Communication.task_id == task.id).first()
     if not comm:
         raise HTTPException(404, "沟通记录不存在")
-    # ========== 检测状态字段变化（含 null） ==========
-    raw_data = data.model_dump()
-    comm_data = {k: v for k, v in raw_data.items() if v is not None}
+    raw_data = data.model_dump(exclude_unset=True)   # 仅前端实际提交的字段
+    comm_data = dict(raw_data)                        # 保留 None：显式传 null 表示清空 old/new
     contact_ids = comm_data.pop("contact_ids", None)
-
-    old_status_changed = "old_status_id" in raw_data and raw_data["old_status_id"] != comm.old_status_id
-    new_status_changed = "new_status_id" in raw_data and raw_data["new_status_id"] != comm.new_status_id
-    new_old_value = raw_data.get("old_status_id") if old_status_changed else None
-    new_new_value = raw_data.get("new_status_id") if new_status_changed else None
-    # 记录当前 comm 的原始类型（在 setattr 之前判断）
-    was_no_change = comm.new_status_id is None or comm.new_status_id == comm.old_status_id
-
-    # ========== 先获取时间线（按 (comm_at, id) 排序），定位当前索引 ==========
-    all_comms = db.query(Communication).filter(
-        Communication.task_id == task.id
-    ).order_by(Communication.comm_at, Communication.id).all()
-    idx = next((i for i, c in enumerate(all_comms) if c.id == comm.id), None)
+    # 用户本次显式提交了状态字段 → 该记录为"权威"，old/new 字段绝不被衔接修正覆盖
+    if 'old_status_id' in raw_data or 'new_status_id' in raw_data:
+        auth_ids = {comm.id}
+    else:
+        auth_ids = None
 
     # ========== 保存旧 content，用于后续孤儿文件清理 ==========
     old_content = comm.content or ''
@@ -678,48 +688,11 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
             cc = CommunicationContact(communication_id=comm.id, contact_id=cid)
             db.add(cc)
 
-    # ========== 重新按时间排序（comm_at 可能已变），重新定位索引 ==========
-    all_comms.sort(key=lambda c: (c.comm_at, c.id))
-    idx = next((i for i, c in enumerate(all_comms) if c.id == comm.id), None)
-
-    # ========== 辅助函数 ==========
-    def _is_change(r):
-        """有状态变更：new IS NOT NULL 且 old != new"""
-        return r.new_status_id is not None and r.new_status_id != r.old_status_id
-
-    def _forward(comms, start, val):
-        """往前传播（到更早的记录）：
-        无变更 → 改 old，继续
-        有变更 → 改 new，停止"""
-        for j in range(start, -1, -1):
-            c = comms[j]
-            if _is_change(c):
-                c.new_status_id = val
-                break
-            c.old_status_id = val
-
-    def _backward(comms, start, val):
-        """往后传播（到更晚的记录）：
-        统一改 old，无变更继续，有变更停止"""
-        for j in range(start, len(comms)):
-            c = comms[j]
-            if _is_change(c):
-                c.old_status_id = val
-                break
-            c.old_status_id = val
-
-    # ========== 状态链一致性同步 ==========
-    # old 变了 → 往前传播
-    if old_status_changed and new_old_value is not None and idx is not None:
-        _forward(all_comms, idx - 1, new_old_value)
-
-    # new 变了 → 往后传播
-    if new_status_changed and new_new_value is not None and idx is not None:
-        _backward(all_comms, idx + 1, new_new_value)
-
-    # 无状态变更记录只改了 old：effective_new = old 也变了，后面也要同步
-    if was_no_change and old_status_changed and not new_status_changed and new_old_value is not None and idx is not None:
-        _backward(all_comms, idx + 1, new_old_value)
+    # 伪变更保护标记：用户编辑后若 new==old 则标记，后续 reconcile 永远不清其 new
+    if comm.new_status_id is not None and comm.new_status_id == comm.old_status_id:
+        comm.protected_fake = True
+    else:
+        comm.protected_fake = False
 
     # ========== 清理孤立的沟通内联图片 ==========
     new_content = comm.content or ''
@@ -750,7 +723,8 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
             db.delete(att)
 
     db.commit()
-    sync_task_status(db, task.id)
+    # 状态链整链重建：保证相邻变更记录 old→new 衔接，权威记录字段不被覆盖。
+    sync_task_status(db, task.id, authoritative_ids=auth_ids)
     db.refresh(comm)
     touch_project(db, proj.id)
     return comm

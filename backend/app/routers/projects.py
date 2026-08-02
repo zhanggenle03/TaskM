@@ -3,7 +3,7 @@ import os
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import update
 from typing import List, Optional
-from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, Leave, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, UPLOAD_DIR, CONFIG_DIR
+from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, Leave, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, reconcile_task_status, UPLOAD_DIR, CONFIG_DIR
 from ..holiday_service import get_year, ensure_year_async
 from ..schemas import (
     ProjectCreate, ProjectUpdate, ProjectOut,
@@ -83,8 +83,14 @@ def _count_status_refs(db: Session, status_id: int) -> dict:
     }
 
 
-def _clear_status_refs(db: Session, status_id: int, project_id: int):
-    """清理状态引用（设为默认状态）"""
+def _clear_status_refs(db: Session, status_id: int, project_id: int) -> list:
+    """
+    清理状态引用（2026-07-31 重构）：
+    - 任务当前状态（Task.status_id）→ 回落项目默认状态（"当前状态"需要即时兜底）；
+    - 沟通记录里的 old/new 引用 → 置 NULL（**不再替换为默认状态**，避免静默篡改历史链），
+      由调用方对受影响任务逐个执行整链重建（reconcile）重接。
+    返回受影响的任务 id 列表。
+    """
     # 查找项目默认状态
     default_status = db.query(StatusPool).filter(
         StatusPool.project_id == project_id,
@@ -92,9 +98,28 @@ def _clear_status_refs(db: Session, status_id: int, project_id: int):
         StatusPool.id != status_id,
     ).first()
     default_id = default_status.id if default_status else None
-    db.query(Task).filter(Task.status_id == status_id).update({Task.status_id: default_id}, synchronize_session=False)
-    db.query(Communication).filter(Communication.old_status_id == status_id).update({Communication.old_status_id: default_id}, synchronize_session=False)
-    db.query(Communication).filter(Communication.new_status_id == status_id).update({Communication.new_status_id: default_id}, synchronize_session=False)
+
+    # 收集受影响任务：沟通记录引用该状态的 + 字段当前为该状态的
+    affected = set()
+    rows = db.query(Communication.task_id).filter(
+        (Communication.old_status_id == status_id) | (Communication.new_status_id == status_id)
+    ).all()
+    for (tid,) in rows:
+        affected.add(tid)
+    rows = db.query(Task.id).filter(Task.status_id == status_id, Task.project_id == project_id).all()
+    for (tid,) in rows:
+        affected.add(tid)
+
+    db.query(Task).filter(Task.status_id == status_id, Task.project_id == project_id).update(
+        {Task.status_id: default_id}, synchronize_session=False
+    )
+    db.query(Communication).filter(Communication.old_status_id == status_id).update(
+        {Communication.old_status_id: None}, synchronize_session=False
+    )
+    db.query(Communication).filter(Communication.new_status_id == status_id).update(
+        {Communication.new_status_id: None}, synchronize_session=False
+    )
+    return list(affected)
 
 
 def _count_comm_type_refs(db: Session, type_name: str) -> dict:
@@ -513,9 +538,12 @@ def delete_status(project_id: str, status_id: int, force: bool = False, confirme
         real_refs = {k: v for k, v in refs.items() if v > 0}
         if real_refs and not confirmed:
             raise HTTPException(409, detail={"message": "有数据引用该状态", "refs": real_refs})
-        _clear_status_refs(db, status_id, proj.id)
+        affected = _clear_status_refs(db, status_id, proj.id)
         db.delete(status)
         db.commit()
+        # 沟通记录引用已置空，受影响任务的状态链整链重建重接
+        for tid in affected:
+            reconcile_task_status(db, tid)
         touch_project(db, proj.id)
         return {"ok": True, "refs_cleaned": real_refs}
     status.is_active = False

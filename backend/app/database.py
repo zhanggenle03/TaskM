@@ -49,37 +49,195 @@ def touch_project(db, project_id):
     db.commit()
 
 
+def reconcile_task_status(db, task_id, authoritative_ids=None):
+    """
+    整链重建（2026-08-01 v4：权威延展+衔接修正）。
+
+    按 (comm_at, id) 升序遍历该任务全部沟通记录，保证相邻真变更记录的 old→new 衔接，
+    最终状态写回 Task.status_id。
+
+    原则：
+    - authoritative_ids 中的记录为"用户本次编辑的记录"：old/new 字段绝不被衔接修正覆盖；
+      其中权威伪变更（new == old）视为"用户显式声明状态"，推进 current 到 new（解决"改了没反应"）。
+    - 非权威真变更（new ≠ old）：old 与 current 不符 → 修正 old = current（保证链衔接）；
+      修正前预测是否会变伪变：若修正后 old == new，跳过修正保留原貌（避免毁掉真实状态记录）。
+    - 非权威伪变更（new == old）：清 new（数据矛盾兜底；前端提交时已提示并自动转空）。
+    - **无变更带 old 记录的权威延展（v4 修复"修改中间无状态变更的纯文字记录后前后不连续"，v4.1 覆盖无new权威，v4.4 延伸到最近真变更）**：
+      权威记录前后的"无变更带 old"记录做衔接，不跨真变更——若路径上有非权威真变更，
+      衔接最近真变更的 old(记录在真变更前)/new(记录在真变更后)；无障碍则直接衔接权威。
+
+    触发于 update_task / add_communication / update_communication / delete_communication /
+    状态池硬删后对受影响任务的重接。update_communication 传入本次编辑的 comm.id 作权威。
+    返回最终状态；任务不存在返回 None。
+    """
+    task = db.query(Task).filter(Task.id == task_id).first()
+    if not task:
+        return None
+    comms = db.query(Communication).filter(
+        Communication.task_id == task_id
+    ).order_by(Communication.comm_at, Communication.id).all()
+
+    auth = authoritative_ids or set()
+
+    # === 第一遍：识别权威区段，预先衔接权威前后的"无变更带 old"记录 ===
+    # 收集"权威延展目标值"
+    # - 真变：anchor_old=权威 old(可空)、tail_new=权威 new
+    # - 伪变：anchor_old=权威 new(伪变 old==new)、tail_new=权威 new
+    # - 无变更(只有 old 无 new)：anchor_old=权威 old、tail_new=权威 old（前后统一锚定到同一状态）
+    auth_targets = {}  # idx -> (anchor_old_for_prev, tail_new_for_next)
+    for i, c in enumerate(comms):
+        if c.id not in auth:
+            continue
+        if c.new_status_id is None and c.old_status_id is None:
+            continue  # 权威纯文字(两字段都空)不延展
+        if c.new_status_id is None:
+            # 权威无变更(只有 old 无 new)：前后都按 old（v4.1 修复：只改 old 不改 new 导致链断）
+            auth_targets[i] = (c.old_status_id, c.old_status_id)
+        elif c.new_status_id == c.old_status_id:
+            # 权威伪变：前后都按 new
+            auth_targets[i] = (c.new_status_id, c.new_status_id)
+        else:
+            # 权威真变：前按 old、后按 new（old 为空时退回 current，延展时跳过）
+            auth_targets[i] = (c.old_status_id, c.new_status_id)
+
+    # 找出每条记录"前/后最近权威索引"——权威的"影响方向"决定衔接值
+    # auth_after[i]: i 之后最近的权威(i 早于该权威)→ 衔接权威 old(i 是权威前的记录)
+    # auth_before[i]: i 之前最近的权威(i 晚于该权威)→ 衔接权威 new(i 是权威后的记录)
+    auth_indices = sorted(auth_targets.keys())
+    auth_after = {}
+    auth_before = {}
+    if auth_indices:
+        for i in range(len(comms)):
+            after_list = [a for a in auth_indices if a > i]
+            before_list = [a for a in auth_indices if a < i]
+            auth_after[i] = after_list[0] if after_list else None
+            auth_before[i] = before_list[-1] if before_list else None
+
+        # 对"无变更带 old"记录做衔接（v4.4：延伸到最近真变更，而非放弃）
+        # 每条无变更带old记录衔接它前后"最近的链状态"——优先权威，若被真变更阻断则衔接该真变更
+        for i, c in enumerate(comms):
+            if c.id in auth:
+                continue
+            if c.new_status_id is not None:
+                continue
+            if c.old_status_id is None:
+                continue
+            ba = auth_before.get(i)
+            af = auth_after.get(i)
+            target = None
+
+            # 决定方向（优先距离更近的权威）
+            use_ba = None
+            if ba is not None and af is not None:
+                use_ba = (i - ba) <= (af - i)
+            elif ba is not None:
+                use_ba = True
+            elif af is not None:
+                use_ba = False
+            else:
+                continue  # 无权威，不处理
+
+            if use_ba:
+                # 权威在之前，记录在权威之后——找"权威到记录之间最后一条真变更(非权威)"的 new
+                # 若无真变更则直接用权威的 tail_new
+                found = None
+                for prev in reversed(comms[(ba + 1):i]):
+                    if prev.new_status_id is not None and prev.new_status_id != prev.old_status_id and prev.id not in auth:
+                        found = prev
+                        break
+                if found is not None:
+                    target = found.new_status_id
+                else:
+                    target = auth_targets[ba][1]
+            else:
+                # 权威在之后，记录在权威之前——找"记录到权威之间第一条真变更(非权威)"的 old
+                # 若无真变更则直接用权威的 anchor_old
+                found = None
+                for mid in comms[(i + 1):af]:
+                    if mid.new_status_id is not None and mid.new_status_id != mid.old_status_id and mid.id not in auth:
+                        found = mid
+                        break
+                if found is not None:
+                    target = found.old_status_id
+                else:
+                    target = auth_targets[af][0]
+
+            if target is not None and c.old_status_id != target:
+                c.old_status_id = target
+
+    # === 第二遍：计算 current（权威锚定 + 真变更/伪变更/非权威衔接；v4.2 权威反向修正） ===
+    current = task.status_id
+    anchor_set = False
+
+    def _reverse_fix_prev_new(idx, new_current):
+        """权威 current 改变后，反向修正前面最近一条非权威真变更的 new 值"""
+        for prev in reversed(comms[:idx]):
+            if prev.new_status_id is not None and prev.new_status_id != prev.old_status_id:
+                if prev.id not in auth and prev.new_status_id != new_current:
+                    prev.new_status_id = new_current
+                break  # 只修正最近一条真变更
+
+    for i, c in enumerate(comms):
+        if c.new_status_id is not None:
+            if c.new_status_id != c.old_status_id:
+                # 真变更
+                if c.id in auth:
+                    if c.old_status_id is not None:
+                        if current != c.old_status_id:
+                            _reverse_fix_prev_new(i, c.old_status_id)
+                        current = c.old_status_id
+                    anchor_set = True
+                elif not anchor_set:
+                    if c.old_status_id is not None:
+                        current = c.old_status_id
+                    anchor_set = True
+                elif c.old_status_id is not None and c.old_status_id != current:
+                    if current != c.new_status_id:
+                        c.old_status_id = current
+                elif c.old_status_id is None:
+                    c.old_status_id = current
+                current = c.new_status_id
+            else:
+                # 伪变更（new == old）
+                if c.id in auth or c.protected_fake:
+                    if current != c.new_status_id:
+                        _reverse_fix_prev_new(i, c.new_status_id)
+                    current = c.new_status_id
+                    anchor_set = True
+                else:
+                    c.new_status_id = None
+        elif c.id in auth and c.old_status_id is not None:
+            # 权威无变更（只有 old 无 new，v4.1）：以权威 old 重锚起点
+            if current != c.old_status_id:
+                _reverse_fix_prev_new(i, c.old_status_id)
+            current = c.old_status_id
+            anchor_set = True
+
+    task.status_id = current
+    db.commit()
+    return current
+
+
 def derive_task_status(db, task_id):
     """
-    从沟通记录推导任务的最终状态。
-    逻辑：遍历所有沟通记录，找到最后一条有 new_status_id 的记录，
-    该记录的 new_status_id 即为任务当前状态。
-    如果没有任何状态变更记录，返回 None。
+    从沟通记录推导任务的最终状态（只读）。
+    逻辑：以人为设置的沟通时间(comm_at)为准，取最新一条沟通记录：
+    - 该记录发生了状态变更（new_status_id 非空）→ 当前状态即 new_status_id；
+    - 否则（未发生状态变更）→ 当前状态沿用其 old_status_id；
+    - 最新记录无任何状态信息（纯文字记录）→ 返回 None，由调用方回退 Task.status_id 字段。
+    说明：链由 reconcile_task_status 保证自洽后，本结果与字段一致。
     """
-    last_comm = db.query(Communication.new_status_id).filter(
-        Communication.task_id == task_id,
-        Communication.new_status_id.isnot(None)
-    ).order_by(Communication.id.desc()).first()
-    return last_comm[0] if last_comm else None
+    last_comm = db.query(Communication.old_status_id, Communication.new_status_id).filter(
+        Communication.task_id == task_id
+    ).order_by(Communication.comm_at.desc(), Communication.id.desc()).first()
+    if not last_comm:
+        return None
+    if last_comm.new_status_id is not None:
+        return last_comm.new_status_id
+    return last_comm.old_status_id
 
 
-def sync_task_status(db, task_id):
-    """
-    根据沟通记录推导出正确的 status_id，写回 Task 表并 commit。
-    如果没有沟通记录涉及状态变更，保留现有 status_id 不变。
-    返回最终的 status_id。
-    """
-    derived = derive_task_status(db, task_id)
-    if derived is not None:
-        db.query(Task).filter(Task.id == task_id).update(
-            {"status_id": derived},
-            synchronize_session=False
-        )
-        db.commit()
-        return derived
-    # 无状态变更记录 → 保留现有 status_id 不变
-    task = db.query(Task.status_id).filter(Task.id == task_id).first()
-    return task[0] if task else None
+sync_task_status = reconcile_task_status  # 兼容旧调用点：状态同步统一走整链重建
 
 
 def cleanup_comm_files(project_display_id, task_display_id, comm_id):
@@ -270,6 +428,10 @@ class Communication(Base):
     comm_at = Column(DateTime, default=datetime.now)
     comm_type = Column(String(50), default="note")  # note/meeting/email/call
     created_at = Column(DateTime, default=datetime.now)
+    # 用户编辑沟通时显式设置了"新状态"等于"旧状态"（即 new==old）会被标记为 True，
+    # 代表"用户显式声明任务状态=此值"。后续 reconcile 看到此标记不清除 new、推进 current，
+    # 保护用户编辑意图不被后续删除等操作撤销（2026-08-01）。
+    protected_fake = Column(Boolean, default=False, nullable=False)
 
     task = relationship("Task", back_populates="communications")
     contact = relationship("Contact", foreign_keys=[contact_id])
@@ -592,6 +754,23 @@ def ensure_communication_subject_column(engine):
             conn.execute(text("ALTER TABLE communications ADD COLUMN subject VARCHAR(300) DEFAULT ''"))
             conn.commit()
         print("[migrate] communications.subject 列已添加", flush=True)
+
+
+def ensure_communication_protected_fake_column(engine):
+    """幂等迁移：为已存在的 communications 表补充 protected_fake 列。
+
+    标记用户显式设置的"伪变更"记录（new==old 表示"确认状态=X"），使后续 reconcile 永远不清其 new。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "communications" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("communications")]
+    if "protected_fake" not in cols:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE communications ADD COLUMN protected_fake BOOLEAN DEFAULT 0 NOT NULL"))
+            conn.commit()
+        print("[migrate] communications.protected_fake 列已添加", flush=True)
 
 
 # ---- 显示ID生成工具函数 ----
