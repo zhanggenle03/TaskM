@@ -245,7 +245,7 @@ function formatTime(t) {
 </script>
 
 <style scoped>
-.slip-body { display: flex; gap: 16px; height: 100%; min-height: 0; }
+.slip-body { display: flex; gap: 16px; height: 100%; min-width: 0; min-height: 0; }
 
 /* 左侧预览区 */
 .slip-preview {
@@ -298,6 +298,10 @@ function formatTime(t) {
 /* 右侧操作区 */
 .slip-side {
   flex: 0 0 230px;
+  width: 230px;
+  min-width: 0;
+  max-width: 230px;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -308,6 +312,7 @@ function formatTime(t) {
   padding-bottom: 8px; border-bottom: 1px solid #eef0f2;
 }
 .slip-info {
+  min-width: 0;
   background: #f8f9fb;
   border: 1px solid #eef0f2;
   border-radius: 10px;
@@ -335,6 +340,7 @@ function formatTime(t) {
 }
 .slip-dialog .el-dialog__body > .slip-body {
   flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
 }
 </style>
