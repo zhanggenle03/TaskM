@@ -594,7 +594,7 @@ class SalaryRecord(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     items = relationship("SalaryItem", back_populates="record", cascade="all, delete-orphan", order_by="SalaryItem.sort_order")
-    slip = relationship("SalarySlip", back_populates="record", uselist=False, cascade="all, delete-orphan")
+    slips = relationship("SalarySlip", back_populates="record", cascade="all, delete-orphan", order_by="SalarySlip.id")
 
 class SalaryItem(Base):
     """薪资明细行：挂在某条薪资记录下。
@@ -621,7 +621,7 @@ class SalaryItem(Base):
 
 
 class SalarySlip(Base):
-    """工资条附件：每条薪资记录最多一个（salary_record_id 唯一约束硬兜底）。
+    """工资条附件：每条薪资记录可挂多张（一对多）。
 
     文件存 uploads/salary/{uuid}.{ext}；完整备份（FULL）自动打包 uploads 目录。
     删除薪资记录时：ORM cascade 删本表记录，物理文件由 salary 路由删除接口负责。
@@ -632,7 +632,6 @@ class SalarySlip(Base):
         Integer,
         ForeignKey("salary_records.id", ondelete="CASCADE"),
         nullable=False,
-        unique=True,  # 每月一条工资条
     )
     filename = Column(String(300), nullable=False)            # 存储文件名（uuid + ext）
     original_filename = Column(String(300), nullable=False)   # 原始文件名
@@ -641,7 +640,7 @@ class SalarySlip(Base):
     mime_type = Column(String(100), default="")
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
-    record = relationship("SalaryRecord", back_populates="slip")
+    record = relationship("SalaryRecord", back_populates="slips")
 
 
 class TaxAdjustment(Base):
@@ -808,6 +807,47 @@ def ensure_salary_slip_table(engine):
     if "salary_slips" not in inspector.get_table_names():
         SalarySlip.__table__.create(engine)
         print("[migrate] salary_slips 表已创建", flush=True)
+
+
+def ensure_salary_slip_multi(engine):
+    """幂等迁移：salary_slips 去掉 salary_record_id 唯一约束（每月可多张工资条）。
+
+    SQLite 不支持 ALTER DROP CONSTRAINT，需重建表：建新表→拷贝数据→删旧表→改名。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_slips" not in inspector.get_table_names():
+        return
+    # 检查是否存在 salary_record_id 的唯一索引
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='salary_slips'"
+        )).fetchall()
+    unique_idx = [r[0] for r in rows if r[0].startswith("sqlite_autoindex") or "salary_record" in (r[0] or "")]
+    if not unique_idx:
+        return  # 已是多附件结构
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE salary_slips_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                salary_record_id INTEGER NOT NULL,
+                filename VARCHAR(300) NOT NULL,
+                original_filename VARCHAR(300) NOT NULL,
+                file_path VARCHAR(500) NOT NULL,
+                file_size INTEGER,
+                mime_type VARCHAR(100),
+                uploaded_at DATETIME,
+                FOREIGN KEY(salary_record_id) REFERENCES salary_records (id) ON DELETE CASCADE
+            )
+        """))
+        conn.execute(text(
+            "INSERT INTO salary_slips_new (id, salary_record_id, filename, original_filename, file_path, file_size, mime_type, uploaded_at) "
+            "SELECT id, salary_record_id, filename, original_filename, file_path, file_size, mime_type, uploaded_at FROM salary_slips"
+        ))
+        conn.execute(text("DROP TABLE salary_slips"))
+        conn.execute(text("ALTER TABLE salary_slips_new RENAME TO salary_slips"))
+        conn.commit()
+    print("[migrate] salary_slips 已去除唯一约束（每月多张）", flush=True)
 
 
 # ---- 显示ID生成工具函数 ----

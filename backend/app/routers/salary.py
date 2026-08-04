@@ -138,7 +138,7 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
         net=round(net, 2),
         company_cost=round(cc, 2),
         personal_social_total=round(pst, 2),
-        slip=_slip_to_out(record.slip),
+        slips=[_slip_to_out(s) for s in sorted(record.slips, key=lambda x: x.id)],
     )
 
 
@@ -279,26 +279,27 @@ def delete_salary_record(record_id: int, db: Session = Depends(get_db)):
     rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
     if not rec:
         raise HTTPException(404, "薪资记录不存在")
-    # 删除工资条物理文件（DB 记录由 ORM cascade="all, delete-orphan" 级联删除）
-    if rec.slip and os.path.exists(rec.slip.file_path):
-        try:
-            os.remove(rec.slip.file_path)
-        except OSError:
-            pass
+    # 删除所有工资条物理文件（DB 记录由 ORM cascade="all, delete-orphan" 级联删除）
+    for s in rec.slips:
+        if os.path.exists(s.file_path):
+            try:
+                os.remove(s.file_path)
+            except OSError:
+                pass
     db.delete(rec)
     db.commit()
     return {"ok": True}
 
 
-# ──────────────────────────────────────────────── 工资条附件（每月一条，上传/查询/删除） ────────────────────────────────────────────────
+# ──────────────────────────────────────────────── 工资条附件（每月可多张，上传/列表/单删） ────────────────────────────────────────────────
 
-@router.get("/records/{record_id}/slip", response_model=Optional[SalarySlipOut])
-def get_salary_slip(record_id: int, db: Session = Depends(get_db)):
-    """查询工资条附件信息（无则返回 null）"""
+@router.get("/records/{record_id}/slips", response_model=List[SalarySlipOut])
+def list_salary_slips(record_id: int, db: Session = Depends(get_db)):
+    """查询工资条附件列表（按上传时间升序）"""
     rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
     if not rec:
         raise HTTPException(404, "薪资记录不存在")
-    return _slip_to_out(rec.slip)
+    return [_slip_to_out(s) for s in sorted(rec.slips, key=lambda x: x.id)]
 
 
 @router.post("/records/{record_id}/slip", response_model=SalarySlipOut)
@@ -307,7 +308,7 @@ async def upload_salary_slip(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """上传 / 替换工资条图片。仅图片类型；已有附件时先删旧文件再写，保证每月一条。"""
+    """上传工资条图片（追加，每月可多张）。仅图片类型。"""
     rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
     if not rec:
         raise HTTPException(404, "薪资记录不存在")
@@ -315,17 +316,6 @@ async def upload_salary_slip(
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_SLIP_EXTS or not (file.content_type or "").startswith("image/"):
         raise HTTPException(400, "仅支持图片文件（jpg / png / webp / gif / bmp）")
-
-    # 替换：先删旧附件（记录与文件）
-    old = rec.slip
-    if old:
-        if os.path.exists(old.file_path):
-            try:
-                os.remove(old.file_path)
-            except OSError:
-                pass
-        db.delete(old)
-        db.flush()
 
     # 保存新文件
     os.makedirs(SALARY_SLIP_DIR, exist_ok=True)
@@ -363,15 +353,15 @@ async def upload_salary_slip(
     return _slip_to_out(slip)
 
 
-@router.delete("/records/{record_id}/slip")
-def delete_salary_slip(record_id: int, db: Session = Depends(get_db)):
-    """删除工资条（文件 + 记录）"""
-    rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
-    if not rec:
-        raise HTTPException(404, "薪资记录不存在")
-    slip = rec.slip
+@router.delete("/records/{record_id}/slip/{slip_id}")
+def delete_salary_slip(record_id: int, slip_id: int, db: Session = Depends(get_db)):
+    """删除指定工资条（文件 + 记录）"""
+    slip = db.query(SalarySlip).filter(
+        SalarySlip.id == slip_id,
+        SalarySlip.salary_record_id == record_id,
+    ).first()
     if not slip:
-        raise HTTPException(404, "该记录暂无工资条")
+        raise HTTPException(404, "工资条不存在")
     if os.path.exists(slip.file_path):
         try:
             os.remove(slip.file_path)

@@ -132,8 +132,8 @@
           <template #default="{ row }">
             <el-button
               link
-              :type="row.slip ? 'primary' : 'info'"
-              :title="row.slip ? `查看工资条（${row.slip.original_filename}）` : '上传工资条'"
+              :type="(row.slips?.length || 0) ? 'primary' : 'info'"
+              :title="(row.slips?.length || 0) ? `查看工资条（${row.slips.length} 张）` : '上传工资条'"
               @click="openSlip(row)"
             >
               <el-icon :size="16"><Picture /></el-icon>

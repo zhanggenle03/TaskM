@@ -45,13 +45,27 @@
         </div>
       </div>
 
-      <!-- 右侧：附件信息与操作 -->
+      <!-- 右侧：附件列表与操作 -->
       <div class="slip-side">
         <div class="side-title">附件操作</div>
 
-        <div class="slip-info" v-if="slip">
-          <div class="info-name" :title="slip.original_filename">{{ slip.original_filename }}</div>
-          <div class="info-meta">{{ formatSize(slip.file_size) }} · {{ formatTime(slip.uploaded_at) }}</div>
+        <!-- 附件列表（上传按钮上方，可多张） -->
+        <div class="slip-list" v-if="slips.length">
+          <div
+            v-for="s in slips"
+            :key="s.id"
+            class="slip-item"
+            :class="{ active: s.id === selectedId }"
+            :title="s.original_filename"
+            @click="selectSlip(s)"
+          >
+            <span class="item-name">{{ s.original_filename }}</span>
+            <span class="item-size">{{ formatSize(s.file_size) }}</span>
+            <span class="item-actions" @click.stop>
+              <el-icon class="act" title="下载" @click="download(s)"><Download /></el-icon>
+              <el-icon class="act danger" title="删除" @click="removeSlip(s)"><Delete /></el-icon>
+            </span>
+          </div>
         </div>
         <div class="slip-info empty" v-else>
           <div class="info-name muted">尚未上传工资条</div>
@@ -61,16 +75,10 @@
         <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
 
         <el-button type="primary" class="side-btn" :loading="uploading" @click="fileInput?.click()">
-          <el-icon><Upload /></el-icon>{{ slip ? '上传 / 替换' : '上传工资条' }}
-        </el-button>
-        <el-button class="side-btn" :disabled="!slip" @click="download">
-          <el-icon><Download /></el-icon>下载原图
-        </el-button>
-        <el-button class="side-btn danger" type="danger" plain :disabled="!slip || uploading" @click="removeSlip">
-          <el-icon><Delete /></el-icon>删除工资条
+          <el-icon><Upload /></el-icon>上传工资条
         </el-button>
 
-        <p class="side-hint">每月一条；上传新图自动替换旧图，删除后需重新上传。</p>
+        <p class="side-hint">每月可上传多张；点击列表项切换预览，单个附件可下载/删除。</p>
       </div>
     </div>
   </el-dialog>
@@ -83,7 +91,7 @@ import { uploadSalarySlip, deleteSalarySlip } from '../api'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
-  record: { type: Object, default: null }, // SalaryRecordOut（含 slip 字段）
+  record: { type: Object, default: null }, // SalaryRecordOut（含 slips 字段）
 })
 const emit = defineEmits(['update:modelValue', 'changed'])
 
@@ -95,9 +103,11 @@ const visible = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
-// ── 本地附件状态（打开时由 record.slip 初始化，操作后自行更新） ──
-const slip = ref(null)
-const imgSrc = computed(() => slip.value?.url || '')
+// ── 附件列表（每月可多张） ──
+const slips = ref([])
+const selectedId = ref(null)
+const currentSlip = computed(() => slips.value.find(s => s.id === selectedId.value) || slips.value[0] || null)
+const imgSrc = computed(() => currentSlip.value?.url || '')
 
 // ── 预览视图状态 ──
 const stageEl = ref(null)
@@ -117,8 +127,12 @@ const imgStyle = computed(() => ({
 const clampScale = (v) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, v))
 const round2 = (n) => Math.round(n * 100) / 100
 
+function fitView() {
+  scale.value = 1
+  offsetX.value = 0
+  offsetY.value = 0
+}
 function resetView() {
-  // 「100%」= 原始像素 1:1（视觉宽度 = 图片自然宽度）
   const w = stageEl.value?.offsetWidth || 0
   if (!w || !naturalW.value) { scale.value = 1; offsetX.value = 0; offsetY.value = 0; return }
   scale.value = clampScale(naturalW.value / w)
@@ -131,12 +145,6 @@ function onWheel(e) {
   const delta = e.deltaY < 0 ? 1.1 : 1 / 1.1
   scale.value = clampScale(round2(scale.value * delta))
 }
-// 适合宽度：scale=1（图片布局 100% 容器宽，视觉恰好充满容器宽）
-function fitView() {
-  scale.value = 1
-  offsetX.value = 0
-  offsetY.value = 0
-}
 function toggleZoom() {
   if (scale.value === 1) resetView()
   else fitView()
@@ -145,16 +153,16 @@ function onImgLoad(e) {
   naturalW.value = e.target.naturalWidth || 0
 }
 function onOpened() {
-  nextTick(() => { if (slip.value) fitView() })
+  nextTick(() => { if (imgSrc.value) fitView() })
 }
 function onClosed() {
-  resetView()
+  fitView()
   naturalW.value = 0
 }
 
 // ── 拖拽平移 ──
 function onMouseDown(e) {
-  if (!slip.value || e.button !== 0) return
+  if (!imgSrc.value || e.button !== 0) return
   dragging.value = true
   dragStart = { x: e.clientX, y: e.clientY, ox: offsetX.value, oy: offsetY.value }
   window.addEventListener('mousemove', onMouseMove)
@@ -176,16 +184,23 @@ watch(
   () => props.modelValue,
   (v) => {
     if (v) {
-      slip.value = props.record?.slip || null
+      slips.value = (props.record?.slips || []).map(s => ({ ...s }))
+      selectedId.value = slips.value[0]?.id ?? null
       naturalW.value = 0
+      fitView()
     }
   }
 )
 
+function selectSlip(s) {
+  selectedId.value = s.id
+  naturalW.value = 0
+  nextTick(() => fitView())
+}
+
 function onFileChange(e) {
   const file = e.target.files?.[0]
   if (!file) return
-  // 前端兜底校验类型
   if (!/^image\//.test(file.type)) {
     ElMessage.warning('仅支持图片文件（jpg / png / webp / gif / bmp）')
     e.target.value = ''
@@ -194,7 +209,9 @@ function onFileChange(e) {
   uploading.value = true
   uploadSalarySlip(props.record.id, file)
     .then((res) => {
-      slip.value = res
+      slips.value.push(res)
+      selectedId.value = res.id
+      naturalW.value = 0
       ElMessage.success('工资条已上传')
       emit('changed')
       nextTick(() => { if (stageEl.value) fitView() })
@@ -206,24 +223,27 @@ function onFileChange(e) {
     })
 }
 
-async function removeSlip() {
+async function removeSlip(s) {
   try {
-    await ElMessageBox.confirm('确定删除本月的工资条吗？删除后需重新上传。', '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确定删除「${s.original_filename}」吗？`, '删除确认', { type: 'warning' })
   } catch { return }
   try {
-    await deleteSalarySlip(props.record.id)
-    slip.value = null
-    resetView()
+    await deleteSalarySlip(props.record.id, s.id)
+    slips.value = slips.value.filter(x => x.id !== s.id)
+    if (selectedId.value === s.id) {
+      selectedId.value = slips.value[0]?.id ?? null
+      naturalW.value = 0
+      nextTick(() => fitView())
+    }
     ElMessage.success('已删除')
     emit('changed')
   } catch { /* 拦截器已提示 */ }
 }
 
-function download() {
-  if (!slip.value) return
+function download(s) {
   const a = document.createElement('a')
-  a.href = slip.value.url
-  a.download = slip.value.original_filename
+  a.href = s.url
+  a.download = s.original_filename
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
@@ -234,13 +254,6 @@ function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
-function formatTime(t) {
-  if (!t) return ''
-  const d = new Date(t)
-  if (isNaN(d)) return ''
-  const p = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 </script>
 
@@ -274,7 +287,6 @@ function formatTime(t) {
 }
 .preview-stage:active { cursor: grabbing; }
 .preview-img {
-  /* 布局尺寸恒等于容器宽（height 按比例），transform scale 只做视觉缩放——大图不会撑破弹窗 */
   width: 100%;
   height: auto;
   flex-shrink: 0;
@@ -295,7 +307,7 @@ function formatTime(t) {
 .preview-empty p { margin: 0; font-size: 14px; color: #999; font-weight: 500; }
 .preview-empty span { font-size: 12px; }
 
-/* 右侧操作区 */
+/* 右侧操作区：严格固定 230px */
 .slip-side {
   flex: 0 0 230px;
   width: 230px;
@@ -311,6 +323,44 @@ function formatTime(t) {
   font-size: 13px; font-weight: 600; color: #2c2c2a;
   padding-bottom: 8px; border-bottom: 1px solid #eef0f2;
 }
+
+/* 附件列表（多张，可滚动） */
+.slip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 240px;
+  overflow-y: auto;
+  min-height: 0;
+}
+.slip-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid #e8e8e4;
+  border-radius: 8px;
+  cursor: pointer;
+  background: #fff;
+  min-width: 0;
+}
+.slip-item:hover { border-color: #c9c4ee; }
+.slip-item.active { border-color: #534AB7; background: #f4f1ff; }
+.item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: #2c2c2a;
+}
+.item-size { flex-shrink: 0; font-size: 11px; color: #aaa; font-variant-numeric: tabular-nums; }
+.item-actions { flex-shrink: 0; display: flex; gap: 4px; color: #888; }
+.item-actions .act { cursor: pointer; font-size: 14px; }
+.item-actions .act:hover { color: #534AB7; }
+.item-actions .act.danger:hover { color: #c45656; }
+
 .slip-info {
   min-width: 0;
   background: #f8f9fb;
