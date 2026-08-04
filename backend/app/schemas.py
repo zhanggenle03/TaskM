@@ -365,6 +365,20 @@ class SalaryRecordCreate(BaseModel):
     remark: str = ""
     items: List[SalaryItemCreate] = []
 
+class SalarySlipOut(BaseModel):
+    """工资条附件信息（每条薪资记录最多一个）"""
+    id: int
+    filename: str                       # 存储文件名（uuid.ext）
+    original_filename: str              # 原始文件名
+    file_size: int
+    mime_type: str
+    uploaded_at: datetime
+    url: str = ""                       # 预览相对路径 /uploads/salary/{filename}
+
+    class Config:
+        from_attributes = True
+
+
 class SalaryRecordOut(BaseModel):
     id: int
     period: str
@@ -376,6 +390,7 @@ class SalaryRecordOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     items: List[SalaryItemOut] = []
+    slip: Optional[SalarySlipOut] = None            # 工资条附件（无则 null）
     # 汇总（后端计算，不冗余存储）
     gross: float = 0.0                              # 应发合计 = Σ income
     personal_deduction: float = 0.0                 # 个人扣除 = Σ deduction + Σ tax

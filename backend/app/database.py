@@ -594,6 +594,7 @@ class SalaryRecord(Base):
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     items = relationship("SalaryItem", back_populates="record", cascade="all, delete-orphan", order_by="SalaryItem.sort_order")
+    slip = relationship("SalarySlip", back_populates="record", uselist=False, cascade="all, delete-orphan")
 
 class SalaryItem(Base):
     """薪资明细行：挂在某条薪资记录下。
@@ -617,6 +618,30 @@ class SalaryItem(Base):
     sort_order = Column(Integer, default=0)
 
     record = relationship("SalaryRecord", back_populates="items")
+
+
+class SalarySlip(Base):
+    """工资条附件：每条薪资记录最多一个（salary_record_id 唯一约束硬兜底）。
+
+    文件存 uploads/salary/{uuid}.{ext}；完整备份（FULL）自动打包 uploads 目录。
+    删除薪资记录时：ORM cascade 删本表记录，物理文件由 salary 路由删除接口负责。
+    """
+    __tablename__ = "salary_slips"
+    id = Column(Integer, primary_key=True, index=True)
+    salary_record_id = Column(
+        Integer,
+        ForeignKey("salary_records.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,  # 每月一条工资条
+    )
+    filename = Column(String(300), nullable=False)            # 存储文件名（uuid + ext）
+    original_filename = Column(String(300), nullable=False)   # 原始文件名
+    file_path = Column(String(500), nullable=False)
+    file_size = Column(Integer, default=0)
+    mime_type = Column(String(100), default="")
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+
+    record = relationship("SalaryRecord", back_populates="slip")
 
 
 class TaxAdjustment(Base):
@@ -771,6 +796,18 @@ def ensure_communication_protected_fake_column(engine):
             conn.execute(text("ALTER TABLE communications ADD COLUMN protected_fake BOOLEAN DEFAULT 0 NOT NULL"))
             conn.commit()
         print("[migrate] communications.protected_fake 列已添加", flush=True)
+
+
+def ensure_salary_slip_table(engine):
+    """幂等迁移：创建 salary_slips 表（工资条附件，每月一条）。
+
+    全新库由 Base.metadata.create_all 直接建出；此处仅兜底已存在的旧库。
+    """
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if "salary_slips" not in inspector.get_table_names():
+        SalarySlip.__table__.create(engine)
+        print("[migrate] salary_slips 表已创建", flush=True)
 
 
 # ---- 显示ID生成工具函数 ----

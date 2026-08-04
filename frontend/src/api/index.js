@@ -133,6 +133,15 @@ export const getSalaryConfig = () => http.get('/salary/config')
 export const updateSalaryConfig = (data) => http.put('/salary/config', data)
 export const getSalaryTaxSummary = (params) => http.get('/salary/tax-summary', { params })
 export const calcSalaryTax = (data) => http.post('/salary/calc-tax', data)
+export const getSalarySlip = (id) => http.get(`/salary/records/${id}/slip`)
+export const uploadSalarySlip = (id, file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return http.post(`/salary/records/${id}/slip`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+export const deleteSalarySlip = (id) => http.delete(`/salary/records/${id}/slip`)
 export const exportSalary = (params) =>
   http.get('/salary/export', {
     params,

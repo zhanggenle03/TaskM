@@ -13,17 +13,20 @@
 import urllib.parse
 from datetime import datetime, date
 import re
+import uuid
+import os
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from ..database import get_db, SalaryRecord, SalaryItem, TaxAdjustment
+from ..database import get_db, SalaryRecord, SalaryItem, TaxAdjustment, SalarySlip, UPLOAD_DIR
 from ..schemas import (
     SalaryRecordCreate,
     SalaryRecordOut,
     SalaryItemOut,
+    SalarySlipOut,
     SalarySummaryOut,
     SalaryTaxSummaryOut,
     SalaryCalcTaxIn,
@@ -34,7 +37,7 @@ from ..schemas import (
     TaxAdjustmentOut,
 )
 from ..schemas import VALID_SALARY_CATEGORIES
-from ..settings_manager import load_settings, save_settings
+from ..settings_manager import load_settings, save_settings, get_max_file_size
 from ..salary_export_service import generate_salary_export
 
 router = APIRouter(prefix="/salary")
@@ -63,6 +66,25 @@ DEFAULT_SALARY_CONFIG = {
 }
 
 _PERIOD_RE = re.compile(r"^\d{4}-\d{2}$")
+
+# ── 工资条附件 ──
+SALARY_SLIP_DIR = os.path.join(UPLOAD_DIR, "salary")          # uploads/salary/
+ALLOWED_SLIP_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+
+
+def _slip_to_out(slip) -> Optional[SalarySlipOut]:
+    """构造工资条输出（补预览 URL）"""
+    if not slip:
+        return None
+    return SalarySlipOut(
+        id=slip.id,
+        filename=slip.filename,
+        original_filename=slip.original_filename,
+        file_size=slip.file_size,
+        mime_type=slip.mime_type,
+        uploaded_at=slip.uploaded_at,
+        url=f"/uploads/salary/{slip.filename}",
+    )
 
 
 def _parse_date(s: Optional[str]) -> Optional[date]:
@@ -116,6 +138,7 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
         net=round(net, 2),
         company_cost=round(cc, 2),
         personal_social_total=round(pst, 2),
+        slip=_slip_to_out(record.slip),
     )
 
 
@@ -256,7 +279,105 @@ def delete_salary_record(record_id: int, db: Session = Depends(get_db)):
     rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
     if not rec:
         raise HTTPException(404, "薪资记录不存在")
+    # 删除工资条物理文件（DB 记录由 ORM cascade="all, delete-orphan" 级联删除）
+    if rec.slip and os.path.exists(rec.slip.file_path):
+        try:
+            os.remove(rec.slip.file_path)
+        except OSError:
+            pass
     db.delete(rec)
+    db.commit()
+    return {"ok": True}
+
+
+# ──────────────────────────────────────────────── 工资条附件（每月一条，上传/查询/删除） ────────────────────────────────────────────────
+
+@router.get("/records/{record_id}/slip", response_model=Optional[SalarySlipOut])
+def get_salary_slip(record_id: int, db: Session = Depends(get_db)):
+    """查询工资条附件信息（无则返回 null）"""
+    rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(404, "薪资记录不存在")
+    return _slip_to_out(rec.slip)
+
+
+@router.post("/records/{record_id}/slip", response_model=SalarySlipOut)
+async def upload_salary_slip(
+    record_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """上传 / 替换工资条图片。仅图片类型；已有附件时先删旧文件再写，保证每月一条。"""
+    rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(404, "薪资记录不存在")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in ALLOWED_SLIP_EXTS or not (file.content_type or "").startswith("image/"):
+        raise HTTPException(400, "仅支持图片文件（jpg / png / webp / gif / bmp）")
+
+    # 替换：先删旧附件（记录与文件）
+    old = rec.slip
+    if old:
+        if os.path.exists(old.file_path):
+            try:
+                os.remove(old.file_path)
+            except OSError:
+                pass
+        db.delete(old)
+        db.flush()
+
+    # 保存新文件
+    os.makedirs(SALARY_SLIP_DIR, exist_ok=True)
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(SALARY_SLIP_DIR, unique_name)
+    size = 0
+    max_size = get_max_file_size()
+    try:
+        import aiofiles
+        async with aiofiles.open(file_path, "wb") as f:
+            while chunk := await file.read(1024 * 64):
+                size += len(chunk)
+                if size > max_size:
+                    raise HTTPException(413, f"文件超过 {max_size // (1024 * 1024)}MB 限制")
+                await f.write(chunk)
+    except Exception:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+        raise
+
+    slip = SalarySlip(
+        salary_record_id=record_id,
+        filename=unique_name,
+        original_filename=file.filename or unique_name,
+        file_path=file_path,
+        file_size=size,
+        mime_type=file.content_type or "",
+    )
+    db.add(slip)
+    db.commit()
+    db.refresh(slip)
+    return _slip_to_out(slip)
+
+
+@router.delete("/records/{record_id}/slip")
+def delete_salary_slip(record_id: int, db: Session = Depends(get_db)):
+    """删除工资条（文件 + 记录）"""
+    rec = db.query(SalaryRecord).filter(SalaryRecord.id == record_id).first()
+    if not rec:
+        raise HTTPException(404, "薪资记录不存在")
+    slip = rec.slip
+    if not slip:
+        raise HTTPException(404, "该记录暂无工资条")
+    if os.path.exists(slip.file_path):
+        try:
+            os.remove(slip.file_path)
+        except OSError:
+            pass
+    db.delete(slip)
     db.commit()
     return {"ok": True}
 

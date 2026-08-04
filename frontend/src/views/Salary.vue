@@ -131,6 +131,18 @@
         <el-table-column label="公司承担" width="115" align="center">
           <template #default="{ row }"><span class="amt amt-company">{{ fmt(row.company_cost) }}</span></template>
         </el-table-column>
+        <el-table-column label="工资条" width="78" align="center">
+          <template #default="{ row }">
+            <el-button
+              link
+              :type="row.slip ? 'primary' : 'info'"
+              :title="row.slip ? `查看工资条（${row.slip.original_filename}）` : '上传工资条'"
+              @click="openSlip(row)"
+            >
+              <el-icon :size="16"><Picture /></el-icon>
+            </el-button>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="105" align="center">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
@@ -139,6 +151,9 @@
         </el-table-column>
       </el-table>
     </div>
+
+    <!-- 工资条附件弹窗 -->
+    <SalarySlipDialog v-model="slipDialogVisible" :record="slipRecord" @changed="onSlipChanged" />
 
     <!-- 新增 / 编辑 弹窗 -->
     <el-dialog v-model="dialogVisible" :title="form.id ? '编辑薪资记录' : '新增薪资记录'" width="1040px" top="2vh"
@@ -318,6 +333,7 @@ import {
   getSalaryConfig, updateSalaryConfig, calcSalaryTax,
   exportSalary,
 } from '../api'
+import SalarySlipDialog from '../components/SalarySlipDialog.vue'
 
 // ── 常量 ──
 const CATEGORY_OPTIONS = [
@@ -393,6 +409,18 @@ const now = new Date()
 const periodRange = ref([`${now.getFullYear()}-01`, `${now.getFullYear()}-12`])
 
 const dialogVisible = ref(false)
+
+// ── 工资条附件弹窗 ──
+const slipDialogVisible = ref(false)
+const slipRecord = ref(null)
+function openSlip(row) {
+  slipRecord.value = row
+  slipDialogVisible.value = true
+}
+function onSlipChanged() {
+  // 附件变化后刷新列表（工资条图标高亮状态同步）
+  loadData()
+}
 
 // ── 薪资通用配置（用于新增时自动带入）──
 const configVisible = ref(false)
