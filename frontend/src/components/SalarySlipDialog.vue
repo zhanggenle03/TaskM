@@ -14,13 +14,12 @@
       <!-- 左侧：图片预览（滚轮缩放 / 拖拽平移 / 双击切换） -->
       <div class="slip-preview">
         <div class="preview-toolbar">
-          <el-button-group>
-            <el-button size="small" :icon="ZoomOut" :disabled="scale <= MIN_SCALE" @click="zoomOut" />
-            <el-button size="small" :icon="ZoomIn" :disabled="scale >= MAX_SCALE" @click="zoomIn" />
+          <div class="zoom-group">
+            <el-button size="small" :disabled="scale <= MIN_SCALE" @click="zoomOut"><el-icon><ZoomOut /></el-icon></el-button>
+            <span class="scale-pct">{{ Math.round(scale * 100) }}%</span>
+            <el-button size="small" :disabled="scale >= MAX_SCALE" @click="zoomIn"><el-icon><ZoomIn /></el-icon></el-button>
             <el-button size="small" @click="fitView">适合宽度</el-button>
-            <el-button size="small" @click="resetView">100%</el-button>
-          </el-button-group>
-          <span class="scale-pct">{{ Math.round(scale * 100) }}%</span>
+          </div>
         </div>
         <div
           ref="stageEl"
@@ -256,8 +255,9 @@ function formatTime(t) {
   flex-direction: column;
   gap: 10px;
 }
-.preview-toolbar { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
-.scale-pct { font-size: 13px; color: #888; font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }
+.preview-toolbar { display: flex; align-items: center; justify-content: flex-end; flex-shrink: 0; }
+.zoom-group { display: flex; align-items: center; gap: 6px; }
+.scale-pct { font-size: 13px; color: #888; font-variant-numeric: tabular-nums; min-width: 52px; text-align: center; }
 
 .preview-stage {
   flex: 1 1 0;
