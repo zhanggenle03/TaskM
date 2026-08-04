@@ -75,7 +75,7 @@
               />
               <template v-else>
                 <div class="item-name" :title="s.original_filename">{{ s.original_filename }}</div>
-                <div class="item-meta">{{ formatSize(s.file_size) }} · {{ formatTime(s.uploaded_at) }}</div>
+                <div class="item-meta">{{ formatSize(s.file_size) }}</div>
               </template>
             </div>
             <div class="item-actions" @click.stop>
@@ -322,13 +322,6 @@ function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
-}
-function formatTime(t) {
-  if (!t) return ''
-  const d = new Date(t)
-  if (isNaN(d)) return ''
-  const p = (n) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 </script>
 
