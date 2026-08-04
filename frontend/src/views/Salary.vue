@@ -290,11 +290,12 @@
               <el-input v-model="it.name" size="small" placeholder="项目名称" style="flex:1" />
               <span class="unit">¥</span>
               <el-input-number v-model="it.amount" :min="0" :precision="2" :step="100" size="small" controls-position="right" style="width:150px" />
+              <el-checkbox v-model="it.taxable" class="tpl-tax" :true-label="true" :false-label="false">计税</el-checkbox>
               <el-button size="small" text type="danger" @click="configForm.default_income_items.splice(idx, 1)"><el-icon><Delete /></el-icon></el-button>
             </div>
-            <el-button size="small" class="add-income" @click="configForm.default_income_items.push({ name: '', amount: 0 })"><el-icon><Plus /></el-icon> 加一项</el-button>
+            <el-button size="small" class="add-income" @click="configForm.default_income_items.push({ name: '', amount: 0, taxable: true })"><el-icon><Plus /></el-icon> 加一项</el-button>
           </div>
-          <div class="hint" style="margin-top:8px">新增薪资时会自动带出以上收入项。</div>
+          <div class="hint" style="margin-top:8px">新增薪资时会自动带出以上收入项；「计税」取消勾选表示转账等非计税收入（不计个税）。</div>
         </el-tab-pane>
 
         <!-- 五险一金 -->
@@ -526,7 +527,7 @@ async function openConfig() {
     const rates = defaultRates()
     Object.assign(rates, c.social_rates || {})
     configForm.social_rates = rates
-    configForm.default_income_items = (c.default_income_items || []).map(i => ({ name: i.name, amount: i.amount }))
+    configForm.default_income_items = (c.default_income_items || []).map(i => ({ name: i.name, amount: i.amount, taxable: i.taxable !== false }))
     configVisible.value = true
   } catch { /* 拦截器已提示 */ }
 }
@@ -545,7 +546,7 @@ async function saveConfig() {
     default_pay_month: configForm.default_pay_month || 'current',
     default_pay_day: Number(configForm.default_pay_day) || 10,
     default_income_items: configForm.default_income_items
-      .filter(i => i.name).map(i => ({ name: i.name, amount: Number(i.amount) || 0 })),
+      .filter(i => i.name).map(i => ({ name: i.name, amount: Number(i.amount) || 0, taxable: i.taxable !== false })),
   }
   try {
     const saved = await updateSalaryConfig(payload)
@@ -633,7 +634,7 @@ function applyIncomeTemplate() {
     if (!exist.has(it.name)) {
       form.items.push({
         category: 'income', name: it.name, amount: it.amount || 0,
-        base: null, rate: null, funded_by: '', tax_deductible: false, taxable: true, sort_order: form.items.length,
+        base: null, rate: null, funded_by: '', tax_deductible: false, taxable: it.taxable !== false, sort_order: form.items.length,
       })
     }
   })
@@ -1084,6 +1085,8 @@ async function remove(row) {
   padding: 6px 10px; background: #fafbfc;
   border: 1px solid #eef0f2; border-radius: 8px;
 }
+.income-tpl-row .tpl-tax { flex: 0 0 auto; margin-right: 2px; }
+.income-tpl-row .tpl-tax .el-checkbox__label { font-size: 12px; color: #666; }
 .add-income { align-self: flex-start; }
 </style>
 

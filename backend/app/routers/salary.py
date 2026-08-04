@@ -988,6 +988,8 @@ def update_salary_config(body: SalaryConfigUpdate):
                 items.append({
                     "name": str(it.get("name")),
                     "amount": float(it.get("amount") or 0),
+                    # 默认计税；转账等非计税收入项由配置界面取消勾选（旧配置无此键视为 True）
+                    "taxable": bool(it.get("taxable", True)),
                 })
         data["default_income_items"] = items
     merged = _merge_config({**current, **data})

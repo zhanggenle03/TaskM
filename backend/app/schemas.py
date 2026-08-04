@@ -465,7 +465,7 @@ class SalaryConfigOut(BaseModel):
     social_rates: dict = {}                           # 各险种比例（百分比，如 8=8%），key 为险种名
     default_pay_month: str = "current"                # 默认发放月份：current=当月 / next=次月
     default_pay_day: int = 10                         # 默认发放日（1~31）
-    default_income_items: List[dict] = []             # 默认收入项模板 [{name, amount}]
+    default_income_items: List[dict] = []             # 默认收入项模板 [{name, amount, taxable}]
     class Config:
         from_attributes = True
 
