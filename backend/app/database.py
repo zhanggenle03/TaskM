@@ -615,6 +615,7 @@ class SalaryItem(Base):
     rate = Column(Float, nullable=True)  # 比例（百分比，如 8 表示 8%）；与 base 同时非空时 amount=base*rate/100
     funded_by = Column(String(20), default="")  # personal / company / 空
     tax_deductible = Column(Boolean, default=False)  # 是否参与个税专项扣除（仅 deduction 类别生效）
+    taxable = Column(Boolean, default=True)  # 是否计入个税（仅 income 类别生效；False=转账等非计税收入）
     sort_order = Column(Integer, default=0)
 
     record = relationship("SalaryRecord", back_populates="items")
@@ -736,6 +737,24 @@ def ensure_salary_item_tax_deductible(engine):
                     {"n": name},
                 )
             conn.commit()
+
+
+def ensure_salary_item_taxable(engine):
+    """幂等迁移：为 salary_items 表补充 taxable 列。
+
+    仅加列不改旧数据：默认 1（计税），历史记录行为与现状完全一致；
+    转账等非计税收入由用户在明细行取消勾选后写入 0。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_items" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("salary_items")]
+    if "taxable" not in cols:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE salary_items ADD COLUMN taxable BOOLEAN DEFAULT 1"))
+            conn.commit()
+        print("[migrate] salary_items.taxable 列已添加（历史数据默认计税）", flush=True)
 
 
 def ensure_tax_adjustment_table(engine):

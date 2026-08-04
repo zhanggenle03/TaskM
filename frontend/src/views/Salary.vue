@@ -175,7 +175,13 @@
           <div class="sec-head">薪资明细</div>
           <div class="items-grid">
             <div class="items-head">
-              <span>类别</span><span>项目名称</span><span>基数</span><span>比例%</span><span>金额（元）</span><span>专项扣除</span><span></span>
+              <span>类别</span><span>项目名称</span><span>基数</span><span>比例%</span><span>金额（元）</span>
+              <span class="tax-head">
+                <el-tooltip content="收入行：是否计入个税（转账等非计税收入取消勾选）；扣款行：是否专项扣除" placement="top">
+                  <span>税务</span>
+                </el-tooltip>
+              </span>
+              <span></span>
             </div>
             <div v-for="(item, idx) in form.items" :key="idx" class="item-row">
               <el-select v-model="item.category" size="small" class="item-cat" @change="onCatChange(item)">
@@ -188,7 +194,13 @@
               <el-input-number v-model="item.base" :min="0" :precision="2" :step="100" size="small" class="item-base" controls-position="right" />
               <el-input-number v-model="item.rate" :min="0" :precision="2" :step="0.1" size="small" class="item-rate" controls-position="right" />
               <el-input-number v-model="item.amount" :min="0" :precision="2" :step="100" size="small" class="item-amt" controls-position="right" :disabled="isRateMode(item)" />
-              <span class="item-check"><el-checkbox v-model="item.tax_deductible" :disabled="item.category !== 'deduction'" @change="onTaxDeductibleChange(item)" /></span>
+              <span class="item-check">
+                <el-checkbox
+                  :model-value="item.category === 'income' ? item.taxable !== false : !!item.tax_deductible"
+                  :disabled="!['income', 'deduction'].includes(item.category)"
+                  @change="v => onTaxFlagChange(item, v)"
+                >{{ item.category === 'income' ? '计税' : (item.category === 'deduction' ? '专项' : '') }}</el-checkbox>
+              </span>
               <span class="item-del"><el-button size="small" text type="danger" @click="removeItem(idx)"><el-icon><Delete /></el-icon></el-button></span>
             </div>
           </div>
@@ -546,7 +558,7 @@ async function saveConfig() {
 
 // ── 表单内明细 ──
 function addItem() {
-  form.items.push({ category: 'income', name: '', amount: 0, base: null, rate: null, funded_by: '', tax_deductible: false, sort_order: form.items.length })
+  form.items.push({ category: 'income', name: '', amount: 0, base: null, rate: null, funded_by: '', tax_deductible: false, taxable: true, sort_order: form.items.length })
 }
 function removeItem(idx) { form.items.splice(idx, 1) }
 // 类别变更时：非扣款类自动取消专项扣除勾选
@@ -557,6 +569,10 @@ function onCatChange(item) {
   if (item.category !== 'deduction') {
     item.tax_deductible = false
   }
+  // 收入项默认计税（转账等非计税项手动取消勾选）；首次进入补默认值
+  if (item.category === 'income' && item.taxable === undefined) {
+    item.taxable = true
+  }
   // 非收入项自动选中第一个名称
   if (item.category !== 'income') {
     const opts = nameOptions(item.category)
@@ -565,9 +581,13 @@ function onCatChange(item) {
     }
   }
 }
-// 专项扣除变更时保持一致性（预留扩展）
-function onTaxDeductibleChange(item) {
-  // 仅 deduction 类别可勾选，已在模板中 disabled 控制
+// 税务列变更：income 行=计税标记，deduction 行=专项扣除标记
+function onTaxFlagChange(item, v) {
+  if (item.category === 'income') {
+    item.taxable = v
+  } else if (item.category === 'deduction') {
+    item.tax_deductible = v
+  }
 }
 // 基数与比例同时填写 → 金额自动算（基数×比例/100），金额输入禁用
 function isRateMode(item) {
@@ -592,6 +612,7 @@ function applySocialTemplate(silent = false) {
         category: t.category, name: t.name, funded_by: t.funded_by,
         base: base, rate: rate, amount: amount,
         tax_deductible: t.category === 'deduction',
+        taxable: true,
         sort_order: form.items.length,
       })
     }
@@ -612,7 +633,7 @@ function applyIncomeTemplate() {
     if (!exist.has(it.name)) {
       form.items.push({
         category: 'income', name: it.name, amount: it.amount || 0,
-        base: null, rate: null, funded_by: '', tax_deductible: false, sort_order: form.items.length,
+        base: null, rate: null, funded_by: '', tax_deductible: false, taxable: true, sort_order: form.items.length,
       })
     }
   })
@@ -640,6 +661,7 @@ async function calcTax() {
           rate: rate,
           funded_by: it.funded_by || '',
           tax_deductible: !!it.tax_deductible,
+          taxable: it.taxable !== false,
           sort_order: i,
         }
       }),
@@ -689,6 +711,7 @@ async function calcTaxByItems() {
           rate: rate,
           funded_by: it.funded_by || '',
           tax_deductible: !!it.tax_deductible,
+          taxable: it.taxable !== false,
           sort_order: i,
         }
       }),
@@ -800,7 +823,7 @@ async function openEdit(row) {
         category: it.category, name: it.name, amount: it.amount,
         base: (it.base == null ? null : it.base),
         rate: (it.rate == null ? null : it.rate),
-        funded_by: it.funded_by || '', tax_deductible: !!it.tax_deductible, sort_order: i,
+        funded_by: it.funded_by || '', tax_deductible: !!it.tax_deductible, taxable: it.taxable !== false, sort_order: i,
       })),
     })
     dialogVisible.value = true
@@ -828,6 +851,7 @@ async function save() {
         rate: rate,
         funded_by: it.funded_by || '',
         tax_deductible: !!it.tax_deductible,
+        taxable: it.taxable !== false,
         sort_order: i,
       }
     }),

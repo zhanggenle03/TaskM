@@ -341,6 +341,7 @@ class SalaryItemCreate(BaseModel):
     rate: Optional[float] = None                    # 比例（百分比，如 8 表示 8%）
     funded_by: str = ""                             # personal/company/空
     tax_deductible: bool = False                    # 是否参与个税专项扣除（仅 deduction 类别生效）
+    taxable: bool = True                            # 是否计入个税（仅 income 类别生效；False=转账等非计税收入）
     sort_order: int = 0
 
 class SalaryItemOut(BaseModel):
@@ -352,6 +353,7 @@ class SalaryItemOut(BaseModel):
     rate: Optional[float] = None
     funded_by: str = ""
     tax_deductible: bool = False
+    taxable: bool = True
     sort_order: int = 0
     class Config:
         from_attributes = True

@@ -130,6 +130,7 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
                 rate=i.rate,
                 funded_by=i.funded_by or "",
                 tax_deductible=i.tax_deductible or False,
+                taxable=i.taxable if i.taxable is not None else True,
                 sort_order=i.sort_order,
             )
             for i in sorted(record.items, key=lambda x: x.sort_order)
@@ -176,6 +177,7 @@ def _make_salary_item(it, idx, salary_record_id=None):
         rate=it.rate,
         funded_by=_funded_by(it.category) or it.funded_by or "",
         tax_deductible=it.tax_deductible or False,
+        taxable=it.taxable if it.taxable is not None else True,
         sort_order=it.sort_order or idx,
     )
 
@@ -512,7 +514,8 @@ def salary_tax_summary(
             actual_tax_paid += r.actual_tax
         for i in r.items:
             if i.category == "income":
-                total_gross += i.amount
+                if i.taxable is None or i.taxable:
+                    total_gross += i.amount
             elif i.category == "deduction" and i.tax_deductible:
                 total_social_insurance += i.amount
 
@@ -703,13 +706,17 @@ def delete_tax_adjustment(
 
 
 def _cumulate_for_tax(items):
-    """从明细列表计算收入总额与专项扣除（按名称过滤社保公积金，不含其他扣款）"""
+    """从明细列表计算计税收入总额与专项扣除（按名称过滤社保公积金，不含其他扣款）。
+
+    仅 category=income 且 taxable=True 的收入计入个税；转账等非计税收入被排除。
+    """
     income = 0.0
     social = 0.0
     for it in items:
         amt = it.amount or 0.0
         if it.category == "income":
-            income += amt
+            if it.taxable is None or it.taxable:
+                income += amt
         elif it.category == "deduction" and it.tax_deductible:
             social += amt
     return round(income, 2), round(social, 2)
@@ -744,7 +751,8 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
     for r in prev_records:
         for i in r.items:
             if i.category == "income":
-                prev_income += i.amount
+                if i.taxable is None or i.taxable:
+                    prev_income += i.amount
             elif i.category == "deduction" and i.tax_deductible:
                 prev_social += i.amount
         if body.use_items:
@@ -839,7 +847,8 @@ def export_salary(
                 for r in year_records:
                     for i in r.items:
                         if i.category == "income":
-                            total_gross += i.amount
+                            if i.taxable is None or i.taxable:
+                                total_gross += i.amount
                         elif i.category == "deduction" and i.tax_deductible:
                             total_social += i.amount
                 month_count = len(year_records)
