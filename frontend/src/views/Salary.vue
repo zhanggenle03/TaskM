@@ -103,28 +103,23 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="period" label="月份" width="68" />
-        <el-table-column label="发放日期" width="86">
+        <el-table-column prop="period" label="月份" width="78" />
+        <el-table-column label="发放日期" width="112">
           <template #default="{ row }">{{ row.pay_date || '—' }}</template>
         </el-table-column>
         <el-table-column label="单位" min-width="90" show-overflow-tooltip>
           <template #default="{ row }">{{ row.employer || '—' }}</template>
         </el-table-column>
-        <el-table-column label="应发" width="90" align="center">
+        <el-table-column label="应发" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-gross">{{ fmt(row.gross) }}</span></template>
         </el-table-column>
-        <el-table-column label="个人扣" width="130" align="center">
-          <template #default="{ row }">
-            <div class="deduct-cell">
-              <span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}</span>
-              <span class="tax-hint">含税 {{ taxOf(row) }}</span>
-            </div>
-          </template>
+        <el-table-column label="个人扣" width="100" align="center">
+          <template #default="{ row }"><span class="amt amt-deduct" :title="`含税 ${taxOf(row)}`">{{ fmt(row.personal_deduction) }}</span></template>
         </el-table-column>
         <el-table-column label="实发" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-net">{{ fmt(row.net) }}</span></template>
         </el-table-column>
-        <el-table-column label="到账" width="96" align="center">
+        <el-table-column label="到账" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-credited" :class="{ 'amt-muted': row.credited_amount == null }">{{ row.credited_amount != null ? fmt(row.credited_amount) : '—' }}</span></template>
         </el-table-column>
         <el-table-column label="实际个税" width="96" align="center">
@@ -883,8 +878,6 @@ async function remove(row) {
 .amt { font-variant-numeric: tabular-nums; }
 .amt-gross { color: #67C23A; }
 .amt-deduct { color: #E6A23C; }
-.deduct-cell { display: flex; flex-direction: column; align-items: center; line-height: 1.35; }
-.tax-hint { color: #aaa; font-size: 12px; white-space: nowrap; }
 .amt-net { color: #534AB7; font-weight: 600; }
 .amt-credited { color: #1d953f; }
 .amt-tax { color: #d9534f; }
