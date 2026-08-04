@@ -47,7 +47,10 @@
 
       <!-- 右侧：附件列表与操作 -->
       <div class="slip-side">
-        <div class="side-title">附件操作</div>
+        <div class="side-title">
+          附件操作
+          <span class="cnt" v-if="slips.length">{{ slips.length }}</span>
+        </div>
 
         <!-- 附件列表（上传按钮上方，可多张） -->
         <div class="slip-list" v-if="slips.length">
@@ -56,29 +59,41 @@
             :key="s.id"
             class="slip-item"
             :class="{ active: s.id === selectedId }"
-            :title="s.original_filename"
             @click="selectSlip(s)"
           >
-            <span class="item-name">{{ s.original_filename }}</span>
-            <span class="item-size">{{ formatSize(s.file_size) }}</span>
-            <span class="item-actions" @click.stop>
-              <el-icon class="act" title="下载" @click="download(s)"><Download /></el-icon>
-              <el-icon class="act danger" title="删除" @click="removeSlip(s)"><Delete /></el-icon>
-            </span>
+            <img class="item-thumb" :src="s.url" alt="" draggable="false" />
+            <div class="item-main">
+              <div class="item-name" :title="s.original_filename">{{ s.original_filename }}</div>
+              <div class="item-meta">{{ formatSize(s.file_size) }} · {{ formatTime(s.uploaded_at) }}</div>
+            </div>
+            <div class="item-actions" @click.stop>
+              <el-tooltip content="下载" placement="top" :show-after="400">
+                <span class="act" @click="download(s)"><el-icon><Download /></el-icon></span>
+              </el-tooltip>
+              <el-tooltip content="删除" placement="top" :show-after="400">
+                <span class="act danger" @click="removeSlip(s)"><el-icon><Delete /></el-icon></span>
+              </el-tooltip>
+            </div>
           </div>
         </div>
-        <div class="slip-info empty" v-else>
-          <div class="info-name muted">尚未上传工资条</div>
-          <div class="info-meta">支持 jpg / png / webp / gif / bmp</div>
+
+        <!-- 上传区（点击或拖拽文件到此处） -->
+        <div
+          class="upload-zone"
+          :class="{ uploading }"
+          @click="fileInput?.click()"
+          @dragover.prevent="dragOver = true"
+          @dragleave.prevent="dragOver = false"
+          @drop.prevent="onDrop"
+        >
+          <el-icon :size="20" class="uz-icon"><UploadFilled /></el-icon>
+          <span class="uz-title">{{ uploading ? '上传中…' : '上传工资条' }}</span>
+          <span class="uz-sub">支持 jpg / png / webp / gif / bmp</span>
         </div>
 
         <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
 
-        <el-button type="primary" class="side-btn" :loading="uploading" @click="fileInput?.click()">
-          <el-icon><Upload /></el-icon>上传工资条
-        </el-button>
-
-        <p class="side-hint">每月可上传多张；点击列表项切换预览，单个附件可下载/删除。</p>
+        <p class="side-hint">每月可上传多张，点击列表项切换预览。</p>
       </div>
     </div>
   </el-dialog>
@@ -118,6 +133,7 @@ const offsetY = ref(0)
 const naturalW = ref(0)
 const dragging = ref(false)
 const uploading = ref(false)
+const dragOver = ref(false)
 let dragStart = { x: 0, y: 0, ox: 0, oy: 0 }
 
 const imgStyle = computed(() => ({
@@ -200,10 +216,19 @@ function selectSlip(s) {
 
 function onFileChange(e) {
   const file = e.target.files?.[0]
-  if (!file) return
+  e.target.value = ''
+  if (file) uploadFile(file)
+}
+
+function onDrop(e) {
+  dragOver.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) uploadFile(file)
+}
+
+function uploadFile(file) {
   if (!/^image\//.test(file.type)) {
     ElMessage.warning('仅支持图片文件（jpg / png / webp / gif / bmp）')
-    e.target.value = ''
     return
   }
   uploading.value = true
@@ -217,10 +242,7 @@ function onFileChange(e) {
       nextTick(() => { if (stageEl.value) fitView() })
     })
     .catch(() => { /* 拦截器已提示 */ })
-    .finally(() => {
-      uploading.value = false
-      e.target.value = ''
-    })
+    .finally(() => { uploading.value = false })
 }
 
 async function removeSlip(s) {
@@ -254,6 +276,13 @@ function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`
+}
+function formatTime(t) {
+  if (!t) return ''
+  const d = new Date(t)
+  if (isNaN(d)) return ''
+  const p = (n) => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 </script>
 
@@ -320,63 +349,119 @@ function formatSize(bytes) {
   min-height: 0;
 }
 .side-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px; font-weight: 600; color: #2c2c2a;
   padding-bottom: 8px; border-bottom: 1px solid #eef0f2;
+}
+.side-title .cnt {
+  font-size: 11px;
+  font-weight: 500;
+  color: #534AB7;
+  background: #eeedfe;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 附件列表（多张，可滚动） */
 .slip-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  max-height: 240px;
+  gap: 8px;
+  max-height: 250px;
   overflow-y: auto;
   min-height: 0;
+  padding: 2px;
+  margin: -2px;
 }
 .slip-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 6px 8px;
-  border: 1px solid #e8e8e4;
-  border-radius: 8px;
+  border: 1px solid #ececf0;
+  border-radius: 10px;
   cursor: pointer;
   background: #fff;
   min-width: 0;
+  transition: border-color .15s, background .15s, box-shadow .15s;
 }
-.slip-item:hover { border-color: #c9c4ee; }
-.slip-item.active { border-color: #534AB7; background: #f4f1ff; }
+.slip-item:hover {
+  border-color: #d5d0f2;
+  background: #fafaff;
+  box-shadow: 0 1px 4px rgba(83,74,183,.08);
+}
+.slip-item.active {
+  border-color: #534AB7;
+  background: #f4f1ff;
+  box-shadow: 0 1px 6px rgba(83,74,183,.14);
+}
+.item-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #f1f0ee;
+  border: 1px solid #e8e8e4;
+  flex-shrink: 0;
+}
+.slip-item:not(.active) .item-thumb { filter: saturate(.85); }
+.item-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .item-name {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
   color: #2c2c2a;
+  line-height: 1.3;
 }
-.item-size { flex-shrink: 0; font-size: 11px; color: #aaa; font-variant-numeric: tabular-nums; }
-.item-actions { flex-shrink: 0; display: flex; gap: 4px; color: #888; }
-.item-actions .act { cursor: pointer; font-size: 14px; }
-.item-actions .act:hover { color: #534AB7; }
-.item-actions .act.danger:hover { color: #c45656; }
+.item-meta { font-size: 11px; color: #a0a0a0; font-variant-numeric: tabular-nums; }
+.item-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+  color: #b5b5b0;
+  opacity: 0;
+  transition: opacity .15s;
+}
+.slip-item:hover .item-actions,
+.slip-item.active .item-actions { opacity: 1; }
+.item-actions .act {
+  cursor: pointer;
+  font-size: 14px;
+  padding: 3px;
+  border-radius: 6px;
+  line-height: 1;
+  display: inline-flex;
+}
+.item-actions .act:hover { color: #534AB7; background: #eeedfe; }
+.item-actions .act.danger:hover { color: #c45656; background: #fbeef0; }
 
-.slip-info {
-  min-width: 0;
-  background: #f8f9fb;
-  border: 1px solid #eef0f2;
+/* 上传区（虚线拖拽框） */
+.upload-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 16px 10px;
+  border: 1.5px dashed #d8d8e2;
   border-radius: 10px;
-  padding: 12px 14px;
+  background: #fbfbfd;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+  flex-shrink: 0;
 }
-.slip-info.empty { background: #fafafa; }
-.info-name {
-  font-size: 13px; font-weight: 500; color: #2c2c2a;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.info-name.muted { color: #999; font-weight: 400; }
-.info-meta { font-size: 12px; color: #999; margin-top: 4px; font-variant-numeric: tabular-nums; }
-.side-btn { width: 100%; margin-left: 0 !important; }
-.side-hint { margin: 4px 0 0; font-size: 12px; color: #aaa; line-height: 1.6; }
+.upload-zone:hover { border-color: #8f88e0; background: #f7f6ff; }
+.upload-zone.uploading { border-color: #534AB7; background: #f4f1ff; cursor: default; }
+.uz-icon { color: #9d97e6; }
+.upload-zone:hover .uz-icon { color: #534AB7; }
+.uz-title { font-size: 13px; font-weight: 500; color: #534AB7; }
+.uz-sub { font-size: 11px; color: #a8a8a2; }
+
+.side-hint { margin: 2px 0 0; font-size: 12px; color: #aaa; line-height: 1.6; text-align: center; }
 </style>
 
 <!-- el-dialog Teleport 到 body，scoped 不生效，需非 scoped 样式控制布局 -->
