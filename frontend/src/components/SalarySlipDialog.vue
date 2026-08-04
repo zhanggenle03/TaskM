@@ -149,14 +149,24 @@ const scale = ref(1)
 const offsetX = ref(0)
 const offsetY = ref(0)
 const naturalW = ref(0)
+const naturalH = ref(0)
 const dragging = ref(false)
 const uploading = ref(false)
 const dragOver = ref(false)
 let dragStart = { x: 0, y: 0, ox: 0, oy: 0 }
 
-const imgStyle = computed(() => ({
-  transform: `translate(${offsetX.value}px, ${offsetY.value}px) scale(${scale.value})`,
-}))
+// 布局尺寸 = 容器宽 × scale：浏览器按目标尺寸直接从源图采样渲染，
+// 放大时与本地看图器一致的清晰度（transform 只做平移）
+const imgStyle = computed(() => {
+  const w = stageEl.value?.offsetWidth || 0
+  const lw = Math.max(1, Math.round(w * scale.value))
+  const lh = naturalW.value && naturalH.value ? Math.round(lw * naturalH.value / naturalW.value) : 'auto'
+  return {
+    width: `${lw}px`,
+    height: lh === 'auto' ? 'auto' : `${lh}px`,
+    transform: `translate(${offsetX.value}px, ${offsetY.value}px)`,
+  }
+})
 
 const clampScale = (v) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, v))
 const round2 = (n) => Math.round(n * 100) / 100
@@ -167,7 +177,7 @@ function fitView() {
   if (!w || !naturalW.value) {
     scale.value = 1
   } else if (naturalW.value < w) {
-    scale.value = round2(naturalW.value / w)
+    scale.value = naturalW.value / w
   } else {
     scale.value = 1
   }
@@ -193,6 +203,7 @@ function toggleZoom() {
 }
 function onImgLoad(e) {
   naturalW.value = e.target.naturalWidth || 0
+  naturalH.value = e.target.naturalHeight || 0
   // 已知原图分辨率后重新适配，避免小图被放大显示模糊
   fitView()
 }
@@ -202,6 +213,7 @@ function onOpened() {
 function onClosed() {
   fitView()
   naturalW.value = 0
+  naturalH.value = 0
 }
 
 // ── 拖拽平移 ──
@@ -231,6 +243,7 @@ watch(
       slips.value = (props.record?.slips || []).map(s => ({ ...s }))
       selectedId.value = slips.value[0]?.id ?? null
       naturalW.value = 0
+      naturalH.value = 0
       fitView()
     }
   }
@@ -239,6 +252,7 @@ watch(
 function selectSlip(s) {
   selectedId.value = s.id
   naturalW.value = 0
+  naturalH.value = 0
   nextTick(() => fitView())
 }
 
@@ -293,6 +307,7 @@ function uploadFile(file) {
       slips.value.push(res)
       selectedId.value = res.id
       naturalW.value = 0
+      naturalH.value = 0
       ElMessage.success('工资条已上传')
       emit('changed')
       nextTick(() => { if (stageEl.value) fitView() })
@@ -311,6 +326,7 @@ async function removeSlip(s) {
     if (selectedId.value === s.id) {
       selectedId.value = slips.value[0]?.id ?? null
       naturalW.value = 0
+      naturalH.value = 0
       nextTick(() => fitView())
     }
     ElMessage.success('已删除')
@@ -365,12 +381,11 @@ function formatSize(bytes) {
 }
 .preview-stage:active { cursor: grabbing; }
 .preview-img {
-  width: 100%;
-  height: auto;
+  /* 布局宽高由内联 style 控制（= 容器宽 × scale），浏览器按目标尺寸从源图采样，放大清晰 */
   flex-shrink: 0;
+  max-width: none;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,.12);
-  transform-origin: center center;
   will-change: transform;
   pointer-events: none;
 }
