@@ -365,6 +365,11 @@ class SalaryRecordCreate(BaseModel):
     remark: str = ""
     items: List[SalaryItemCreate] = []
 
+class SalarySlipRename(BaseModel):
+    """工资条重命名请求"""
+    original_filename: str
+
+
 class SalarySlipOut(BaseModel):
     """工资条附件信息（每月可多张）"""
     id: int

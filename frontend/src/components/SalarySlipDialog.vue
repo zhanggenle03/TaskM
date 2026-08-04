@@ -63,10 +63,25 @@
           >
             <img class="item-thumb" :src="s.url" alt="" draggable="false" />
             <div class="item-main">
-              <div class="item-name" :title="s.original_filename">{{ s.original_filename }}</div>
-              <div class="item-meta">{{ formatSize(s.file_size) }} · {{ formatTime(s.uploaded_at) }}</div>
+              <el-input
+                v-if="editingId === s.id"
+                ref="renameInput"
+                v-model="editingName"
+                size="small"
+                class="rename-input"
+                @keyup.enter="confirmRename"
+                @keyup.esc="cancelRename"
+                @blur="confirmRename"
+              />
+              <template v-else>
+                <div class="item-name" :title="s.original_filename">{{ s.original_filename }}</div>
+                <div class="item-meta">{{ formatSize(s.file_size) }} · {{ formatTime(s.uploaded_at) }}</div>
+              </template>
             </div>
             <div class="item-actions" @click.stop>
+              <el-tooltip content="重命名" placement="top" :show-after="400">
+                <span class="act" @click="startRename(s)"><el-icon><EditPen /></el-icon></span>
+              </el-tooltip>
               <el-tooltip content="下载" placement="top" :show-after="400">
                 <span class="act" @click="download(s)"><el-icon><Download /></el-icon></span>
               </el-tooltip>
@@ -102,7 +117,7 @@
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { uploadSalarySlip, deleteSalarySlip } from '../api'
+import { uploadSalarySlip, deleteSalarySlip, renameSalarySlip } from '../api'
 
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
@@ -121,6 +136,9 @@ const visible = computed({
 // ── 附件列表（每月可多张） ──
 const slips = ref([])
 const selectedId = ref(null)
+const editingId = ref(null)
+const editingName = ref('')
+const renameInput = ref(null)
 const currentSlip = computed(() => slips.value.find(s => s.id === selectedId.value) || slips.value[0] || null)
 const imgSrc = computed(() => currentSlip.value?.url || '')
 
@@ -212,6 +230,34 @@ function selectSlip(s) {
   selectedId.value = s.id
   naturalW.value = 0
   nextTick(() => fitView())
+}
+
+// ── 重命名 ──
+function startRename(s) {
+  editingId.value = s.id
+  editingName.value = s.original_filename
+  nextTick(() => renameInput.value?.focus())
+}
+function cancelRename() {
+  editingId.value = null
+}
+async function confirmRename() {
+  const id = editingId.value
+  if (id == null) return
+  editingId.value = null
+  const name = (editingName.value || '').trim()
+  if (!name) return
+  if (!/\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(name)) {
+    ElMessage.warning('请保留图片扩展名（.jpg / .png / .webp / .gif / .bmp）')
+    return
+  }
+  try {
+    const updated = await renameSalarySlip(props.record.id, id, name)
+    const idx = slips.value.findIndex(x => x.id === id)
+    if (idx >= 0) slips.value[idx] = updated
+    ElMessage.success('已重命名')
+    emit('changed')
+  } catch { /* 拦截器已提示 */ }
 }
 
 function onFileChange(e) {
@@ -438,6 +484,9 @@ function formatTime(t) {
 }
 .item-actions .act:hover { color: #534AB7; background: #eeedfe; }
 .item-actions .act.danger:hover { color: #c45656; background: #fbeef0; }
+.rename-input { width: 100%; }
+.rename-input :deep(.el-input__wrapper) { padding: 0 6px; box-shadow: 0 0 0 1px #8f88e0 inset; border-radius: 6px; }
+.rename-input :deep(.el-input__inner) { font-size: 12px; }
 
 /* 上传区（虚线拖拽框） */
 .upload-zone {

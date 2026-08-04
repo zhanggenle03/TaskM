@@ -27,6 +27,7 @@ from ..schemas import (
     SalaryRecordOut,
     SalaryItemOut,
     SalarySlipOut,
+    SalarySlipRename,
     SalarySummaryOut,
     SalaryTaxSummaryOut,
     SalaryCalcTaxIn,
@@ -348,6 +349,27 @@ async def upload_salary_slip(
         mime_type=file.content_type or "",
     )
     db.add(slip)
+    db.commit()
+    db.refresh(slip)
+    return _slip_to_out(slip)
+
+
+@router.put("/records/{record_id}/slip/{slip_id}", response_model=SalarySlipOut)
+def rename_salary_slip(record_id: int, slip_id: int, data: SalarySlipRename, db: Session = Depends(get_db)):
+    """重命名工资条（仅改显示名，存储文件名不变）"""
+    slip = db.query(SalarySlip).filter(
+        SalarySlip.id == slip_id,
+        SalarySlip.salary_record_id == record_id,
+    ).first()
+    if not slip:
+        raise HTTPException(404, "工资条不存在")
+    name = (data.original_filename or "").strip()
+    if not name:
+        raise HTTPException(400, "名称不能为空")
+    ext = os.path.splitext(name)[1].lower()
+    if ext not in ALLOWED_SLIP_EXTS:
+        raise HTTPException(400, "请保留图片扩展名（.jpg / .png / .webp / .gif / .bmp）")
+    slip.original_filename = name
     db.commit()
     db.refresh(slip)
     return _slip_to_out(slip)

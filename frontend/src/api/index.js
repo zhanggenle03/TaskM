@@ -142,6 +142,7 @@ export const uploadSalarySlip = (id, file) => {
   })
 }
 export const deleteSalarySlip = (id, slipId) => http.delete(`/salary/records/${id}/slip/${slipId}`)
+export const renameSalarySlip = (id, slipId, name) => http.put(`/salary/records/${id}/slip/${slipId}`, { original_filename: name })
 export const exportSalary = (params) =>
   http.get('/salary/export', {
     params,
