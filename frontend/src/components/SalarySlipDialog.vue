@@ -162,7 +162,15 @@ const clampScale = (v) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, v))
 const round2 = (n) => Math.round(n * 100) / 100
 
 function fitView() {
-  scale.value = 1
+  // 适配容器宽度，但不超过原始尺寸：原图比容器窄时按 1:1 显示（避免小图放大变糊），比容器宽时缩小填满
+  const w = stageEl.value?.offsetWidth || 0
+  if (!w || !naturalW.value) {
+    scale.value = 1
+  } else if (naturalW.value < w) {
+    scale.value = round2(naturalW.value / w)
+  } else {
+    scale.value = 1
+  }
   offsetX.value = 0
   offsetY.value = 0
 }
@@ -185,6 +193,8 @@ function toggleZoom() {
 }
 function onImgLoad(e) {
   naturalW.value = e.target.naturalWidth || 0
+  // 已知原图分辨率后重新适配，避免小图被放大显示模糊
+  fitView()
 }
 function onOpened() {
   nextTick(() => { if (imgSrc.value) fitView() })
