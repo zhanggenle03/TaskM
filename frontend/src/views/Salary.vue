@@ -103,35 +103,37 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="period" label="月份" width="80" />
-        <el-table-column label="发放日期" width="100">
+        <el-table-column prop="period" label="月份" width="68" />
+        <el-table-column label="发放日期" width="86">
           <template #default="{ row }">{{ row.pay_date || '—' }}</template>
         </el-table-column>
-        <el-table-column label="单位" min-width="125" show-overflow-tooltip>
+        <el-table-column label="单位" min-width="90" show-overflow-tooltip>
           <template #default="{ row }">{{ row.employer || '—' }}</template>
         </el-table-column>
-        <el-table-column label="应发" width="100" align="center">
+        <el-table-column label="应发" width="90" align="center">
           <template #default="{ row }"><span class="amt amt-gross">{{ fmt(row.gross) }}</span></template>
         </el-table-column>
-        <el-table-column label="个人扣" width="190" align="center">
+        <el-table-column label="个人扣" width="130" align="center">
           <template #default="{ row }">
-            <span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}</span>
-            <span class="tax-hint">（含税：{{ taxOf(row) }}）</span>
+            <div class="deduct-cell">
+              <span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}</span>
+              <span class="tax-hint">含税 {{ taxOf(row) }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="实发" width="115" align="center">
+        <el-table-column label="实发" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-net">{{ fmt(row.net) }}</span></template>
         </el-table-column>
-        <el-table-column label="到账" width="115" align="center">
+        <el-table-column label="到账" width="96" align="center">
           <template #default="{ row }"><span class="amt amt-credited" :class="{ 'amt-muted': row.credited_amount == null }">{{ row.credited_amount != null ? fmt(row.credited_amount) : '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="实际个税" width="115" align="center">
+        <el-table-column label="实际个税" width="96" align="center">
           <template #default="{ row }"><span class="amt amt-tax" :class="{ 'amt-muted': row.actual_tax == null }">{{ row.actual_tax != null ? fmt(row.actual_tax) : '—' }}</span></template>
         </el-table-column>
-        <el-table-column label="公司承担" width="115" align="center">
+        <el-table-column label="公司承担" width="96" align="center">
           <template #default="{ row }"><span class="amt amt-company">{{ fmt(row.company_cost) }}</span></template>
         </el-table-column>
-        <el-table-column label="工资条" width="78" align="center">
+        <el-table-column label="工资条" width="72" align="center">
           <template #default="{ row }">
             <el-button
               link
@@ -881,6 +883,7 @@ async function remove(row) {
 .amt { font-variant-numeric: tabular-nums; }
 .amt-gross { color: #67C23A; }
 .amt-deduct { color: #E6A23C; }
+.deduct-cell { display: flex; flex-direction: column; align-items: center; line-height: 1.35; }
 .tax-hint { color: #aaa; font-size: 12px; white-space: nowrap; }
 .amt-net { color: #534AB7; font-weight: 600; }
 .amt-credited { color: #1d953f; }
