@@ -93,7 +93,10 @@
                 <template v-else>
                   <div v-for="it in grp" :key="it.id" class="dc-row">
                     <div class="dc-name-wrap">
-                      <span class="dc-name">{{ it.name }}</span>
+                      <div class="dc-name-line">
+                        <span class="dc-name">{{ it.name }}</span>
+                        <span v-if="cat === 'income' && it.taxable === false" class="dc-nontax">非计税</span>
+                      </div>
                       <span v-if="it.base != null && it.rate != null" class="dc-formula">基数 {{ fmt(it.base) }} × {{ it.rate }}%</span>
                     </div>
                     <span class="dc-amt">{{ fmt(it.amount) }}</span>
@@ -113,8 +116,8 @@
         <el-table-column label="应发" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-gross">{{ fmt(row.gross) }}</span></template>
         </el-table-column>
-        <el-table-column label="个人扣" width="100" align="center">
-          <template #default="{ row }"><span class="amt amt-deduct" :title="`含税 ${taxOf(row)}`">{{ fmt(row.personal_deduction) }}</span></template>
+        <el-table-column label="应扣（含税）" width="152" align="center">
+          <template #default="{ row }"><span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}<small class="amt-tax-part">({{ taxOf(row) }})</small></span></template>
         </el-table-column>
         <el-table-column label="实发" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-net">{{ fmt(row.net) }}</span></template>
@@ -140,10 +143,10 @@
             </el-button>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="105" align="center">
+        <el-table-column label="操作" width="80" align="center">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <el-button link type="primary" title="编辑" @click="openEdit(row)"><el-icon :size="16"><Edit /></el-icon></el-button>
+            <el-button link type="danger" title="删除" @click="remove(row)"><el-icon :size="16"><Delete /></el-icon></el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -903,6 +906,7 @@ async function remove(row) {
 .amt { font-variant-numeric: tabular-nums; }
 .amt-gross { color: #67C23A; }
 .amt-deduct { color: #E6A23C; }
+.amt-tax-part { font-size: 11px; color: #909399; margin-left: 2px; }
 .amt-net { color: #534AB7; font-weight: 600; }
 .amt-credited { color: #1d953f; }
 .amt-tax { color: #d9534f; }
@@ -929,7 +933,9 @@ async function remove(row) {
 
 .dc-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; font-size: 13px; gap: 10px; }
 .dc-name-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dc-name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .dc-name { color: #2c2c2a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-nontax { flex-shrink: 0; font-size: 11px; color: #909399; background: #eef0f2; border-radius: 3px; padding: 0 5px; line-height: 16px; }
 .dc-formula { color: #b0b0b0; font-size: 11px; font-variant-numeric: tabular-nums; }
 .dc-amt { flex-shrink: 0; font-variant-numeric: tabular-nums; color: #555; }
 
