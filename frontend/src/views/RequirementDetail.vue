@@ -144,17 +144,22 @@
             </el-select>
           </div>
 
-          <!-- 自定义字段 -->
+          <!-- 自定义字段（默认折叠，点击标题展开/收起） -->
           <div v-if="customFields.length" class="side-field-section">
-            <div class="side-field-section-title">自定义字段</div>
-            <div v-for="f in customFields" :key="f.id" class="side-field">
-              <span class="side-field-label" :title="f.field_name">{{ f.field_name }}</span>
-              <span class="side-field-value">
-                <template v-if="f.field_type === 'link'">
-                  <a v-if="getFieldValue(f.id)" :href="getFieldValue(f.id)" target="_blank" class="cf-detail-link">{{ getFieldValue(f.id) }}</a>
-                </template>
-                <template v-else>{{ getFieldValue(f.id) || '—' }}</template>
-              </span>
+            <div class="side-field-section-title side-cf-toggle" @click="cfExpanded = !cfExpanded" title="点击展开/收起">
+              <span>自定义字段</span>
+              <el-icon class="cf-toggle-arrow" :class="{ 'cf-arrow-open': cfExpanded }"><ArrowRight /></el-icon>
+            </div>
+            <div v-show="cfExpanded">
+              <div v-for="f in customFields" :key="f.id" class="side-field">
+                <span class="side-field-label" :title="f.field_name">{{ f.field_name }}</span>
+                <span class="side-field-value">
+                  <template v-if="f.field_type === 'link'">
+                    <a v-if="getFieldValue(f.id)" :href="getFieldValue(f.id)" target="_blank" class="cf-detail-link">{{ getFieldValue(f.id) }}</a>
+                  </template>
+                  <template v-else>{{ getFieldValue(f.id) || '—' }}</template>
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -850,6 +855,8 @@ const projectId = computed(() => route.params.projectId)
 
 const loading = ref(false)
 const req = ref(null)
+// 自定义字段折叠状态（默认折叠，减少右侧栏空间占用）
+const cfExpanded = ref(false)
 const customFields = ref([])
 const statusPools = ref([])
 const priorityPools = ref([])
@@ -2189,6 +2196,19 @@ const onImgMouseUp = () => { isDragging.value = false }
   font-size: 12px; font-weight: 500; color: #aaa;
   padding: 6px 0 2px 0; border-top: 1px solid #f0f0ee;
 }
+/* 自定义字段折叠 */
+.side-cf-toggle {
+  display: flex; align-items: center; justify-content: space-between;
+  cursor: pointer; user-select: none;
+  padding: 7px 0; color: #666; font-weight: 500;
+  transition: color .15s;
+}
+.side-cf-toggle:hover { color: #409eff; }
+.cf-toggle-arrow {
+  font-size: 12px; color: #bbb;
+  transition: transform .2s;
+}
+.cf-toggle-arrow.cf-arrow-open { transform: rotate(90deg); }
 
 .side-info-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; }
 .side-info-row + .side-info-row { border-top: 1px solid #f0f0ee; }
