@@ -312,6 +312,8 @@ class TaskBrief(BaseModel):
     id: int
     display_id: Optional[str]
     title: str
+    status_id: Optional[int] = None
+    status_name: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -618,6 +620,7 @@ class RequirementOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     custom_values: List[RequirementCustomValueOut] = []
+    linked_tasks: List[TaskBrief] = []
     class Config:
         from_attributes = True
 

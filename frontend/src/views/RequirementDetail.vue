@@ -176,6 +176,26 @@
           </div>
         </div>
 
+        <!-- 关联任务 -->
+        <div class="side-card">
+          <div class="side-card-title">
+            <el-icon><Link /></el-icon> 关联任务
+            <span v-if="req.linked_tasks?.length" class="side-card-count">{{ req.linked_tasks.length }}</span>
+          </div>
+          <div v-if="req.linked_tasks?.length" class="linked-task-list">
+            <div
+              v-for="t in req.linked_tasks" :key="t.id"
+              class="linked-task-item" @click="goTask(t)"
+              :title="t.title"
+            >
+              <span class="linked-task-id">{{ shortTaskId(t.display_id) }}</span>
+              <span class="linked-task-title">{{ t.title }}</span>
+              <span v-if="t.status_name" class="linked-task-status" :title="t.status_name">{{ t.status_name }}</span>
+            </div>
+          </div>
+          <div v-else class="side-empty">暂无关联任务</div>
+        </div>
+
         <!-- 操作 -->
         <div class="side-card">
           <el-button type="danger" size="small" style="width:100%" @click="removeReq">
@@ -280,7 +300,7 @@
 import { ref, shallowRef, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, ArrowRight, List } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, List, Link } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import '@wangeditor/editor/dist/css/style.css'
 import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
@@ -1839,6 +1859,20 @@ const removeReq = async () => {
   router.push(`/projects/${projectId.value}/requirements`)
 }
 
+// ── 关联任务 ──
+const goTask = (task) => {
+  // 优先使用任务显式 ID（display_id）跳转；为空时回退数字 ID（后端已兼容）
+  const taskId = task.display_id || task.id
+  router.push({ name: 'task-detail', params: { projectId: projectId.value, taskId } })
+}
+
+// 只显示任务编号（display_id 中「-」后的部分），如 TTKM2026062401-0001 → 0001
+const shortTaskId = (id) => {
+  if (!id) return '—'
+  const i = id.lastIndexOf('-')
+  return i >= 0 ? id.slice(i + 1) : id
+}
+
 // ── 工具函数 ──
 const formatTime = (t) => t ? dayjs(t).format('YYYY-MM-DD HH:mm') : '—'
 
@@ -2214,4 +2248,36 @@ const onImgMouseUp = () => { isDragging.value = false }
 .side-info-row + .side-info-row { border-top: 1px solid #f0f0ee; }
 .side-info-label { font-size: 13px; color: #888; }
 .side-info-value { font-size: 13px; color: #555; }
+
+/* ── 关联任务 ── */
+.side-card-title {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 13px; font-weight: 600; color: #333;
+  margin-bottom: 8px;
+}
+.side-card-count {
+  margin-left: auto; font-size: 12px; font-weight: 500; color: #999;
+  background: #f2f2f0; border-radius: 10px; padding: 0 7px; line-height: 18px;
+}
+.linked-task-list { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow-y: auto; }
+.linked-task-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 6px; border: 1px solid #eef0ee;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.linked-task-item:hover { background: #f5f7f5; border-color: #d9dcd9; }
+.linked-task-id {
+  font-size: 12px; color: #409eff; flex-shrink: 0;
+  font-family: Consolas, Monaco, monospace;
+}
+.linked-task-title {
+  flex: 1; min-width: 0; font-size: 13px; color: #333;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.linked-task-status {
+  flex-shrink: 0; max-width: 90px; font-size: 12px; color: #777;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  background: #f2f2f0; border-radius: 4px; padding: 1px 6px;
+}
+.side-empty { font-size: 13px; color: #aaa; padding: 4px 0; }
 </style>

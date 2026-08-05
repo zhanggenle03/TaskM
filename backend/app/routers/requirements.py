@@ -13,7 +13,7 @@ from docx.oxml import OxmlElement
 from ..database import (
     get_db, Project, Requirement, RequirementCustomField, RequirementCustomValue,
     RequirementStatusPool, RequirementPriorityPool,
-    Task, StatusPool, touch_project, resolve_project, resolve_requirement,
+    Task, TaskRequirement, StatusPool, touch_project, resolve_project, resolve_requirement,
     generate_requirement_display_id, UPLOAD_DIR, CONFIG_DIR,
 )
 from ..schemas import (
@@ -24,6 +24,7 @@ from ..schemas import (
     RequirementPriorityPoolCreate, RequirementPriorityPoolUpdate, RequirementPriorityPoolOut,
     StatusDistribution, PriorityDistribution, TrendPoint,
     ProjectProgress, DashboardData, DistributionItem,
+    TaskBrief,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/requirements", tags=["requirements"])
@@ -619,10 +620,32 @@ def _get_requirement_with_values(db: Session, req_id: int) -> RequirementOut:
     req = db.query(Requirement).options(
         joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
     ).filter(Requirement.id == req_id).first()
-    return _format_requirement(req) if req else None
+    return _format_requirement(req, db) if req else None
 
 
-def _format_requirement(req: Requirement) -> RequirementOut:
+def _build_linked_tasks(db: Session, req: Requirement):
+    """反向查询关联到本需求的任务（含状态名），按任务编号排序"""
+    rows = db.query(Task, StatusPool).outerjoin(
+        StatusPool, StatusPool.id == Task.status_id
+    ).join(
+        TaskRequirement, TaskRequirement.task_id == Task.id
+    ).filter(
+        TaskRequirement.requirement_id == req.id,
+        Task.project_id == req.project_id,
+    ).order_by(Task.display_id).all()
+    return [
+        TaskBrief(
+            id=t.id,
+            display_id=t.display_id,
+            title=t.title,
+            status_id=t.status_id,
+            status_name=sp.name if sp else None,
+        )
+        for t, sp in rows
+    ]
+
+
+def _format_requirement(req: Requirement, db: Session = None) -> RequirementOut:
     vals = []
     for cv in req.custom_values:
         if cv.field and cv.field.is_builtin:
@@ -644,6 +667,7 @@ def _format_requirement(req: Requirement) -> RequirementOut:
         created_at=req.created_at,
         updated_at=req.updated_at,
         custom_values=vals,
+        linked_tasks=_build_linked_tasks(db, req) if db is not None else [],
     )
 
 
@@ -1513,7 +1537,7 @@ def get_requirement(
     req = db.query(Requirement).options(
         joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
     ).filter(Requirement.id == req.id).first()
-    return _format_requirement(req)
+    return _format_requirement(req, db)
 
 
 @router.put("/{requirement_id}", response_model=RequirementOut)
