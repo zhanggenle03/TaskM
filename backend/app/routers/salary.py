@@ -12,6 +12,7 @@
 """
 import urllib.parse
 from datetime import datetime, date
+import json
 import re
 import uuid
 import os
@@ -21,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
-from ..database import get_db, SalaryRecord, SalaryItem, TaxAdjustment, SalarySlip, UPLOAD_DIR
+from ..database import get_db, SalaryRecord, SalaryItem, TaxAdjustment, SalarySlip, SalaryConfigTemplate, UPLOAD_DIR
 from ..schemas import (
     SalaryRecordCreate,
     SalaryRecordOut,
@@ -33,12 +34,17 @@ from ..schemas import (
     SalaryCalcTaxIn,
     SalaryConfigOut,
     SalaryConfigUpdate,
+    SalaryConfigTemplateOut,
+    SalaryConfigTemplateListOut,
+    SalaryConfigTemplateCreate,
+    SalaryConfigTemplateUpdate,
+    SalaryConfigActiveUpdate,
     TaxAdjustmentCreate,
     TaxAdjustmentUpdate,
     TaxAdjustmentOut,
 )
 from ..schemas import VALID_SALARY_CATEGORIES
-from ..settings_manager import load_settings, save_settings, get_max_file_size
+from ..settings_manager import get_max_file_size
 from ..salary_export_service import generate_salary_export
 
 router = APIRouter(prefix="/salary")
@@ -886,9 +892,8 @@ def export_salary(
                     "quick_deduction": round(qd, 2),
                 }
 
-        # 配置信息
-        from ..settings_manager import load_settings
-        raw_cfg = load_settings().get("salary_config", {})
+        # 配置信息（读当前激活模板）
+        raw_cfg = _parse_config_json(_get_active_template(db)) if db.query(SalaryConfigTemplate).count() else {}
         salary_config = {
             "employer": raw_cfg.get("employer", ""),
             "social_bases": raw_cfg.get("social_bases", {}),
@@ -919,7 +924,7 @@ def export_salary(
         raise HTTPException(500, f"导出失败: {str(e)}")
 
 
-# ──────────────────────────────────────────────── 薪资通用配置 ────────────────────────────────────────────────
+# ──────────────────────────────────────────────── 薪资通用配置（多套模板） ────────────────────────────────────────────────
 
 def _merge_config(raw: dict) -> dict:
     """用默认值补齐缺失键，保证返回结构稳定"""
@@ -939,16 +944,52 @@ def _merge_config(raw: dict) -> dict:
     return cfg
 
 
-@router.get("/config", response_model=SalaryConfigOut)
-def get_salary_config():
-    """读取薪资通用配置（缴费基数/比例/默认单位/默认收入项等）"""
-    return _merge_config(load_settings().get("salary_config", {}))
+def _load_template(db, template_id: int) -> SalaryConfigTemplate:
+    tpl = db.query(SalaryConfigTemplate).filter(SalaryConfigTemplate.id == template_id).first()
+    if not tpl:
+        raise HTTPException(404, "配置模板不存在")
+    return tpl
 
 
-@router.put("/config", response_model=SalaryConfigOut)
-def update_salary_config(body: SalaryConfigUpdate):
-    """更新薪资通用配置"""
-    current = _merge_config(load_settings().get("salary_config", {}))
+def _parse_config_json(tpl) -> dict:
+    """解析模板 config_json → 补齐默认值"""
+    try:
+        raw = json.loads(tpl.config_json or "{}")
+    except Exception:
+        raw = {}
+    return _merge_config(raw if isinstance(raw, dict) else {})
+
+
+def _get_active_template(db) -> SalaryConfigTemplate:
+    """取当前激活模板；无激活标记则把第一条设为激活；表空则兜底创建一条"""
+    tpl = db.query(SalaryConfigTemplate).filter(SalaryConfigTemplate.is_active == True).first()  # noqa: E712
+    if not tpl:
+        tpl = db.query(SalaryConfigTemplate).order_by(SalaryConfigTemplate.id.asc()).first()
+        if tpl:
+            tpl.is_active = True
+            db.commit()
+            db.refresh(tpl)
+        else:
+            tpl = SalaryConfigTemplate(name="默认配置", config_json="{}", is_active=True)
+            db.add(tpl)
+            db.commit()
+            db.refresh(tpl)
+    return tpl
+
+
+def _template_to_out(db, tpl: SalaryConfigTemplate) -> dict:
+    return {
+        "id": tpl.id,
+        "name": tpl.name,
+        "config": _parse_config_json(tpl),
+        "is_active": tpl.is_active,
+        "created_at": tpl.created_at,
+        "updated_at": tpl.updated_at,
+    }
+
+
+def _normalize_config_patch(body: SalaryConfigUpdate) -> dict:
+    """校验/规范化请求体字段，返回仅含本次要更新键的 config dict"""
     data = {}
     if body.employer is not None:
         data["employer"] = str(body.employer)
@@ -1004,6 +1045,98 @@ def update_salary_config(body: SalaryConfigUpdate):
                     "taxable": bool(it.get("taxable", True)),
                 })
         data["default_income_items"] = items
+    return data
+
+
+@router.get("/config", response_model=SalaryConfigOut)
+def get_salary_config(db: Session = Depends(get_db)):
+    """读取当前激活模板的薪资通用配置（兼容旧接口语义）"""
+    return _parse_config_json(_get_active_template(db))
+
+
+@router.put("/config", response_model=SalaryConfigOut)
+def update_salary_config(body: SalaryConfigUpdate, db: Session = Depends(get_db)):
+    """更新当前激活模板的薪资通用配置（兼容旧接口语义）"""
+    tpl = _get_active_template(db)
+    current = _parse_config_json(tpl)
+    data = _normalize_config_patch(body)
     merged = _merge_config({**current, **data})
-    save_settings({"salary_config": merged})
+    tpl.config_json = json.dumps(merged, ensure_ascii=False)
+    db.commit()
     return merged
+
+
+@router.get("/config/templates", response_model=SalaryConfigTemplateListOut)
+def list_config_templates(db: Session = Depends(get_db)):
+    """模板列表（含每套展开的完整配置）与当前激活模板 id"""
+    tpls = db.query(SalaryConfigTemplate).order_by(SalaryConfigTemplate.id.asc()).all()
+    active = next((t for t in tpls if t.is_active), None)
+    return {
+        "templates": [_template_to_out(db, t) for t in tpls],
+        "active_id": active.id if active else None,
+    }
+
+
+@router.post("/config/templates", response_model=SalaryConfigTemplateOut)
+def create_config_template(body: SalaryConfigTemplateCreate, db: Session = Depends(get_db)):
+    """新建模板：以 base_id（缺省=当前激活）模板为底复制"""
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(400, "模板名称不能为空")
+    base = _load_template(db, body.base_id) if body.base_id is not None else _get_active_template(db)
+    cfg = _parse_config_json(base)
+    activate = bool(body.activate)
+    if activate:
+        db.query(SalaryConfigTemplate).update({SalaryConfigTemplate.is_active: False})
+    tpl = SalaryConfigTemplate(
+        name=name,
+        config_json=json.dumps(cfg, ensure_ascii=False),
+        is_active=activate,
+    )
+    db.add(tpl)
+    db.commit()
+    db.refresh(tpl)
+    return _template_to_out(db, tpl)
+
+
+@router.put("/config/templates/{template_id}", response_model=SalaryConfigTemplateOut)
+def update_config_template(template_id: int, body: SalaryConfigTemplateUpdate, db: Session = Depends(get_db)):
+    """更新模板的名称 / 配置字段（部分更新）"""
+    tpl = _load_template(db, template_id)
+    if body.name is not None:
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "模板名称不能为空")
+        tpl.name = name
+    if body.config is not None:
+        current = _parse_config_json(tpl)
+        data = _normalize_config_patch(body.config)
+        merged = _merge_config({**current, **data})
+        tpl.config_json = json.dumps(merged, ensure_ascii=False)
+    db.commit()
+    db.refresh(tpl)
+    return _template_to_out(db, tpl)
+
+
+@router.delete("/config/templates/{template_id}")
+def delete_config_template(template_id: int, db: Session = Depends(get_db)):
+    """删除模板：激活中的与仅剩的一套不可删"""
+    tpl = _load_template(db, template_id)
+    if tpl.is_active:
+        raise HTTPException(400, "激活中的模板不能删除，请先切换激活模板")
+    if db.query(SalaryConfigTemplate).count() <= 1:
+        raise HTTPException(400, "至少保留一套配置模板")
+    db.delete(tpl)
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/config/active", response_model=SalaryConfigTemplateOut)
+def set_active_template(body: SalaryConfigActiveUpdate, db: Session = Depends(get_db)):
+    """切换激活模板（用于「新增薪资自动带入」）"""
+    tpl = _load_template(db, body.template_id)
+    db.query(SalaryConfigTemplate).update({SalaryConfigTemplate.is_active: False})
+    tpl.is_active = True
+    db.commit()
+    db.refresh(tpl)
+    return _template_to_out(db, tpl)

@@ -480,6 +480,35 @@ class SalaryConfigUpdate(BaseModel):
     default_income_items: Optional[List[dict]] = None
 
 
+# ── 薪资配置模板（多套命名模板，存于 salary_config_templates 表）──
+
+class SalaryConfigTemplateOut(BaseModel):
+    id: int
+    name: str
+    config: SalaryConfigOut                            # 展开的完整配置
+    is_active: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    class Config:
+        from_attributes = True
+
+class SalaryConfigTemplateListOut(BaseModel):
+    templates: List[SalaryConfigTemplateOut]
+    active_id: Optional[int] = None
+
+class SalaryConfigTemplateCreate(BaseModel):
+    name: str
+    base_id: Optional[int] = None                      # 以某模板为底复制；缺省=以当前激活为底
+    activate: bool = True                              # 创建后是否立即设为激活
+
+class SalaryConfigTemplateUpdate(BaseModel):
+    name: Optional[str] = None
+    config: Optional[SalaryConfigUpdate] = None
+
+class SalaryConfigActiveUpdate(BaseModel):
+    template_id: int
+
+
 # ── 个税汇算调整项 ──
 
 # 其他综合所得收入类型（含计入比例）
