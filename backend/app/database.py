@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime, D
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
-import os, random, string
+import os, random, string, json
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.path.join(BASE_DIR, "taskm.db")
@@ -644,6 +644,22 @@ class SalarySlip(Base):
     record = relationship("SalaryRecord", back_populates="slips")
 
 
+class SalaryConfigTemplate(Base):
+    """薪资配置模板：多套命名模板（基础设置 + 五险一金）。
+
+    同一时刻最多一条 is_active=True（当前激活模板，用于「新增薪资自动带入」）。
+    config_json 存全量配置 JSON：employer / social_bases / social_rates /
+    default_pay_month / default_pay_day / default_income_items。
+    """
+    __tablename__ = "salary_config_templates"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)                 # 模板名，如「2025 深圳」
+    config_json = Column(Text, nullable=False, default="{}")   # 全量配置 JSON 字符串
+    is_active = Column(Boolean, default=False)                 # 当前激活模板
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 class TaxAdjustment(Base):
     """个税汇算调整项：其他综合所得收入、专项附加扣除、其他扣除。
 
@@ -867,6 +883,84 @@ def ensure_salary_slip_multi(engine):
         conn.execute(text("ALTER TABLE salary_slips_new RENAME TO salary_slips"))
         conn.commit()
     print("[migrate] salary_slips 已去除唯一约束（每月多张）", flush=True)
+
+
+def ensure_salary_config_template_table(engine):
+    """幂等迁移：创建 salary_config_templates 表（薪资配置模板）。
+
+    全新库由 Base.metadata.create_all 直接建出；此处仅兜底已存在的旧库。
+    """
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if "salary_config_templates" not in inspector.get_table_names():
+        SalaryConfigTemplate.__table__.create(engine)
+        print("[migrate] salary_config_templates 表已创建", flush=True)
+
+
+def migrate_salary_config_from_settings():
+    """把旧版 settings.json 中的 salary_config 迁移进 salary_config_templates 表。
+
+    幂等：表内已有记录即跳过。旧数据成为第一套模板（名称「默认配置」、标记激活），
+    迁移完成后移除 settings.json 中的旧键，此后配置读写统一走数据库表。
+    若无旧配置（全新库），则兜底创建一条空的激活模板「默认配置」，保证永远至少一套。
+    """
+    try:
+        from .settings_manager import load_settings, remove_settings_key
+        db = SessionLocal()
+        try:
+            if db.query(SalaryConfigTemplate).count() > 0:
+                return
+            settings = load_settings()
+            raw = settings.get("salary_config") or {}
+            cfg_json = json.dumps(raw, ensure_ascii=False)
+            db.add(SalaryConfigTemplate(
+                name="默认配置",
+                config_json=cfg_json, is_active=True,
+            ))
+            db.commit()
+            remove_settings_key("salary_config")
+            if raw:
+                print("[migrate] salary_config 已迁移为「默认配置」模板", flush=True)
+            else:
+                print("[migrate] 已创建默认薪资配置模板", flush=True)
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[migrate] salary_config 迁移失败: {e}", flush=True)
+
+
+def ensure_salary_config_template_drop_effective_from(engine):
+    """幂等迁移：salary_config_templates 表删除 effective_from 列（生效月份已无用途）。
+
+    SQLite 旧版本不支持 ALTER DROP COLUMN，采用重建表：建新表→拷贝数据→删旧表→改名。
+    数据完整性：仅丢弃 effective_from 列，其余列原样保留。
+    """
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    if "salary_config_templates" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("salary_config_templates")]
+    if "effective_from" not in cols:
+        return
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE salary_config_templates_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                config_json TEXT NOT NULL,
+                is_active BOOLEAN,
+                created_at DATETIME,
+                updated_at DATETIME
+            )
+        """))
+        conn.execute(text(
+            "INSERT INTO salary_config_templates_new (id, name, config_json, is_active, created_at, updated_at) "
+            "SELECT id, name, config_json, is_active, created_at, updated_at FROM salary_config_templates"
+        ))
+        conn.execute(text("DROP TABLE salary_config_templates"))
+        conn.execute(text("ALTER TABLE salary_config_templates_new RENAME TO salary_config_templates"))
+        conn.commit()
+    print("[migrate] salary_config_templates 已删除 effective_from 列", flush=True)
 
 
 # ---- 显示ID生成工具函数 ----

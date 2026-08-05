@@ -40,6 +40,16 @@ def save_settings(data: dict) -> dict:
     return current
 
 
+def remove_settings_key(key: str) -> dict:
+    """从设置文件中移除指定键（如迁移完成后的旧配置键），返回最新设置"""
+    current = load_settings()
+    if key in current:
+        current.pop(key)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(current, f, indent=2, ensure_ascii=False)
+    return current
+
+
 def get_max_file_size() -> int:
     """获取附件大小限制（字节）"""
     settings = load_settings()
