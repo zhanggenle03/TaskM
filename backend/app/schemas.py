@@ -423,7 +423,9 @@ class SalaryTaxSummaryOut(BaseModel):
     """个税年度汇算汇总（按年累计，含综合汇算调整）"""
     year: int
     month_count: int = 0                             # 有记录月份数
-    total_gross: float = 0.0                         # 薪资年度累计应发
+    data_month: int = 0                              # 薪资数据已有最新月份（折算截止月；0=无数据）
+    total_gross: float = 0.0                         # 薪资年度累计应发（仅计税收入）
+    non_taxable_income: float = 0.0                  # 薪资非计税收入合计（转账等，不计入汇算）
     total_social_insurance: float = 0.0              # 薪资累计专项扣除（三险一金个人部分）
     actual_tax_paid: float = 0.0                     # 当年实缴税额（各月实际个税之和）
     deduction_fee: float = 0.0                       # 基本减除费用

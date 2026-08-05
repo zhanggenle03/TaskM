@@ -5,9 +5,9 @@
     └─ SalaryItem（明细行，category ∈ income/deduction/tax/company_cost）
 
 汇总口径（前端展示用，后端计算不冗余存储）：
-  应发合计     = Σ income
-  个人扣除合计 = Σ deduction + Σ tax
-  实发         = 应发合计 − 个人扣除合计
+  应发合计 = Σ income
+  应扣合计 = Σ deduction + Σ tax（含税）
+  实发     = 应发合计 − 应扣合计
   公司承担合计 = Σ company_cost
 """
 import urllib.parse
@@ -505,6 +505,7 @@ def salary_tax_summary(
     )
 
     total_gross = 0.0
+    non_taxable_income = 0.0
     total_social_insurance = 0.0
     actual_tax_paid = 0.0
     month_count = len(records)
@@ -516,6 +517,8 @@ def salary_tax_summary(
             if i.category == "income":
                 if i.taxable is None or i.taxable:
                     total_gross += i.amount
+                else:
+                    non_taxable_income += i.amount
             elif i.category == "deduction" and i.tax_deductible:
                 total_social_insurance += i.amount
 
@@ -531,7 +534,14 @@ def salary_tax_summary(
         .all()
     )
 
-    current_month = datetime.now().month
+    # 折算截止月份：优先按薪资数据已有最新月份（如数据到 10 月则按 10 月），无记录时回退系统当前月
+    data_month = 0
+    if records:
+        try:
+            data_month = int(records[-1].period.split('-')[1])
+        except (IndexError, ValueError):
+            data_month = 0
+    current_month = data_month or datetime.now().month
     is_current_year = (year == datetime.now().year)
 
     other_income_included = 0.0
@@ -619,7 +629,9 @@ def salary_tax_summary(
     return SalaryTaxSummaryOut(
         year=year,
         month_count=month_count,
+        data_month=data_month,
         total_gross=round(total_gross, 2),
+        non_taxable_income=round(non_taxable_income, 2),
         total_social_insurance=round(total_social_insurance, 2),
         actual_tax_paid=actual_tax_paid,
         deduction_fee=round(deduction_fee, 2),

@@ -10,9 +10,14 @@
           <p class="page-sub">综合所得年度汇算清缴</p>
         </div>
       </div>
-      <el-select v-model="taxYear" size="small" style="width:100px">
-        <el-option v-for="y in taxYears" :key="y" :label="`${y} 年`" :value="y" />
-      </el-select>
+      <div style="display:flex;align-items:center;gap:12px">
+        <el-tooltip content="勾选后，非计税收入（转账等）也并入综合所得收入额参与计税计算" placement="bottom">
+          <el-checkbox v-model="includeNontax" size="small">含非计税</el-checkbox>
+        </el-tooltip>
+        <el-select v-model="taxYear" size="small" style="width:100px">
+          <el-option v-for="y in taxYears" :key="y" :label="`${y} 年`" :value="y" />
+        </el-select>
+      </div>
     </div>
 
     <div v-if="!loaded && loading" style="text-align:center;padding:80px 0">
@@ -32,6 +37,14 @@
           <div class="kpi-sub">
             <span>薪资 {{ fmt(base.total_gross) }}</span>
             <span v-if="ps.other_income_included > 0"> + 其他 {{ fmt(ps.other_income_included) }}</span>
+            <span v-if="includeNontax && ps.non_taxable_income > 0"> + 非计税 {{ fmt(ps.non_taxable_income) }}</span>
+          </div>
+        </div>
+        <div class="kpi-card kpi-nontax">
+          <div class="kpi-label">非计税收入</div>
+          <div class="kpi-value">{{ fmt(ps.non_taxable_income) }}</div>
+          <div class="kpi-sub">
+            <span>合计收入 {{ fmt(ps.total_income_all) }}</span>
           </div>
         </div>
         <div class="kpi-card kpi-deduct">
@@ -130,7 +143,7 @@
                 <span class="adj-item-detail-inline" v-else-if="item.category !== 'other_income' && item.monthly_amount > 0">
                   · 月 {{ fmt(item.monthly_amount) }} × {{ periodMonths(item) }} 月
                 </span>
-                <span v-if="showProrate(item)" class="adj-item-prorate">（计入前{{ currentMonth }}个月: {{ fmt(prorateAmt(item)) }}）</span>
+                <span v-if="showProrate(item)" class="adj-item-prorate">按已录入 {{ dataMonth }} 月折算 {{ fmt(prorateAmt(item)) }}</span>
                 <span class="adj-item-amt">{{ fmt(item.amount || 0) }}</span>
                 <div class="adj-item-actions">
                   <el-button text size="small" @click="editItem(item)">编辑</el-button>
@@ -284,20 +297,21 @@ const loading = ref(false)
 const loaded = ref(false)
 const taxYear = ref(new Date().getFullYear())
 const taxYears = ref([])
+const includeNontax = ref(false)
 const savingAll = ref(false)
 const rows = ref([])
 let _keySeq = 0
 
-// 当前月份（用于当年折算判断）
+// 当前年份（用于当年折算判断）；折算截止月优先用薪资数据最新月份（后端 data_month）
 const nowDate = new Date()
 const currentYear = nowDate.getFullYear()
-const currentMonth = nowDate.getMonth() + 1
+const dataMonth = computed(() => taxSummary.value?.data_month || (nowDate.getMonth() + 1))
 
 function showProrate(item) {
   if (taxYear.value !== currentYear) return false
   if (!item.period_from || !item.period_to) return false
   const tm = parseInt(item.period_to.split('-')[1])
-  return !isNaN(tm) && tm > currentMonth
+  return !isNaN(tm) && tm > dataMonth.value
 }
 
 function prorateAmt(item) {
@@ -305,7 +319,7 @@ function prorateAmt(item) {
   const fm = parseInt(item.period_from.split('-')[1])
   const tm = parseInt(item.period_to.split('-')[1])
   const total = tm - fm + 1
-  const eff = currentMonth - fm + 1
+  const eff = Math.max(0, dataMonth.value - fm + 1)
   if (item.monthly_amount) return Math.round(item.monthly_amount * eff * 100) / 100
   return Math.round(item.amount * eff / total * 100) / 100
 }
@@ -325,7 +339,7 @@ const defaultForm = () => ({
 const form = reactive(defaultForm())
 
 // ── 基础值 ──
-const base = computed(() => taxSummary.value || { total_gross: 0, total_social_insurance: 0, actual_tax_paid: 0, deduction_fee: 0, month_count: 0 })
+const base = computed(() => taxSummary.value || { total_gross: 0, non_taxable_income: 0, total_social_insurance: 0, actual_tax_paid: 0, deduction_fee: 0, month_count: 0 })
 
 // 按当前年份过滤
 const currentRows = computed(() => rows.value.filter(r => r.year === taxYear.value))
@@ -335,16 +349,16 @@ const ps = computed(() => {
   const b = base.value
   const isCurYear = (taxYear.value === currentYear)
 
-  // 当年月份比例折算
+  // 当年月份比例折算（截止到薪资数据最新月份）
   function effAmt(r) {
     if (!isCurYear || !r.period_from || !r.period_to || !r.amount) return r.amount || 0
     const fm = parseInt(r.period_from.split('-')[1])
     const tm = parseInt(r.period_to.split('-')[1])
     if (isNaN(fm) || isNaN(tm)) return r.amount || 0
-    if (tm <= currentMonth) return r.amount
-    if (fm > currentMonth) return 0
+    if (tm <= dataMonth.value) return r.amount
+    if (fm > dataMonth.value) return 0
     const total = tm - fm + 1
-    const eff = currentMonth - fm + 1
+    const eff = dataMonth.value - fm + 1
     if (r.monthly_amount) return Math.round(r.monthly_amount * eff * 100) / 100
     return Math.round(r.amount * eff / total * 100) / 100
   }
@@ -356,7 +370,8 @@ const ps = computed(() => {
     else if (r.category === 'special_deduction') sd += a
     else if (r.category === 'other_deduction') od += a
   }
-  const totalIncome = b.total_gross + oi
+  const nonTax = b.non_taxable_income || 0
+  const totalIncome = b.total_gross + oi + (includeNontax.value ? nonTax : 0)
   const totalD = b.deduction_fee + b.total_social_insurance + sd + od
   const taxable = Math.max(0, totalIncome - totalD)
   let tr = 0, qd = 0, remain = 36000
@@ -374,6 +389,8 @@ const ps = computed(() => {
   const at = Math.round(actualTax * 100) / 100
   return {
     total_income: Math.round(totalIncome * 100) / 100,
+    non_taxable_income: Math.round(nonTax * 100) / 100,
+    total_income_all: Math.round((b.total_gross + oi + nonTax) * 100) / 100,
     total_deductions: Math.round(totalD * 100) / 100,
     deduction_fee: b.deduction_fee,
     other_income_included: Math.round(oi * 100) / 100,
@@ -618,12 +635,13 @@ onMounted(() => { loadAll() })
 .page-title { font-size:22px; font-weight:600; color:#2c2c2a; margin:0; }
 .page-sub { margin:4px 0 0; font-size:13px; color:#999; }
 
-.kpi-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px; }
-.kpi-card { background:#fff; border:1px solid #e8e8e4; border-radius:12px; padding:20px 24px; }
+.kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
+.kpi-card { background:#fff; border:1px solid #e8e8e4; border-radius:12px; padding:20px 20px; }
 .kpi-label { font-size:13px; color:#999; margin-bottom:10px; }
 .kpi-value { font-size:24px; font-weight:700; color:#2c2c2a; font-variant-numeric:tabular-nums; }
 .kpi-sub { margin-top:6px; font-size:12px; color:#aaa; line-height:1.5; }
 .kpi-gross .kpi-value { color:#534ab7; }
+.kpi-nontax .kpi-value { color:#909399; }
 .kpi-deduct .kpi-value { color:#67C23A; }
 .kpi-insurance .kpi-value { color:#E6A23C; }
 
@@ -660,6 +678,7 @@ onMounted(() => { loadAll() })
 .adj-item-amt { font-size:15px; font-weight:700; color:#534ab7; margin-left:auto; flex-shrink:0; }
 .adj-item-actions { display:flex; gap:4px; flex-shrink:0; }
 .adj-item-detail-inline { font-size:12px; color:#999; flex-shrink:0; white-space:nowrap; }
+.adj-item-prorate { font-size:12px; color:#E6A23C; flex-shrink:0; white-space:nowrap; }
 
 .adj-footer { display:flex; gap:24px; padding-top:14px; margin-top:8px; border-top:1px solid #eef0f2; font-size:13px; color:#666; }
 .adj-footer b { color:#534ab7; }
