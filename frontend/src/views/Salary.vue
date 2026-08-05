@@ -260,12 +260,20 @@
       </template>
     </el-dialog>
 
-    <!-- 薪资默认配置 弹窗 -->
-    <el-dialog v-model="configVisible" title="薪资默认配置" width="900px" top="2vh"
+    <!-- 薪资配置模板 弹窗 -->
+    <el-dialog v-model="configVisible" title="薪资配置模板" width="900px" top="2vh"
       class="config-dialog" @closed="resetConfigForm"
       :style="{ height: '640px', maxHeight: '640px', display: 'flex', flexDirection: 'column' }">
       <el-alert type="info" :closable="false" show-icon
-        title="通用稳定配置，配置一次后新增薪资时自动带入，无需每月重复填写。" style="margin-bottom:16px" />
+        title="支持多套配置模板；「设为激活」的模板会在新增薪资时自动带入。"
+        style="margin-bottom:10px" />
+      <!-- 当前编辑模板指示 -->
+      <div class="tpl-current" v-if="currentTpl">
+        <el-tag size="small" type="primary" effect="light" class="tpl-current-tag">当前模板</el-tag>
+        <span class="tpl-current-name">{{ currentTpl.name }}</span>
+        <el-tag v-if="currentTpl.id === activeTemplateId" size="small" type="success" effect="light">当前生效</el-tag>
+        <span class="tpl-current-hint">以下修改保存到该模板</span>
+      </div>
       <el-tabs v-model="configTab" class="config-tabs">
         <!-- 基础设置 -->
         <el-tab-pane label="基础设置" name="basic">
@@ -328,10 +336,60 @@
           <div class="hint" style="margin-top:10px">各项最低缴费基数通常不同，可分别填写；留空则该项套用时需手动填基数。</div>
         </el-tab-pane>
 
+        <!-- 模板管理 -->
+        <el-tab-pane label="模板管理" name="templates">
+          <div class="tpl-manage">
+            <div class="tpl-manage-head">
+              <span class="tpl-manage-tip">选中模板即切换「基础设置 / 五险一金」的编辑对象；「设为激活」后新增薪资自动带入该模板。</span>
+              <el-button size="small" type="primary" plain @click="tplCreateVisible = true">
+                <el-icon><Plus /></el-icon>新建模板
+              </el-button>
+            </div>
+            <el-table :data="templates" size="small" class="tpl-table" highlight-current-row
+              :row-key="t => t.id" :current-row-key="currentTemplateId" @current-change="onTplRowChange">
+              <el-table-column label="模板名称" min-width="220">
+                <template #default="{ row }">
+                  <span class="tpl-name">{{ row.name }}</span>
+                  <el-tag v-if="row.id === activeTemplateId" size="small" type="success" class="tpl-tag">当前生效</el-tag>
+                  <el-tag v-if="row.id === currentTemplateId && row.id !== activeTemplateId" size="small" class="tpl-tag">编辑中</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="310">
+                <template #default="{ row }">
+                  <el-button size="small" text type="primary" :disabled="row.is_active"
+                    @click.stop="activateTpl(row)">设为激活</el-button>
+                  <el-button size="small" text @click.stop="editTpl(row)">编辑</el-button>
+                  <el-button size="small" text @click.stop="renameTemplate(row)">重命名</el-button>
+                  <el-button size="small" text type="danger" :disabled="row.is_active" @click.stop="removeTemplate(row)">删除</el-button>
+                </template>
+              </el-table-column>
+              <template #empty>
+                <el-empty description="暂无模板" :image-size="60" />
+              </template>
+            </el-table>
+          </div>
+        </el-tab-pane>
+
       </el-tabs>
       <template #footer>
         <el-button @click="configVisible = false">取消</el-button>
         <el-button type="primary" :loading="configSaving" @click="saveConfig">保存配置</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新建配置模板 弹窗 -->
+    <el-dialog v-model="tplCreateVisible" title="新建配置模板" width="440px" top="20vh">
+      <el-form label-width="80px">
+        <el-form-item label="模板名称" required>
+          <el-input v-model="tplCreateForm.name" placeholder="如：2025 深圳 / 2024 旧基数" maxlength="50" />
+        </el-form-item>
+        <el-form-item>
+          <el-checkbox v-model="tplCreateForm.activate">创建后立即设为激活模板（新增薪资自动带入）</el-checkbox>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="tplCreateVisible = false">取消</el-button>
+        <el-button type="primary" :loading="tplCreating" @click="confirmCreateTemplate">创建</el-button>
       </template>
     </el-dialog>
   </div>
@@ -344,6 +402,8 @@ import {
   getSalaryRecords, getSalaryRecord,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
   getSalaryConfig, updateSalaryConfig, calcSalaryTax,
+  getSalaryConfigTemplates, createSalaryConfigTemplate, updateSalaryConfigTemplate,
+  deleteSalaryConfigTemplate, setActiveSalaryConfigTemplate,
   exportSalary,
 } from '../api'
 import SalarySlipDialog from '../components/SalarySlipDialog.vue'
@@ -435,11 +495,16 @@ function onSlipChanged() {
   loadData()
 }
 
-// ── 薪资通用配置（用于新增时自动带入）──
+// ── 薪资通用配置（多套模板，用于新增时自动带入）──
 const configVisible = ref(false)
 const configTab = ref('basic')
 const configSaving = ref(false)
 const salaryConfig = ref(null)
+const templates = ref([])            // 配置模板列表
+const activeTemplateId = ref(null)   // 当前激活模板 id
+const currentTemplateId = ref(null)  // 对话框中当前编辑的模板 id
+// 当前编辑的模板对象（tab 上方指示条用）
+const currentTpl = computed(() => templates.value.find(t => t.id === currentTemplateId.value) || null)
 const emptyConfig = () => ({
   employer: '',
   social_bases: {},
@@ -450,6 +515,10 @@ const emptyConfig = () => ({
 })
 const configForm = reactive(emptyConfig())
 function resetConfigForm() { Object.assign(configForm, emptyConfig()) }
+// 新建模板对话框
+const tplCreateVisible = ref(false)
+const tplCreating = ref(false)
+const tplCreateForm = reactive({ name: '', activate: true })
 
 const emptyForm = () => ({ id: null, period: '', pay_date: '', employer: '', credited_amount: null, actual_tax: null, remark: '', items: [] })
 const form = reactive(emptyForm())
@@ -520,29 +589,51 @@ onMounted(async () => { await loadData(); await loadConfig() })
 function loadConfig() {
   return getSalaryConfig().then(c => { salaryConfig.value = c }).catch(() => { salaryConfig.value = emptyConfig() })
 }
+function fillConfigForm(c) {
+  configForm.employer = c.employer || ''
+  configForm.social_bases = { ...(c.social_bases || {}) }
+  configForm.default_pay_month = c.default_pay_month || 'current'
+  configForm.default_pay_day = c.default_pay_day || 10
+  const rates = defaultRates()
+  Object.assign(rates, c.social_rates || {})
+  configForm.social_rates = rates
+  configForm.default_income_items = (c.default_income_items || []).map(i => ({ name: i.name, amount: i.amount, taxable: i.taxable !== false }))
+}
 async function openConfig() {
   try {
-    const c = await getSalaryConfig()
-    configForm.employer = c.employer || ''
-    configForm.social_bases = { ...(c.social_bases || {}) }
-    configForm.default_pay_month = c.default_pay_month || 'current'
-    configForm.default_pay_day = c.default_pay_day || 10
-    const rates = defaultRates()
-    Object.assign(rates, c.social_rates || {})
-    configForm.social_rates = rates
-    configForm.default_income_items = (c.default_income_items || []).map(i => ({ name: i.name, amount: i.amount, taxable: i.taxable !== false }))
+    const res = await getSalaryConfigTemplates()
+    templates.value = res.templates || []
+    activeTemplateId.value = res.active_id ?? null
+    if (!templates.value.length) {
+      ElMessage.warning('暂无配置模板')
+      configVisible.value = true
+      return
+    }
+    const tpl = templates.value.find(t => t.id === activeTemplateId.value) || templates.value[0]
+    currentTemplateId.value = tpl.id
+    fillConfigForm(tpl.config)
     configVisible.value = true
   } catch { /* 拦截器已提示 */ }
 }
-async function saveConfig() {
-  configSaving.value = true
-  // 各项缴费基数分项收集（仅保留已填数字项）
+// 模板管理 tab：点击表格行即切换「基础设置 / 五险一金」的编辑对象
+function onTplRowChange(row) {
+  if (!row) return
+  currentTemplateId.value = row.id
+  fillConfigForm(row.config)
+}
+// 「编辑」：选中模板并跳回基础设置 tab 直接改配置
+function editTpl(tpl) {
+  onTplRowChange(tpl)
+  configTab.value = 'basic'
+}
+// 收集表单值 → 可提交的配置对象
+function buildConfigPayload() {
   const bases = {}
   for (const k of RATE_KEYS) {
     const v = configForm.social_bases[k]
     if (v !== '' && v != null && !isNaN(Number(v))) bases[k] = Number(v)
   }
-  const payload = {
+  return {
     employer: configForm.employer,
     social_bases: bases,
     social_rates: { ...configForm.social_rates },
@@ -551,13 +642,81 @@ async function saveConfig() {
     default_income_items: configForm.default_income_items
       .filter(i => i.name).map(i => ({ name: i.name, amount: Number(i.amount) || 0, taxable: i.taxable !== false })),
   }
+}
+async function saveConfig() {
+  if (currentTemplateId.value == null) {
+    ElMessage.warning('请先选择配置模板')
+    return
+  }
+  configSaving.value = true
   try {
-    const saved = await updateSalaryConfig(payload)
-    salaryConfig.value = saved
+    const saved = await updateSalaryConfigTemplate(currentTemplateId.value, { config: buildConfigPayload() })
+    const i = templates.value.findIndex(t => t.id === saved.id)
+    if (i >= 0) templates.value[i] = saved
+    salaryConfig.value = saved.config
     ElMessage.success('配置已保存')
     configVisible.value = false
   } catch { /* 拦截器已提示 */ }
   finally { configSaving.value = false }
+}
+async function confirmCreateTemplate() {
+  const name = (tplCreateForm.name || '').trim()
+  if (!name) { ElMessage.warning('请填写模板名称'); return }
+  tplCreating.value = true
+  try {
+    const tpl = await createSalaryConfigTemplate({
+      name,
+      activate: tplCreateForm.activate,
+    })
+    templates.value.push(tpl)
+    if (tpl.is_active) activeTemplateId.value = tpl.id
+    currentTemplateId.value = tpl.id
+    fillConfigForm(tpl.config)
+    salaryConfig.value = tpl.config
+    tplCreateVisible.value = false
+    tplCreateForm.name = ''
+    tplCreateForm.activate = true
+    configTab.value = 'basic'
+    ElMessage.success('模板已创建')
+  } catch { /* 拦截器已提示 */ }
+  finally { tplCreating.value = false }
+}
+async function renameTemplate(tpl) {
+  if (!tpl) return
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新名称', '重命名模板', {
+      inputValue: tpl.name,
+      inputPattern: /\S+/,
+      inputErrorMessage: '名称不能为空',
+    })
+    const saved = await updateSalaryConfigTemplate(tpl.id, { name: value.trim() })
+    const i = templates.value.findIndex(t => t.id === saved.id)
+    if (i >= 0) templates.value[i] = saved
+  } catch { /* 取消或错误由拦截器提示 */ }
+}
+async function removeTemplate(tpl) {
+  if (!tpl) return
+  try {
+    await ElMessageBox.confirm(`确定删除模板「${tpl.name}」？删除后不可恢复。`, '删除模板', { type: 'warning' })
+    await deleteSalaryConfigTemplate(tpl.id)
+    templates.value = templates.value.filter(t => t.id !== tpl.id)
+    const next = templates.value.find(t => t.id === activeTemplateId.value) || templates.value[0]
+    if (next) {
+      currentTemplateId.value = next.id
+      fillConfigForm(next.config)
+    }
+    ElMessage.success('模板已删除')
+  } catch { /* 取消忽略 */ }
+}
+async function activateTpl(tpl) {
+  if (!tpl) return
+  try {
+    const saved = await setActiveSalaryConfigTemplate(tpl.id)
+    activeTemplateId.value = saved.id
+    templates.value = templates.value.map(t => ({ ...t, is_active: t.id === saved.id }))
+    salaryConfig.value = saved.config
+    ElMessage.success(`「${saved.name}」已设为激活模板，新增薪资将自动带入`)
+  } catch { /* 拦截器已提示 */ }
 }
 
 // ── 表单内明细 ──
@@ -598,8 +757,8 @@ function isRateMode(item) {
   return item.base !== '' && item.base != null && item.rate !== '' && item.rate != null
 }
 const numOrNull = (v) => (v === '' || v == null ? null : Number(v))
-function applySocialTemplate(silent = false) {
-  // 套用模板：按配置中「各项缴费基数」+ 比例自动生成明细；已存在同名项不重复添加
+async function applySocialTemplate(silent = false) {
+  // 套用激活模板：按「各项缴费基数」+ 比例自动生成明细；已存在同名项不重复添加
   const cfg = salaryConfig.value
   const rates = (cfg && cfg.social_rates) ? cfg.social_rates : SOCIAL_RATES
   const bases = (cfg && cfg.social_bases) ? cfg.social_bases : {}
@@ -625,7 +784,7 @@ function applySocialTemplate(silent = false) {
     ElMessage.success(anyBase ? '已套用五险一金模板（按各项缴费基数自动计算）' : '已套用五险一金模板（各项基数请在套用后分别填写）')
   }
 }
-function applyIncomeTemplate() {
+async function applyIncomeTemplate() {
   const cfg = salaryConfig.value
   if (!cfg || !cfg.default_income_items || !cfg.default_income_items.length) {
     ElMessage.warning('请先在「薪资配置」中设置默认收入项')
@@ -805,6 +964,7 @@ watch(
   () => form.period,
   (p) => {
     if (!form.id && p) {
+      // 按「激活模板」的默认发放月份 + 发放日自动预填
       const cfg = salaryConfig.value || {}
       const monthOffset = cfg.default_pay_month === 'next' ? 1 : 0
       const day = cfg.default_pay_day || 10
@@ -1040,6 +1200,33 @@ async function remove(row) {
 .config-tabs { margin-top: -4px; }
 .config-tabs :deep(.el-tabs__header) { margin-bottom: 16px; }
 .config-tabs :deep(.el-tabs__item) { font-size: 14px; }
+.tpl-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background: var(--el-fill-color-light);
+  flex-shrink: 0;
+}
+.tpl-current-name { font-weight: 600; font-size: 14px; }
+.tpl-current-hint { margin-left: auto; color: var(--el-text-color-secondary); font-size: 12px; }
+.tpl-manage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.tpl-manage-tip { color: var(--el-text-color-secondary); font-size: 12px; }
+.tpl-table { width: 100%; }
+.tpl-table .el-table__row { cursor: pointer; }
+.tpl-table :deep(.el-table .cell) { white-space: nowrap; padding-left: 8px; padding-right: 8px; }
+.tpl-table :deep(.el-table .el-button + .el-button) { margin-left: 4px; }
+.tpl-name { font-weight: 500; margin-right: 6px; }
+.tpl-tag { margin-left: 2px; }
 .cfg-section { padding: 2px; }
 .cfg-divider {
   font-size: 12px; color: #999; font-weight: 500;
