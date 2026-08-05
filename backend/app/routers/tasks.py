@@ -423,6 +423,7 @@ def create_task(project_id: str, data: TaskCreate, db: Session = Depends(get_db)
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(project_id: str, task_id: str, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
+    found = resolve_task(db, proj.id, task_id)  # 兼容数字 ID / 显示 ID
     task = db.query(Task).options(
         joinedload(Task.contacts),
         joinedload(Task.tags),
@@ -432,7 +433,7 @@ def get_task(project_id: str, task_id: str, db: Session = Depends(get_db)):
         joinedload(Task.communications)
             .joinedload(Communication.communication_contacts)
             .joinedload(CommunicationContact.contact)
-    ).filter(Task.display_id == task_id, Task.project_id == proj.id).first()
+    ).filter(Task.id == found.id).first()
     if not task:
         raise HTTPException(404, "任务不存在")
     derived = derive_task_status(db, task.id)
@@ -444,9 +445,7 @@ def get_task(project_id: str, task_id: str, db: Session = Depends(get_db)):
 @router.put("/{task_id}", response_model=TaskOut)
 def update_task(project_id: str, task_id: str, data: TaskUpdate, db: Session = Depends(get_db)):
     proj = resolve_project(db, project_id)
-    task = db.query(Task).filter(Task.display_id == task_id, Task.project_id == proj.id).first()
-    if not task:
-        raise HTTPException(404, "任务不存在")
+    task = resolve_task(db, proj.id, task_id)  # 兼容数字 ID / 显示 ID
 
     current_status = derive_task_status(db, task.id)
     if current_status is None:

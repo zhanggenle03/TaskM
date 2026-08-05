@@ -1018,9 +1018,18 @@ def resolve_project(db, project_display_id: str):
 
 
 def resolve_task(db, project_pk: int, task_display_id: str):
-    """根据显示ID查找任务，未找到抛出404"""
+    """根据显示ID查找任务，未找到抛出404（兼容数字 ID 兜底）"""
     from fastapi import HTTPException
-    task = db.query(Task).filter(Task.display_id == task_display_id, Task.project_id == project_pk).first()
+    query = db.query(Task).filter(Task.project_id == project_pk)
+    # 尝试按数字 ID 查询
+    try:
+        numeric_id = int(task_display_id)
+        task = query.filter(Task.id == numeric_id).first()
+        if task:
+            return task
+    except (ValueError, TypeError):
+        pass
+    task = query.filter(Task.display_id == task_display_id).first()
     if not task:
         raise HTTPException(404, "任务不存在")
     return task
