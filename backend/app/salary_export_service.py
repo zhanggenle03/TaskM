@@ -7,6 +7,7 @@ Sheet 结构：
 """
 
 import io
+import os
 from datetime import datetime
 from typing import List, Optional, Dict
 from decimal import Decimal, ROUND_HALF_UP
@@ -16,6 +17,7 @@ from openpyxl.styles import (
     Font, PatternFill, Alignment, Border, Side, numbers
 )
 from openpyxl.utils import get_column_letter
+from openpyxl.drawing.image import Image
 
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,11 @@ SOCIAL_RATE_KEYS = [
     "养老保险(公司)", "医疗保险(公司)", "失业保险(公司)",
     "工伤保险(公司)", "生育保险(公司)", "住房公积金(公司)",
 ]
+
+# ── 工资条图片导出参数 ──
+SLIP_COL_WIDTH = 34   # 工资条列宽（字符数）
+SLIP_MAX_W = 220      # 图片最大宽度（px，等比缩放不放大）
+SLIP_MAX_H = 170      # 图片最大高度（px，等比缩放不放大）
 
 # ── 字体与颜色常量 ──
 FONT_TITLE = Font(name='微软雅黑', size=16, bold=True, color='1F3864')
@@ -83,6 +90,21 @@ def _apply_cell(ws, row, col, value, font=FONT_BODY, fill=None,
     return cell
 
 
+def _load_slip_image(file_path: str) -> Image:
+    """加载工资条图片；openpyxl 不支持 webp 等格式时经 Pillow 转 PNG 返回。"""
+    from PIL import Image as PILImage
+    pil = PILImage.open(file_path)
+    pil.load()
+    if (pil.format or '').upper() in ('PNG', 'JPEG', 'GIF'):
+        pil.close()
+        return Image(file_path)
+    buf = io.BytesIO()
+    mode = pil.mode if pil.mode in ('RGBA', 'LA') else 'RGB'
+    pil.convert(mode).save(buf, format='PNG')
+    buf.seek(0)
+    return Image(buf)
+
+
 def _write_header_row(ws, row, headers, start_col=1, fill=FILL_HEADER, font=FONT_HEADER):
     for i, h in enumerate(headers):
         _apply_cell(ws, row, start_col + i, h, font=font, fill=fill, alignment=ALIGN_CENTER)
@@ -128,7 +150,7 @@ def _build_summary_sheet(ws, summary: dict, tax_summary: Optional[dict],
     sum_rows = [
         ('记录月份数', f'{summary.get("record_count", 0)} 个月'),
         ('区间应发合计', summary.get('total_gross', 0)),
-        ('个人扣除合计', summary.get('total_personal_deduction', 0)),
+        ('应扣合计', summary.get('total_personal_deduction', 0)),
         ('区间实发合计', summary.get('total_net', 0)),
         ('到账合计', summary.get('total_credited', 0)),
         ('公司承担合计', summary.get('total_company_cost', 0)),
@@ -194,33 +216,48 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
         'company_cost': 'CFD8DC',  # 公司浅灰
     }
 
-    # 收集所有出现过的项目名称及对应类别（按 income→deduction→tax→company_cost 排序）
+    # 收集所有出现过的项目名称及对应类别（按 income→deduction→tax→company_cost 排序）。
+    # 同名收入项按计税状态拆分（计税/非计税各一列），避免混用时错位。
     cat_order = {'income': 0, 'deduction': 1, 'tax': 2, 'company_cost': 3}
-    item_info = {}  # name -> {category, cat_label}
-    seen = set()
+    item_info = {}  # (name, tax_flag) -> {name, category, cat_label, taxable}
     for rec in sorted_records:
         for it in sorted(rec.items, key=lambda x: (cat_order.get(x.category, 9), x.sort_order)):
-            if it.name and it.name not in seen:
-                seen.add(it.name)
-                item_info[it.name] = {
+            if not it.name:
+                continue
+            tax_flag = 'nontax' if (it.category == 'income' and it.taxable is False) else 'tax'
+            key = (it.name, tax_flag)
+            if key not in item_info:
+                item_info[key] = {
+                    'name': it.name,
                     'category': it.category,
                     'cat_label': CAT_LABELS.get(it.category, it.category),
+                    'taxable': tax_flag == 'nontax',
                 }
 
     # 按类别+首次出现排序
-    item_order = sorted(item_info.keys(), key=lambda n: (
-        cat_order.get(item_info[n]['category'], 9),
-        list(item_info.keys()).index(n),
+    item_order = sorted(item_info.keys(), key=lambda k: (
+        cat_order.get(item_info[k]['category'], 9),
+        list(item_info.keys()).index(k),
     ))
 
-    # 表头：基本信息列 + "类别-项目名"形式列 + 汇总列
+    # 表头：基本信息列 + "类别-项目名"形式列（非计税收入带前缀） + 汇总列 + 工资条列
     base_headers = ['月份', '发放日期', '单位']
-    item_headers = [f"{item_info[n]['cat_label']}-{n}" for n in item_order]
-    sum_headers = ['应发合计', '个人扣合计', '实发', '公司承担', '到账', '实际个税', '备注']
-    headers = base_headers + item_headers + sum_headers
+    item_headers = []
+    for k in item_order:
+        info = item_info[k]
+        if info['category'] == 'income' and info['taxable']:
+            item_headers.append(f"收入（非计税）-{info['name']}")
+        else:
+            item_headers.append(f"{info['cat_label']}-{info['name']}")
+    sum_headers = ['应发合计', '应扣合计', '实发', '公司承担', '到账', '实际个税', '备注']
+    # 工资条列：列数 = 单月最大附件数；某月多张按序占多列（第 i 张放第 i 列），不是每月都新开列
+    max_slips = max((len(rec.slips) for rec in sorted_records), default=0)
+    slip_headers = [f'工资条{i + 1}' for i in range(max_slips)]
+    headers = base_headers + item_headers + sum_headers + slip_headers
     n_base = len(base_headers)
     n_item = len(item_headers)
     n_sum = len(sum_headers)
+    slip_col_start = n_base + n_item + n_sum + 1  # 1-based：工资条首列
 
     # 写入表头
     _write_header_row(ws, 1, headers)
@@ -232,8 +269,8 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
         if ci < n_base:
             cell.fill = PatternFill('solid', fgColor='B4C6E7')
         elif ci < n_base + n_item:
-            name = item_order[ci - n_base]
-            cat = item_info[name]['category']
+            key = item_order[ci - n_base]
+            cat = item_info[key]['category']
             cell.fill = PatternFill('solid', fgColor=CAT_HEADER_FILLS.get(cat, 'B0BEC5'))
         else:
             cell.fill = PatternFill('solid', fgColor='7B9CD6')
@@ -246,18 +283,20 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
     for rec in sorted_records:
         gross, pd, net, cc = _compute_totals(rec)
 
-        # 构建项目名→金额映射（不含类别前缀的原始名）
+        # 构建 (name, tax_flag) → 金额映射（同名同计税状态累加）
         item_amt = {}
         tax_from_items = 0.0
         for it in rec.items:
             if it.name:
-                item_amt[it.name] = it.amount
+                tax_flag = 'nontax' if (it.category == 'income' and it.taxable is False) else 'tax'
+                key = (it.name, tax_flag)
+                item_amt[key] = item_amt.get(key, 0.0) + (it.amount or 0.0)
             if it.category == 'tax':
                 tax_from_items += it.amount or 0.0
 
         # 如果记录没有单独的"个税"项行，但 actual_tax 有值，则补充
-        if '个税' not in item_amt and rec.actual_tax is not None:
-            item_amt['个税'] = rec.actual_tax
+        if ('个税', 'tax') not in item_amt and rec.actual_tax is not None:
+            item_amt[('个税', 'tax')] = rec.actual_tax
 
         # 基本信息列
         _apply_cell(ws, r, 1, rec.period, font=FONT_BODY)
@@ -265,9 +304,9 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
         _apply_cell(ws, r, 3, rec.employer or '—', font=FONT_BODY, alignment=ALIGN_LEFT)
 
         # 项目金额列（按 item_order 顺序输出）
-        for ci, name in enumerate(item_order):
+        for ci, key in enumerate(item_order):
             col = n_base + ci + 1
-            amt = item_amt.get(name)
+            amt = item_amt.get(key)
             if amt is not None:
                 _apply_cell(ws, r, col, amt, font=FONT_BODY, number_format='#,##0.00')
             else:
@@ -288,6 +327,24 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
                         number_format='#,##0.00' if is_num else None,
                         alignment=ALIGN_LEFT if not is_num else ALIGN_CENTER)
 
+        # 工资条：第 i 张附件插到第 i 列（缺失/损坏文件跳过）
+        if rec.slips:
+            max_h = 0
+            for i, slip in enumerate(sorted(rec.slips, key=lambda x: x.id)):
+                if i >= max_slips or not slip.file_path or not os.path.exists(slip.file_path):
+                    continue
+                try:
+                    img = _load_slip_image(slip.file_path)
+                    ratio = min(SLIP_MAX_W / img.width, SLIP_MAX_H / img.height, 1.0)
+                    img.width = max(1, int(img.width * ratio))
+                    img.height = max(1, int(img.height * ratio))
+                    ws.add_image(img, f"{get_column_letter(slip_col_start + i)}{r}")
+                    max_h = max(max_h, img.height)
+                except Exception:
+                    continue
+            if max_h:
+                ws.row_dimensions[r].height = max_h + 8
+
         # 隔行底色
         if (r - 2) % 2 == 1:
             for ci in range(1, len(headers) + 1):
@@ -303,9 +360,11 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
             ws.column_dimensions[col_letter].width = widths[ci]
         elif ci < n_base + n_item:
             ws.column_dimensions[col_letter].width = 18  # 项目列（含前缀）
-        else:
+        elif ci < n_base + n_item + n_sum:
             sum_widths = [12, 12, 12, 12, 12, 12, 20]
             ws.column_dimensions[col_letter].width = sum_widths[ci - (n_base + n_item)]
+        else:
+            ws.column_dimensions[col_letter].width = SLIP_COL_WIDTH  # 工资条图片列
 
     # 冻结首行
     ws.freeze_panes = 'A2'
