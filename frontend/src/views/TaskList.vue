@@ -13,25 +13,30 @@
         <p class="page-sub">{{ project?.description }}</p>
       </div>
       <div class="header-actions">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索任务、沟通记录、对接人…"
-          clearable
-          class="search-input"
-          @input="onSearchInput"
-          @clear="onSearchClear"
-        >
-          <template #prepend>
-            <el-select v-model="searchScope" class="scope-select" @change="onScopeChange">
-              <el-option label="全部" value="all" />
-              <el-option label="任务" value="task" />
-              <el-option label="沟通" value="comm" />
-              <el-option label="标签" value="tag" />
-              <el-option label="对接人" value="contact" />
-            </el-select>
-          </template>
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
+        <div class="search-group">
+          <el-select
+            v-model="searchScope"
+            class="scope-select"
+            placeholder="搜索范围"
+            @change="onScopeChange"
+          >
+            <el-option label="全部" value="all" />
+            <el-option label="任务信息" value="task" />
+            <el-option label="沟通记录" value="comm" />
+            <el-option label="标签" value="tag" />
+            <el-option label="对接人" value="contact" />
+          </el-select>
+          <el-input
+            v-model="searchKeyword"
+            placeholder="输入关键词…"
+            clearable
+            class="search-input"
+            @input="onSearchInput"
+            @clear="onSearchClear"
+          >
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+        </div>
         <span v-if="isSearching" class="search-count">命中 {{ tasks.length }} 个任务</span>
         <div class="sort-group">
           <el-select v-model="sortBy" @change="onSortChange" placeholder="排序方式">
@@ -464,17 +469,9 @@ const removeTask = async (t) => {
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-.search-input { width: 360px; }
-.search-input :deep(.el-input-group__prepend) { padding: 0; background: #faf9f7; }
-.scope-select { width: 84px; height: 100%; }
-.scope-select :deep(.el-select__wrapper) {
-  box-shadow: none !important;
-  background: transparent;
-  height: 100%;
-  padding: 0 8px;
-  display: flex;
-  align-items: center;
-}
+.search-group { display: inline-flex; align-items: center; gap: 8px; }
+.scope-select { width: 100px; }
+.search-input { width: 300px; }
 .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .filter-label { font-size: 13px; color: #888; }
 .task-list { display: flex; flex-direction: column; gap: 8px; }
