@@ -528,6 +528,7 @@ const removeTask = async (t) => {
 .sort-group .el-select :deep(.el-select__wrapper) {
   border-radius: 4px 0 0 4px;
   box-shadow: inset 1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color) !important;
+  transition: box-shadow .15s, color .15s;
 }
 .sort-group .el-select :deep(.el-select__inner) { padding-right: 4px; }
 /* 排序方向按钮：无边框，改用与下拉一致的 box-shadow 三边（边框线同位于内部 1px，上下对齐无割裂） */
@@ -537,6 +538,7 @@ const removeTask = async (t) => {
   height: 32px;
   background: #fff;
   box-shadow: inset -1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color);
+  transition: box-shadow .15s, color .15s;
 }
 /* hover/点击：图标与边框变主题紫，保持白底，不再浅蓝 */
 .sort-order-btn:hover, .sort-order-btn:focus, .sort-order-btn:active {
