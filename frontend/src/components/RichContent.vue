@@ -38,4 +38,50 @@ watch(() => props.html, () => nextTick(applyNumbers))
 .comm-content :deep(h3)::before {
   content: attr(data-heading-num); font-weight: 700; margin-right: 2px;
 }
+/* ── 行内代码：高辨识度代码配色（等宽 + 玫红字 + 浅粉底 + 细边框） ── */
+.comm-content :deep(code) {
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  color: #c7254e;
+  background-color: #f9f2f4;
+  border: 1px solid #f0d3da;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+/* ── 代码块（pre>code）：深色代码块观感（VS Code/GitHub 暗色底 + macOS 圆点），保留换行缩进 ── */
+.comm-content :deep(pre) {
+  position: relative;
+  background: #282c34;
+  color: #e6e6e6;
+  border: 1px solid #1f2328;
+  border-radius: 8px;
+  padding: 34px 16px 12px;
+  overflow-x: auto;
+  font-family: Consolas, Monaco, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 10px 0;
+}
+.comm-content :deep(pre)::before {
+  content: '';
+  position: absolute;
+  top: 12px;
+  left: 14px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff5f56;
+  box-shadow: 16px 0 0 #ffbd2e, 32px 0 0 #27c93f;
+}
+.comm-content :deep(pre code) {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+  color: inherit;
+  white-space: pre;
+  word-break: normal;
+}
 </style>
