@@ -469,9 +469,26 @@ const removeTask = async (t) => {
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-.search-group { display: inline-flex; align-items: center; gap: 8px; }
+.search-group { display: inline-flex; align-items: stretch; }
 .scope-select { width: 100px; }
-.search-input { width: 300px; }
+/* 下拉：左圆角，只保留左/上/下边框（右缘与输入框融合） */
+.scope-select :deep(.el-select__wrapper) {
+  border-radius: 4px 0 0 4px;
+  box-shadow: inset 1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color) !important;
+}
+/* 输入框：右圆角，只保留右/上/下边框（左缘与下拉融合，中间无分割线） */
+.search-group .search-input { width: 300px; }
+.search-group .search-input :deep(.el-input__wrapper) {
+  border-radius: 0 4px 4px 0;
+  box-shadow: inset -1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color) !important;
+}
+/* 聚焦/展开时整组同步高亮为主题紫 */
+.search-group:focus-within .scope-select :deep(.el-select__wrapper) {
+  box-shadow: inset 1px 0 0 0 #534ab7, inset 0 1px 0 0 #534ab7, inset 0 -1px 0 0 #534ab7 !important;
+}
+.search-group:focus-within .search-input :deep(.el-input__wrapper) {
+  box-shadow: inset -1px 0 0 0 #534ab7, inset 0 1px 0 0 #534ab7, inset 0 -1px 0 0 #534ab7 !important;
+}
 .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .filter-label { font-size: 13px; color: #888; }
 .task-list { display: flex; flex-direction: column; gap: 8px; }
