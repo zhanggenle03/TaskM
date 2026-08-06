@@ -12,7 +12,18 @@
         <h1 class="page-title">任务管理</h1>
         <p class="page-sub">{{ project?.description }}</p>
       </div>
-      <div style="display:flex;gap:8px;align-items:center">
+      <div class="header-actions">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索任务、沟通记录、对接人…"
+          clearable
+          class="search-input"
+          @input="onSearchInput"
+          @clear="onSearchClear"
+        >
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <span v-if="isSearching" class="search-count">命中 {{ tasks.length }} 个任务</span>
         <div class="sort-group">
           <el-select v-model="sortBy" @change="onSortChange" placeholder="排序方式">
             <el-option v-for="opt in sortOptions" :key="opt.key" :label="opt.label" :value="opt.key" />
@@ -30,22 +41,6 @@
           <el-icon><Plus /></el-icon> 新建任务
         </el-button>
       </div>
-    </div>
-
-    <!-- 综合搜索 -->
-    <div class="filter-bar">
-      <el-input
-        v-model="searchKeyword"
-        placeholder="搜索任务标题、描述、编号、标签、对接人、沟通记录…"
-        clearable
-        style="width: 380px"
-        @input="onSearchInput"
-        @clear="onSearchClear"
-      >
-        <template #prefix><el-icon><Search /></el-icon></template>
-      </el-input>
-      <span v-if="isSearching" class="search-count">命中 {{ tasks.length }} 个任务</span>
-      <el-button v-if="isSearching" size="small" text type="primary" @click="clearSearch">清除搜索</el-button>
     </div>
 
     <!-- 状态筛选 -->
@@ -216,12 +211,6 @@ const onSearchInput = () => {
 const onSearchClear = () => {
   clearTimeout(searchTimer)
   // 此时 v-model 已被清空（clear 事件晚于值更新触发），无条件恢复全量列表
-  router.replace({ query: { ...route.query, search: undefined } })
-  loadTasks()
-}
-
-const clearSearch = () => {
-  searchKeyword.value = ''
   router.replace({ query: { ...route.query, search: undefined } })
   loadTasks()
 }
@@ -449,6 +438,8 @@ const removeTask = async (t) => {
 .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; }
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.search-input { width: 240px; }
 .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .filter-label { font-size: 13px; color: #888; }
 .task-list { display: flex; flex-direction: column; gap: 8px; }
