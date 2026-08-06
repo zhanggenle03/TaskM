@@ -466,8 +466,15 @@ const removeTask = async (t) => {
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .search-input { width: 360px; }
 .search-input :deep(.el-input-group__prepend) { padding: 0; background: #faf9f7; }
-.scope-select { width: 76px; }
-.scope-select .el-input__wrapper { box-shadow: none !important; background: transparent; }
+.scope-select { width: 84px; height: 100%; }
+.scope-select :deep(.el-select__wrapper) {
+  box-shadow: none !important;
+  background: transparent;
+  height: 100%;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+}
 .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .filter-label { font-size: 13px; color: #888; }
 .task-list { display: flex; flex-direction: column; gap: 8px; }
