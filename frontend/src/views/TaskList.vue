@@ -530,16 +530,27 @@ const removeTask = async (t) => {
   box-shadow: inset 1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color) !important;
 }
 .sort-group .el-select :deep(.el-select__inner) { padding-right: 4px; }
-/* 排序方向按钮：右圆角，无左边框，紧贴下拉 */
+/* 排序方向按钮：无边框，改用与下拉一致的 box-shadow 三边（边框线同位于内部 1px，上下对齐无割裂） */
 .sort-order-btn {
+  border: none;
   border-radius: 0 4px 4px 0;
-  border-left: none;
   height: 32px;
+  background: #fff;
+  box-shadow: inset -1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color);
 }
-.sort-order-btn:hover, .sort-order-btn:focus { border-left: none; }
-/* 展开下拉时下拉侧同步高亮为主题紫 */
+/* hover/点击：图标与边框变主题紫，保持白底，不再浅蓝 */
+.sort-order-btn:hover, .sort-order-btn:focus, .sort-order-btn:active {
+  background: #fff;
+  color: #534ab7;
+  box-shadow: inset -1px 0 0 0 #c0c4cc, inset 0 1px 0 0 #c0c4cc, inset 0 -1px 0 0 #c0c4cc;
+}
+/* 展开下拉时整组同步高亮为主题紫（左右两侧一致） */
 .sort-group:focus-within .el-select :deep(.el-select__wrapper) {
   box-shadow: inset 1px 0 0 0 #534ab7, inset 0 1px 0 0 #534ab7, inset 0 -1px 0 0 #534ab7 !important;
+}
+.sort-group:focus-within .sort-order-btn {
+  color: #534ab7;
+  box-shadow: inset -1px 0 0 0 #534ab7, inset 0 1px 0 0 #534ab7, inset 0 -1px 0 0 #534ab7;
 }
 .task-status-tag { flex-shrink: 0; }
 .task-date-col { font-size: 12px; color: #e24b4a; flex-shrink: 0; white-space: nowrap; }
