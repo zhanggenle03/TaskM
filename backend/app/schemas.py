@@ -261,6 +261,21 @@ class TaskUpdate(BaseModel):
     due_date: Optional[date] = None
     tag_ids: Optional[List[int]] = None
 
+# 任务搜索命中信息（仅 list_tasks 带 search 参数时返回）
+class SearchCommHit(BaseModel):
+    """任务内命中的一条沟通记录摘要"""
+    id: int
+    comm_at: Optional[datetime] = None
+    subject: str = ""
+    comm_type: str = ""
+    snippet: str = ""          # 剥离 HTML 后的正文片段（含关键词上下文）
+    contacts: List[str] = []
+
+class SearchHits(BaseModel):
+    """单个任务在综合搜索中的命中信息"""
+    task_fields: List[str] = []   # 命中的任务字段：title/description/display_id/tag/contact
+    comms: List[SearchCommHit] = []
+
 class TaskOut(BaseModel):
     id: int
     display_id: Optional[str]
@@ -276,6 +291,7 @@ class TaskOut(BaseModel):
     updated_at: datetime
     contacts: List[ContactOut] = []
     tags: List[TagBrief] = []
+    search_hits: Optional[SearchHits] = None
     class Config:
         from_attributes = True
 

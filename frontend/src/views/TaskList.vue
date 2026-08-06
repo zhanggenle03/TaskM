@@ -32,6 +32,22 @@
       </div>
     </div>
 
+    <!-- 综合搜索 -->
+    <div class="filter-bar">
+      <el-input
+        v-model="searchKeyword"
+        placeholder="搜索任务标题、描述、编号、标签、对接人、沟通记录…"
+        clearable
+        style="width: 380px"
+        @input="onSearchInput"
+        @clear="onSearchClear"
+      >
+        <template #prefix><el-icon><Search /></el-icon></template>
+      </el-input>
+      <span v-if="isSearching" class="search-count">命中 {{ tasks.length }} 个任务</span>
+      <el-button v-if="isSearching" size="small" text type="primary" @click="clearSearch">清除搜索</el-button>
+    </div>
+
     <!-- 状态筛选 -->
     <div class="filter-bar">
       <span class="filter-label">状态筛选：</span>
@@ -82,6 +98,17 @@
               <span class="task-comm-col">变更于 {{ formatTime(t.last_comm_at) }}</span>
             </span>
           </div>
+          <!-- 综合搜索命中详情 -->
+          <div v-if="t.search_hits" class="search-hits">
+            <div v-if="t.search_hits.task_fields?.length" class="search-hit-fields">
+              <span v-for="f in t.search_hits.task_fields" :key="f" class="hit-field-chip">{{ fieldLabel[f] || f }}</span>
+            </div>
+            <div v-for="c in t.search_hits.comms" :key="c.id" class="search-hit-comm">
+              <span class="hit-time">{{ c.comm_at ? formatTime(c.comm_at) : '' }}</span>
+              <span v-if="c.subject" class="hit-subject" v-html="highlightText(c.subject)"></span>
+              <span class="hit-snippet" v-html="highlightText(c.snippet)"></span>
+            </div>
+          </div>
         </div>
         <div class="task-status-tag">
           <el-tag :color="statusColor(t.status_id)" effect="plain" size="small" style="border:none;background:transparent">
@@ -95,7 +122,7 @@
         </div>
       </div>
     </div>
-    <el-empty v-else description="暂无任务" />
+    <el-empty v-else :description="isSearching ? '未找到匹配的任务' : '暂无任务'" />
 
     <!-- 新建/编辑任务 -->
     <el-dialog v-model="showCreate" :title="editTarget ? '编辑任务' : '新建任务'" width="480px" @close="resetForm">
@@ -139,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -170,6 +197,45 @@ const loading = ref(false)
 const editTarget = ref(null)
 const form = ref({ title: '', description: '', status_id: null, priority: 'normal', due_date: null, tag_ids: [] })
 const taskListRef = ref(null)
+
+// ---- 综合搜索 ----
+const searchKeyword = ref(route.query.search || '')
+const isSearching = computed(() => !!searchKeyword.value.trim())
+const fieldLabel = { title: '标题', description: '描述', display_id: '编号', tag: '标签', contact: '对接人' }
+let searchTimer = null
+
+const onSearchInput = () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    const kw = searchKeyword.value.trim()
+    router.replace({ query: { ...route.query, search: kw || undefined } })
+    loadTasks()
+  }, 300)
+}
+
+const onSearchClear = () => {
+  clearTimeout(searchTimer)
+  // 此时 v-model 已被清空（clear 事件晚于值更新触发），无条件恢复全量列表
+  router.replace({ query: { ...route.query, search: undefined } })
+  loadTasks()
+}
+
+const clearSearch = () => {
+  searchKeyword.value = ''
+  router.replace({ query: { ...route.query, search: undefined } })
+  loadTasks()
+}
+
+const escapeHtml = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// 关键词高亮（先转义再替换，防 XSS）
+const highlightText = (text) => {
+  const kw = searchKeyword.value.trim()
+  if (!kw) return escapeHtml(text)
+  const escaped = escapeHtml(text)
+  const kwEsc = escapeHtml(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return escaped.replace(new RegExp(`(${kwEsc})`, 'gi'), '<mark class="hit-mark">$1</mark>')
+}
 
 // 自动对齐所有任务卡的「当前负责人」列宽
 const alignContactCols = () => {
@@ -222,6 +288,8 @@ const loadTasks = async () => {
   const params = { sort_by: sortBy.value, sort_order: sortOrder.value }
   if (activeStatus.value !== null) params.status_id = activeStatus.value
   if (activeTagIds.value.length) params.tag_ids = activeTagIds.value.join(',')
+  const kw = searchKeyword.value.trim()
+  if (kw) params.search = kw
   tasks.value = await getTasks(projectId, params)
   // 刷新后重新计算当前使用的状态/标签ID（覆盖筛选后可见的已停用项）
   const allTasks = await getTasks(projectId, {})
@@ -310,6 +378,14 @@ watch(() => route.query.sort_order, (newVal) => {
   }
 })
 
+watch(() => route.query.search, (newVal) => {
+  const v = newVal || ''
+  if (v !== searchKeyword.value) {
+    searchKeyword.value = v
+    loadTasks()
+  }
+})
+
 onMounted(load)
 onBeforeRouteUpdate(() => { load() })
 
@@ -389,6 +465,15 @@ const removeTask = async (t) => {
 .task-comm-info { display: inline-flex; gap: 24px; color: #aaa; font-size: 12px; }
 .task-contact-col { flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .task-comm-col { white-space: nowrap; }
+.search-count { font-size: 12px; color: #888; }
+.search-hits { margin-top: 8px; padding: 6px 10px; background: #f6f5ff; border-radius: 6px; display: flex; flex-direction: column; gap: 4px; }
+.search-hit-fields { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.hit-field-chip { font-size: 11px; background: #534ab7; color: #fff; border-radius: 4px; padding: 0 6px; line-height: 1.7; }
+.search-hit-comm { font-size: 12px; color: #666; display: flex; gap: 8px; align-items: baseline; }
+.hit-time { color: #999; flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+.hit-subject { font-weight: 600; color: #534ab7; flex-shrink: 0; }
+.hit-snippet { line-height: 1.5; word-break: break-all; }
+.hit-mark { background: #ffe58f; color: inherit; padding: 0 1px; border-radius: 2px; }
 .sort-group { display: inline-flex; align-items: center; }
 .sort-group .el-select { width: 120px; }
 .sort-group .el-select .el-input__wrapper { border-radius: 4px 0 0 4px; border-right: none; }

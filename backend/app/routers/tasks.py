@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from sqlalchemy import or_, func as sa_func
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 from datetime import datetime, date as date_type
@@ -17,12 +18,39 @@ from ..schemas import (
     CommunicationCreate, CommunicationUpdate, CommunicationOut,
     TagBrief, RequirementBrief,
     KanbanData, KanbanColumn, KanbanTaskSimple,
+    SearchHits, SearchCommHit,
 )
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
 
 
 # ---------- 工具函数 ----------
+
+def _escape_like(s: str) -> str:
+    """转义 LIKE 通配符，配合 escape='\\\\' 使用，避免用户输入 % _ 被当作通配符"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _strip_html(html: str) -> str:
+    """将富文本（HTML）剥离为纯文本，用于搜索命中片段展示"""
+    text = re.sub(r"<br\s*/?>", "\n", html or "")
+    text = re.sub(r"</(?:p|div|li|h[1-6]|tr)>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    for ent, ch in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"')):
+        text = text.replace(ent, ch)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", "\n", text)
+    return text.strip()
+
+
+def _make_snippet(text: str, keyword: str, radius: int = 45) -> str:
+    """从纯文本中截取包含关键词的上下文片段，用于命中摘要"""
+    idx = text.lower().find(keyword.lower())
+    if idx < 0:
+        return text[: radius * 2]
+    start = max(0, idx - radius)
+    end = min(len(text), idx + len(keyword) + radius)
+    return ("…" if start > 0 else "") + text[start:end] + ("…" if end < len(text) else "")
 
 def _get_comm_type_name(db, project_pk: int):
     """获取自动生成沟通记录使用的沟通类型名。优先"备注"，否则项目默认，最后兜底"备注"。"""
@@ -46,6 +74,7 @@ def list_tasks(
     project_id: str,
     status_id: Optional[int] = None,
     tag_ids: Optional[str] = None,
+    search: Optional[str] = None,
     sort_by: str = "updated_at",
     sort_order: str = "desc",
     db: Session = Depends(get_db),
@@ -55,7 +84,6 @@ def list_tasks(
     if tag_ids:
         tag_id_list = [int(x) for x in tag_ids.split(",") if x.strip()]
         if tag_id_list:
-            from sqlalchemy import func as sa_func
             sub = db.query(TaskTag.task_id).filter(
                 TaskTag.tag_id.in_(tag_id_list)
             ).group_by(TaskTag.task_id).having(
@@ -88,7 +116,6 @@ def list_tasks(
             t.status_id = derived
 
     # 批量查询每个任务的最新沟通记录（含对接人）
-    from sqlalchemy import func as sa_func
     max_id_subq = db.query(
         Communication.task_id,
         sa_func.max(Communication.id).label("max_id")
@@ -136,6 +163,83 @@ def list_tasks(
     if status_id is not None:
         tasks = [t for t in tasks if t.status_id == status_id]
 
+    # ========== 综合搜索（可选）：任务字段 / 标签 / 对接人 / 任务内部沟通记录 ==========
+    search_hits_map = {}
+    if search and search.strip():
+        kw = search.strip()
+        like_kw = f"%{_escape_like(kw)}%"
+
+        # 1) 命中任务本身字段（标题/描述/编号）
+        field_task_ids = [r[0] for r in db.query(Task.id).filter(
+            Task.id.in_(task_ids),
+            or_(
+                Task.title.like(like_kw, escape="\\"),
+                Task.description.like(like_kw, escape="\\"),
+                Task.display_id.like(like_kw, escape="\\"),
+            ),
+        ).all()]
+        # 2) 命中标签名
+        tag_task_ids = [r[0] for r in db.query(TaskTag.task_id).join(
+            TagPool, TagPool.id == TaskTag.tag_id
+        ).filter(
+            TaskTag.task_id.in_(task_ids),
+            TagPool.name.like(like_kw, escape="\\"),
+        ).all()]
+        # 3) 命中对接人姓名
+        contact_task_ids = [r[0] for r in db.query(Contact.task_id).filter(
+            Contact.task_id.in_(task_ids),
+            Contact.name.like(like_kw, escape="\\"),
+        ).all()]
+        # 4) 命中任务内部沟通记录（正文或主题）
+        hit_comms = db.query(Communication).filter(
+            Communication.task_id.in_(task_ids),
+            or_(
+                Communication.content.like(like_kw, escape="\\"),
+                Communication.subject.like(like_kw, escape="\\"),
+            ),
+        ).options(
+            joinedload(Communication.communication_contacts)
+                .joinedload(CommunicationContact.contact)
+        ).order_by(Communication.comm_at.desc(), Communication.id.desc()).all()
+        comm_task_ids = {c.task_id for c in hit_comms}
+
+        matched_ids = set(field_task_ids) | set(tag_task_ids) | set(contact_task_ids) | comm_task_ids
+        tasks = [t for t in tasks if t.id in matched_ids]
+
+        # 按任务分组命中的沟通记录（每条截取关键词上下文片段，最多返回 5 条）
+        comm_hits_by_task = {}
+        for c in hit_comms:
+            names = [cc.contact.name for cc in c.communication_contacts if cc.contact]
+            comm_hits_by_task.setdefault(c.task_id, []).append(
+                SearchCommHit(
+                    id=c.id,
+                    comm_at=c.comm_at,
+                    subject=c.subject or "",
+                    comm_type=c.comm_type or "",
+                    snippet=_make_snippet(_strip_html(c.content), kw),
+                    contacts=names,
+                )
+            )
+
+        tag_task_ids_set = set(tag_task_ids)
+        contact_task_ids_set = set(contact_task_ids)
+        for t in tasks:
+            fields = []
+            if kw.lower() in (t.title or "").lower():
+                fields.append("title")
+            if kw.lower() in (t.description or "").lower():
+                fields.append("description")
+            if kw.lower() in (t.display_id or "").lower():
+                fields.append("display_id")
+            if t.id in tag_task_ids_set:
+                fields.append("tag")
+            if t.id in contact_task_ids_set:
+                fields.append("contact")
+            search_hits_map[t.id] = SearchHits(
+                task_fields=fields,
+                comms=comm_hits_by_task.get(t.id, [])[:5],
+            )
+
     # 构建最终返回数据（含 last_comm_at 和 tags）
     result = []
     all_tag_rows = db.query(TaskTag).filter(TaskTag.task_id.in_(task_ids)).all()
@@ -168,6 +272,7 @@ def list_tasks(
             "tags": tags_for_task,
             "last_comm_at": comm_at_map.get(t.id),
             "last_comm_contact_name": comm_contact_map.get(t.id),
+            "search_hits": search_hits_map.get(t.id),
         })
     return result
 
@@ -258,7 +363,6 @@ def get_kanban_tasks(project_id: str, db: Session = Depends(get_db)):
     task_ids = [t.id for t in tasks]
 
     # ponytail: 批量取每条任务的最新沟通记录（按人为设置的 comm_at,id 降序取每组第一条）
-    from sqlalchemy import func as sa_func
     _rn = sa_func.row_number().over(
         partition_by=Communication.task_id,
         order_by=(Communication.comm_at.desc(), Communication.id.desc())
