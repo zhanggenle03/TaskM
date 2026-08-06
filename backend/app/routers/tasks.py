@@ -75,6 +75,7 @@ def list_tasks(
     status_id: Optional[int] = None,
     tag_ids: Optional[str] = None,
     search: Optional[str] = None,
+    search_scope: str = "all",
     sort_by: str = "updated_at",
     sort_order: str = "desc",
     db: Session = Depends(get_db),
@@ -164,46 +165,59 @@ def list_tasks(
         tasks = [t for t in tasks if t.status_id == status_id]
 
     # ========== 综合搜索（可选）：任务字段 / 标签 / 对接人 / 任务内部沟通记录 ==========
+    # search_scope: all | task | comm | tag | contact，可逗号组合
     search_hits_map = {}
     if search and search.strip():
         kw = search.strip()
         like_kw = f"%{_escape_like(kw)}%"
+        raw_scope = (search_scope or "all").strip().lower()
+        scopes = {"task", "comm", "tag", "contact"} if raw_scope == "all" else set(s for s in raw_scope.split(",") if s)
+
+        matched_ids = set()
+        field_task_ids, tag_task_ids, contact_task_ids = [], [], []
+        hit_comms = []
 
         # 1) 命中任务本身字段（标题/描述/编号）
-        field_task_ids = [r[0] for r in db.query(Task.id).filter(
-            Task.id.in_(task_ids),
-            or_(
-                Task.title.like(like_kw, escape="\\"),
-                Task.description.like(like_kw, escape="\\"),
-                Task.display_id.like(like_kw, escape="\\"),
-            ),
-        ).all()]
+        if "task" in scopes:
+            field_task_ids = [r[0] for r in db.query(Task.id).filter(
+                Task.id.in_(task_ids),
+                or_(
+                    Task.title.like(like_kw, escape="\\"),
+                    Task.description.like(like_kw, escape="\\"),
+                    Task.display_id.like(like_kw, escape="\\"),
+                ),
+            ).all()]
+            matched_ids.update(field_task_ids)
         # 2) 命中标签名
-        tag_task_ids = [r[0] for r in db.query(TaskTag.task_id).join(
-            TagPool, TagPool.id == TaskTag.tag_id
-        ).filter(
-            TaskTag.task_id.in_(task_ids),
-            TagPool.name.like(like_kw, escape="\\"),
-        ).all()]
+        if "tag" in scopes:
+            tag_task_ids = [r[0] for r in db.query(TaskTag.task_id).join(
+                TagPool, TagPool.id == TaskTag.tag_id
+            ).filter(
+                TaskTag.task_id.in_(task_ids),
+                TagPool.name.like(like_kw, escape="\\"),
+            ).all()]
+            matched_ids.update(tag_task_ids)
         # 3) 命中对接人姓名
-        contact_task_ids = [r[0] for r in db.query(Contact.task_id).filter(
-            Contact.task_id.in_(task_ids),
-            Contact.name.like(like_kw, escape="\\"),
-        ).all()]
+        if "contact" in scopes:
+            contact_task_ids = [r[0] for r in db.query(Contact.task_id).filter(
+                Contact.task_id.in_(task_ids),
+                Contact.name.like(like_kw, escape="\\"),
+            ).all()]
+            matched_ids.update(contact_task_ids)
         # 4) 命中任务内部沟通记录（正文或主题）
-        hit_comms = db.query(Communication).filter(
-            Communication.task_id.in_(task_ids),
-            or_(
-                Communication.content.like(like_kw, escape="\\"),
-                Communication.subject.like(like_kw, escape="\\"),
-            ),
-        ).options(
-            joinedload(Communication.communication_contacts)
-                .joinedload(CommunicationContact.contact)
-        ).order_by(Communication.comm_at.desc(), Communication.id.desc()).all()
-        comm_task_ids = {c.task_id for c in hit_comms}
+        if "comm" in scopes:
+            hit_comms = db.query(Communication).filter(
+                Communication.task_id.in_(task_ids),
+                or_(
+                    Communication.content.like(like_kw, escape="\\"),
+                    Communication.subject.like(like_kw, escape="\\"),
+                ),
+            ).options(
+                joinedload(Communication.communication_contacts)
+                    .joinedload(CommunicationContact.contact)
+            ).order_by(Communication.comm_at.desc(), Communication.id.desc()).all()
+            matched_ids.update(c.task_id for c in hit_comms)
 
-        matched_ids = set(field_task_ids) | set(tag_task_ids) | set(contact_task_ids) | comm_task_ids
         tasks = [t for t in tasks if t.id in matched_ids]
 
         # 按任务分组命中的沟通记录（每条截取关键词上下文片段，最多返回 5 条）
@@ -225,11 +239,11 @@ def list_tasks(
         contact_task_ids_set = set(contact_task_ids)
         for t in tasks:
             fields = []
-            if kw.lower() in (t.title or "").lower():
+            if "task" in scopes and kw.lower() in (t.title or "").lower():
                 fields.append("title")
-            if kw.lower() in (t.description or "").lower():
+            if "task" in scopes and kw.lower() in (t.description or "").lower():
                 fields.append("description")
-            if kw.lower() in (t.display_id or "").lower():
+            if "task" in scopes and kw.lower() in (t.display_id or "").lower():
                 fields.append("display_id")
             if t.id in tag_task_ids_set:
                 fields.append("tag")

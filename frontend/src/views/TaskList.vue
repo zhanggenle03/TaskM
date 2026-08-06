@@ -21,6 +21,15 @@
           @input="onSearchInput"
           @clear="onSearchClear"
         >
+          <template #prepend>
+            <el-select v-model="searchScope" class="scope-select" @change="onScopeChange">
+              <el-option label="全部" value="all" />
+              <el-option label="任务" value="task" />
+              <el-option label="沟通" value="comm" />
+              <el-option label="标签" value="tag" />
+              <el-option label="对接人" value="contact" />
+            </el-select>
+          </template>
           <template #prefix><el-icon><Search /></el-icon></template>
         </el-input>
         <span v-if="isSearching" class="search-count">命中 {{ tasks.length }} 个任务</span>
@@ -195,6 +204,7 @@ const taskListRef = ref(null)
 
 // ---- 综合搜索 ----
 const searchKeyword = ref(route.query.search || '')
+const searchScope = ref(route.query.scope || 'all')
 const isSearching = computed(() => !!searchKeyword.value.trim())
 const fieldLabel = { title: '标题', description: '描述', display_id: '编号', tag: '标签', contact: '对接人' }
 let searchTimer = null
@@ -206,6 +216,12 @@ const onSearchInput = () => {
     router.replace({ query: { ...route.query, search: kw || undefined } })
     loadTasks()
   }, 300)
+}
+
+const onScopeChange = () => {
+  clearTimeout(searchTimer)
+  router.replace({ query: { ...route.query, scope: searchScope.value === 'all' ? undefined : searchScope.value } })
+  loadTasks()
 }
 
 const onSearchClear = () => {
@@ -279,6 +295,7 @@ const loadTasks = async () => {
   if (activeTagIds.value.length) params.tag_ids = activeTagIds.value.join(',')
   const kw = searchKeyword.value.trim()
   if (kw) params.search = kw
+  if (searchScope.value !== 'all') params.search_scope = searchScope.value
   tasks.value = await getTasks(projectId, params)
   // 刷新后重新计算当前使用的状态/标签ID（覆盖筛选后可见的已停用项）
   const allTasks = await getTasks(projectId, {})
@@ -375,6 +392,14 @@ watch(() => route.query.search, (newVal) => {
   }
 })
 
+watch(() => route.query.scope, (newVal) => {
+  const v = newVal || 'all'
+  if (v !== searchScope.value) {
+    searchScope.value = v
+    loadTasks()
+  }
+})
+
 onMounted(load)
 onBeforeRouteUpdate(() => { load() })
 
@@ -439,7 +464,10 @@ const removeTask = async (t) => {
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
-.search-input { width: 340px; }
+.search-input { width: 360px; }
+.search-input :deep(.el-input-group__prepend) { padding: 0; background: #faf9f7; }
+.scope-select { width: 76px; }
+.scope-select .el-input__wrapper { box-shadow: none !important; background: transparent; }
 .filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
 .filter-label { font-size: 13px; color: #888; }
 .task-list { display: flex; flex-direction: column; gap: 8px; }
