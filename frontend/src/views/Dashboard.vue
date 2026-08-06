@@ -38,33 +38,44 @@
           <div class="column-header">
             <span class="column-title">{{ col.label }}</span>
             <span class="column-badge">{{ getColumnTasks(col).length }}</span>
-            <el-popover
-              placement="bottom"
-              trigger="click"
-              :width="220"
-              popper-class="kanban-popover"
-            >
-              <template #reference>
-                <el-button :icon="Setting" size="small" text class="col-setting-btn" @click.stop />
-              </template>
-              <div class="popover-body">
-                <div class="popover-title">选择显示的状态</div>
-                <el-checkbox-group
-                  v-model="col.selectedIds"
-                  @change="saveColumnConfig"
-                >
-                <template v-for="s in allStatuses" :key="s.status_id">
-                <el-checkbox
-                  v-if="s.is_active"
-                  :value="s.status_id"
-                >
-                  <span class="status-dot" :style="{ background: s.color }"></span>
-                  {{ s.status_name }}
-                </el-checkbox>
+            <!-- 排序+设置 按钮组：整体靠右 -->
+            <div class="col-actions">
+              <!-- 排序按钮（齿轮左侧紧挨）：默认已完成短停留在前（升序）、其他栏长停留在前（降序），点击切换 -->
+              <el-button
+                :icon="col.sortDir === 'asc' ? SortDown : SortUp"
+                size="small"
+                text
+                class="col-sort-btn"
+                @click="toggleColumnSort(col)"
+              />
+              <el-popover
+                placement="bottom"
+                trigger="click"
+                :width="220"
+                popper-class="kanban-popover"
+              >
+                <template #reference>
+                  <el-button :icon="Setting" size="small" text class="col-setting-btn" @click.stop />
                 </template>
-                </el-checkbox-group>
-              </div>
-            </el-popover>
+                <div class="popover-body">
+                  <div class="popover-title">选择显示的状态</div>
+                  <el-checkbox-group
+                    v-model="col.selectedIds"
+                    @change="saveColumnConfig"
+                  >
+                  <template v-for="s in allStatuses" :key="s.status_id">
+                  <el-checkbox
+                    v-if="s.is_active"
+                    :value="s.status_id"
+                  >
+                    <span class="status-dot" :style="{ background: s.color }"></span>
+                    {{ s.status_name }}
+                  </el-checkbox>
+                  </template>
+                  </el-checkbox-group>
+                </div>
+              </el-popover>
+            </div>
           </div>
           <!-- 卡片列表 -->
           <div class="column-body" v-if="getColumnTasks(col).length">
@@ -128,7 +139,7 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Refresh, Setting, User, Calendar, Timer } from '@element-plus/icons-vue'
+import { Refresh, Setting, User, Calendar, Timer, SortUp, SortDown } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import VChart from 'vue-echarts'
 import * as echarts from 'echarts'
@@ -186,9 +197,12 @@ function saveColumnConfig() {
   clearTimeout(configSaveTimer)
   configSaveTimer = setTimeout(async () => {
     const config = {}
+    const sortDirs = {}
     for (const col of columnDefs.value) {
       config[col.key] = col.selectedIds
+      sortDirs[col.key] = col.sortDir
     }
+    config.sort_dirs = sortDirs
     try {
       await putKanbanConfig(projectId, config)
     } catch {}
@@ -197,22 +211,32 @@ function saveColumnConfig() {
 
 function initColumnDefs() {
   // 始终用默认四栏初始化，不受任务数影响
+  // 默认排序方向：已完成栏停留时间短在前（asc），其他栏停留时间长在前（desc）
   columnDefs.value = defaultColumnDefs.map(d => ({
     ...d,
     selectedIds: [],
+    sortDir: d.key === 'done' ? 'asc' : 'desc',
   }))
   // 异步加载已保存的配置
   loadColumnConfig().then(saved => {
     if (saved) {
+      const sortDirs = saved.sort_dirs || {}
       columnDefs.value = defaultColumnDefs.map(d => ({
         ...d,
         selectedIds: saved[d.key] || [],
+        sortDir: sortDirs[d.key] || (d.key === 'done' ? 'asc' : 'desc'),
       }))
     }
   })
 }
 
-// 根据栏配置获取该栏的任务
+// 切换某栏排序方向并持久化
+function toggleColumnSort(col) {
+  col.sortDir = col.sortDir === 'asc' ? 'desc' : 'asc'
+  saveColumnConfig()
+}
+
+// 根据栏配置获取该栏的任务（按停留时长排序：asc 短在前 / desc 长在前）
 function getColumnTasks(col) {
   const colMap = {}
   for (const c of kanbanData.value.columns || []) {
@@ -223,7 +247,8 @@ function getColumnTasks(col) {
     const tasks = colMap[sid]
     if (tasks) result.push(...tasks)
   }
-  return result
+  const dir = col.sortDir === 'asc' ? 1 : -1
+  return [...result].sort((a, b) => ((a.status_duration_hours || 0) - (b.status_duration_hours || 0)) * dir)
 }
 
 function isOverdue(dateStr) {
@@ -526,13 +551,33 @@ onBeforeUnmount(() => {
   min-width: 18px;
   text-align: center;
 }
-.col-setting-btn {
+/* 排序+设置按钮组：整体靠右，两按钮始终紧贴 */
+.col-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+/* 覆盖 Element Plus 相邻按钮默认 12px 间距，保证紧贴 */
+.col-actions .el-button { margin-left: 0; }
+.col-setting-btn {
   font-size: 14px;
   color: #bbb;
   transition: color 0.15s;
 }
 .col-setting-btn:hover { color: #409eff; }
+
+/* 排序按钮：位于设置按钮（齿轮）左侧紧挨，无底色，方向切换（升/降） */
+.col-sort-btn {
+  font-size: 14px;
+  color: #666;
+  padding: 2px 5px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s;
+}
+.col-sort-btn:hover { color: #534ab7; }
 
 .column-body {
   flex: 1;
