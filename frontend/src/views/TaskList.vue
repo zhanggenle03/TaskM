@@ -17,13 +17,14 @@
           <el-select
             v-model="searchScope"
             class="scope-select"
-            placeholder="搜索范围"
+            placeholder="全部范围"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
             @change="onScopeChange"
           >
-            <el-option label="全部" value="all" />
             <el-option label="任务信息" value="task" />
             <el-option label="沟通记录" value="comm" />
-            <el-option label="标签" value="tag" />
             <el-option label="对接人" value="contact" />
           </el-select>
           <el-input
@@ -208,8 +209,9 @@ const form = ref({ title: '', description: '', status_id: null, priority: 'norma
 const taskListRef = ref(null)
 
 // ---- 综合搜索 ----
+// searchScope 为数组：空数组=全部范围；全选 3 项=全部范围；部分选中按逗号传后端
 const searchKeyword = ref(route.query.search || '')
-const searchScope = ref(route.query.scope || 'all')
+const searchScope = ref(route.query.scope ? String(route.query.scope).split(',').filter(Boolean) : [])
 const isSearching = computed(() => !!searchKeyword.value.trim())
 const fieldLabel = { title: '标题', description: '描述', display_id: '编号', tag: '标签', contact: '对接人' }
 let searchTimer = null
@@ -225,7 +227,10 @@ const onSearchInput = () => {
 
 const onScopeChange = () => {
   clearTimeout(searchTimer)
-  router.replace({ query: { ...route.query, scope: searchScope.value === 'all' ? undefined : searchScope.value } })
+  // 空选或全选 3 项都等价于"全部范围"，不传 scope 参数
+  const sel = searchScope.value
+  const scopeParam = sel.length && sel.length < 3 ? sel.join(',') : undefined
+  router.replace({ query: { ...route.query, scope: scopeParam } })
   loadTasks()
 }
 
@@ -300,7 +305,10 @@ const loadTasks = async () => {
   if (activeTagIds.value.length) params.tag_ids = activeTagIds.value.join(',')
   const kw = searchKeyword.value.trim()
   if (kw) params.search = kw
-  if (searchScope.value !== 'all') params.search_scope = searchScope.value
+  // 部分选中范围时传逗号组合；空/全选=全部范围不传
+  if (searchScope.value.length && searchScope.value.length < 3) {
+    params.search_scope = searchScope.value.join(',')
+  }
   tasks.value = await getTasks(projectId, params)
   // 刷新后重新计算当前使用的状态/标签ID（覆盖筛选后可见的已停用项）
   const allTasks = await getTasks(projectId, {})
@@ -398,9 +406,9 @@ watch(() => route.query.search, (newVal) => {
 })
 
 watch(() => route.query.scope, (newVal) => {
-  const v = newVal || 'all'
-  if (v !== searchScope.value) {
-    searchScope.value = v
+  const arr = newVal ? String(newVal).split(',').filter(Boolean) : []
+  if (arr.join(',') !== searchScope.value.join(',')) {
+    searchScope.value = arr
     loadTasks()
   }
 })
@@ -470,7 +478,7 @@ const removeTask = async (t) => {
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .search-group { display: inline-flex; align-items: stretch; }
-.scope-select { width: 100px; }
+.scope-select { width: 150px; }
 /* 下拉：左圆角，只保留左/上/下边框（右缘与输入框融合） */
 .scope-select :deep(.el-select__wrapper) {
   border-radius: 4px 0 0 4px;
