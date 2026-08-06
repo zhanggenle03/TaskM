@@ -522,11 +522,25 @@ const removeTask = async (t) => {
 .hit-subject { font-weight: 600; color: #534ab7; flex-shrink: 0; }
 .hit-snippet { line-height: 1.5; word-break: break-all; }
 .hit-mark { background: #ffe58f; color: inherit; padding: 0 1px; border-radius: 2px; }
-.sort-group { display: inline-flex; align-items: center; }
+.sort-group { display: inline-flex; align-items: stretch; }
 .sort-group .el-select { width: 120px; }
-.sort-group .el-select .el-input__wrapper { border-radius: 4px 0 0 4px; border-right: none; }
-.sort-group .el-select .el-input__inner { padding-right: 4px; }
-.sort-order-btn { border-radius: 0 4px 4px 0; border-left: none; margin-left: -1px; }
+/* 排序下拉：左圆角，只保留左/上/下边框（右缘与按钮融合） */
+.sort-group .el-select :deep(.el-select__wrapper) {
+  border-radius: 4px 0 0 4px;
+  box-shadow: inset 1px 0 0 0 var(--el-border-color), inset 0 1px 0 0 var(--el-border-color), inset 0 -1px 0 0 var(--el-border-color) !important;
+}
+.sort-group .el-select :deep(.el-select__inner) { padding-right: 4px; }
+/* 排序方向按钮：右圆角，无左边框，紧贴下拉 */
+.sort-order-btn {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+  height: 32px;
+}
+.sort-order-btn:hover, .sort-order-btn:focus { border-left: none; }
+/* 展开下拉时下拉侧同步高亮为主题紫 */
+.sort-group:focus-within .el-select :deep(.el-select__wrapper) {
+  box-shadow: inset 1px 0 0 0 #534ab7, inset 0 1px 0 0 #534ab7, inset 0 -1px 0 0 #534ab7 !important;
+}
 .task-status-tag { flex-shrink: 0; }
 .task-date-col { font-size: 12px; color: #e24b4a; flex-shrink: 0; white-space: nowrap; }
 .task-actions { display: flex; gap: 4px; flex-shrink: 0; }
