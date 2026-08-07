@@ -38,10 +38,19 @@ export default defineConfig({
       '/api': {
         target: apiTarget,
         changeOrigin: true,
+        // 禁用上游 keep-alive 连接复用：后端 uvicorn 空闲连接默认 5s 后被关闭，
+        // Node 22 全局 agent 默认 keepAlive 会复用这种"死连接"，导致导出等请求
+        // 被 RST、浏览器报 ERR_INVALID_HTTP_RESPONSE。每请求新建连接可根治。
+        agent: false,
+        timeout: 120000,
+        proxyTimeout: 120000,
       },
       '/uploads': {
         target: apiTarget,
         changeOrigin: true,
+        agent: false,
+        timeout: 120000,
+        proxyTimeout: 120000,
       }
     }
   }
