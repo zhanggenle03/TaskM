@@ -41,6 +41,9 @@ const CSS = {
 
 const esc = (s) => String(s ?? '').replace(/"/g, '&quot;')
 
+// 从选中文本中提取 URL（http/https/ftp/www 开头，排除空白与常见中英文标点）
+const URL_REGEX = /(?:https?:\/\/|ftp:\/\/|www\.)[^\s<>"'`，。；：、！？（）()\[\]{}]+/gi
+
 /** 补全缺少协议的 URL（与需求编辑器逻辑一致） */
 export const ensureProtocol = (url) => {
   if (!url) return url
@@ -133,14 +136,29 @@ function makeInsertLinkMenu(prefix, opts) {
     isActive() { return false }
     isDisabled() { return false }
     exec(editor) {
+      // 自动填充：选中文字中含 URL（http/https/ftp/www 开头）→ 提取到「链接地址」，
+      // 并去尾随标点；选中的文字（无论是否含 URL）→ 填到「显示文本」
+      let initText = ''
+      let initUrl = ''
+      try {
+        const sel = window.getSelection()
+        const selectedText = (sel?.toString() || '').trim()
+        if (selectedText) {
+          initText = selectedText
+          const m = selectedText.match(URL_REGEX)
+          if (m) initUrl = m[0].replace(/[.,;:!?]+$/, '')
+        }
+      } catch {}
+
       const d = mountDialog('插入链接')
-      d.dialog.insertAdjacentHTML('beforeend', textFieldHtml() + urlFieldHtml() + footerHtml())
+      d.dialog.insertAdjacentHTML('beforeend', textFieldHtml(initText) + urlFieldHtml(initUrl) + footerHtml())
       const textInput = d.$('[data-role="text"]')
       const urlInput = d.$('[data-role="url"]')
       const btnConfirm = d.$('[data-role="confirm"]')
       const btnCancel = d.$('[data-role="cancel"]')
 
-      // 与插入文件一致的交互：URL 非空时激活确定按钮
+      // 与插入文件一致的交互：URL 非空时激活确定按钮（预填 URL 时初始即激活）
+      setBtnState(btnConfirm, !!urlInput.value.trim())
       urlInput.addEventListener('input', () => setBtnState(btnConfirm, !!urlInput.value.trim()))
 
       btnCancel.onclick = d.close
