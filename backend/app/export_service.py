@@ -674,10 +674,13 @@ def generate_export_package(
     # ---- 关联需求（渲染在基本信息之后、沟通记录之前） ----
     linked_req_data = data.get('linked_requirements', [])
     req_doc_bytes_list = []  # 保存供 ZIP 打包用
+    req_attachment_maps = {}  # req.id -> {(需求段, 源文件名): 导出文件名}
     if 'linked_requirements' in selected_fields and linked_req_data:
-        from .routers.requirements import generate_requirement_doc_bytes
+        from .routers.requirements import generate_requirement_doc_bytes, _extract_attachment_links, \
+            _make_export_filename, _unique_export_name
         from .database import Requirement, RequirementCustomField, RequirementCustomValue
 
+        all_used_names = set()  # 跨需求共享，保证整个 ZIP 内附件文件名唯一（重名加序号）
         for req_info in linked_req_data:
             # 查询完整 Requirement 对象（含 custom_values eager load）
             req = db.query(Requirement).options(
@@ -689,8 +692,17 @@ def generate_export_package(
             if not req:
                 continue
 
-            # 调用需求页的导出方法生成 DOCX
-            req_bytes = generate_requirement_doc_bytes(req, proj, db)
+            # 构建该需求的附件导出名映射（重名序号跨需求统一计数）
+            amap = {}
+            for seg, fn, display in _extract_attachment_links(req.description):
+                key = (seg, fn)
+                if key in amap:
+                    continue
+                amap[key] = _unique_export_name(_make_export_filename(display, fn), all_used_names)
+            req_attachment_maps[req.id] = amap
+
+            # 调用需求页的导出方法生成 DOCX（附件链接相对 requirements/ 目录定位）
+            req_bytes = generate_requirement_doc_bytes(req, proj, db, attachment_map=amap, link_prefix='')
             safe_title = _sanitize_filename(req.title)
             req_filename = f'requirements/{safe_title}_需求文档.docx'
             req_doc_bytes_list.append((safe_title, req_bytes, req_filename, req_info))
@@ -855,7 +867,9 @@ def generate_export_package(
                     UPLOAD_DIR, proj.display_id, 'requirements', seg, 'files', fn
                 )
                 if os.path.isfile(file_path):
-                    arcname = f'requirements/{seg}/files/{fn}'
+                    # 按导出名写入，与需求文档 DOCX 内超链接一致
+                    new_name = (req_attachment_maps.get(req.id) or {}).get(key, fn)
+                    arcname = f'requirements/{seg}/files/{new_name}'
                     req_file_entries.append((arcname, file_path))
 
         for arcname, file_path in req_file_entries:

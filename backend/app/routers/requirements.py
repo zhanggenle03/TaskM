@@ -1614,13 +1614,20 @@ def delete_requirement(
 
 # ── 导出 ────────────────────────────────────────────────
 
-def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False) -> bytes:
+def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False,
+                                   attachment_map: dict = None, link_prefix: str = 'requirements/') -> bytes:
     """
     生成需求的 DOCX 文档字节（公文风格），供导出端点和任务导出共用。
     依赖 req.custom_values 已 eager load。
 
     参数 only_description=True 时仅渲染「详细描述」正文（保留标题层级与富文本样式），
     跳过封面、基本信息表与自定义字段表，便于只导出需求描述。
+
+    attachment_map：{(需求段, 源文件名): 导出文件名}，用于把 DOCX 内的附件超链接
+    指向 ZIP 中重命名后的附件路径；为 None 时链接指向原文件名。
+    link_prefix：ZIP 内附件根目录（requirements/）相对 DOCX 所在目录的前缀，
+    默认 'requirements/'（需求独立导出时 DOCX 位于 ZIP 根目录）；任务导出时
+    需求文档位于 requirements/ 目录下，传空字符串。
     """
     from ..database import RequirementStatusPool, RequirementPriorityPool, UPLOAD_DIR
     from ..export_service import (
@@ -1728,16 +1735,94 @@ def generate_requirement_doc_bytes(req, proj, db, only_description: bool = False
             # 套用独立阿拉伯编号实例（1 / 1.1 / (1)，从 1 开始），编号后空格
             content_num_id = _setup_content_numbering(doc, 88)
             _render_html_to_docx(doc, req.description, status_pools, priority_pools,
-                                 img_base_dir=UPLOAD_DIR, comm_content=True, num_id=content_num_id)
+                                 img_base_dir=UPLOAD_DIR, comm_content=True, num_id=content_num_id,
+                                 attachment_map=attachment_map, link_prefix=link_prefix)
         else:
             # 仅描述模式：无结构标题包裹，内容标题保留原层级（Heading1/2/3，手动 1/1.1/(1) 标签）
-            _render_html_to_docx(doc, req.description, status_pools, priority_pools, img_base_dir=UPLOAD_DIR)
+            _render_html_to_docx(doc, req.description, status_pools, priority_pools, img_base_dir=UPLOAD_DIR,
+                                 attachment_map=attachment_map, link_prefix=link_prefix)
     elif only_description:
         _new_paragraph(doc, '（该需求暂无详情描述）', size=SMALL_SIZE)
 
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
+
+
+# ── 需求导出附件命名辅助 ────────────────────────────────────
+
+def _extract_attachment_links(html: str):
+    """
+    从需求描述 HTML 中提取附件超链接，返回 [(需求段, 源文件名, 链接显示文本), ...]，
+    按文档顺序。显示文本为空时回退为源文件名（乱码 uuid）。
+    """
+    from html.parser import HTMLParser
+
+    if not html:
+        return []
+
+    class _LinkParser(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self._cur = None  # 当前附件链接上下文
+            self.links = []
+
+        def handle_starttag(self, tag, attrs):
+            if tag == 'a':
+                href = dict(attrs).get('href', '')
+                m = re.match(r'^/uploads/[^/]+/requirements/([^/]+)/files/(.+)$', href)
+                if m:
+                    self._cur = {'seg': m.group(1), 'fn': m.group(2), 'text': []}
+
+        def handle_data(self, data):
+            if self._cur is not None:
+                self._cur['text'].append(data)
+
+        def handle_endtag(self, tag):
+            if tag == 'a' and self._cur is not None:
+                seg, fn = self._cur['seg'], self._cur['fn']
+                text = ''.join(self._cur['text']).strip()
+                self.links.append((seg, fn, text or fn))
+                self._cur = None
+
+    parser = _LinkParser()
+    parser.feed(html)
+    parser.close()
+    return parser.links
+
+
+def _clean_filename(name: str) -> str:
+    """清洗文件名：去掉 Windows 非法字符、控制字符与首尾空白"""
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', name or '')
+    return name.strip().strip('.')
+
+
+def _make_export_filename(display_text: str, url_fn: str) -> str:
+    """
+    根据文档中的显示名生成 ZIP 内文件名：
+    优先使用显示名（文档中的名字）；显示名无扩展名而源文件有扩展名时补上；
+    两者清洗后都为空时兜底为「附件」。
+    """
+    name = _clean_filename(display_text)
+    if not name:
+        name = _clean_filename(url_fn) or '附件'
+    else:
+        url_ext = os.path.splitext(url_fn)[1]
+        if url_ext and not os.path.splitext(name)[1]:
+            name = name + url_ext
+    return name or '附件'
+
+
+def _unique_export_name(name: str, used: set) -> str:
+    """全局去重：name、name (1)、name (2)…（序号加在扩展名前），大小写不敏感"""
+    base, ext = os.path.splitext(name)
+    candidate = name
+    n = 0
+    while candidate.lower() in used:
+        n += 1
+        candidate = f'{base} ({n}){ext}'
+    used.add(candidate.lower())
+    return candidate
 
 
 @router.get("/{requirement_id}/export")
@@ -1760,7 +1845,19 @@ def export_requirement_doc(
         joinedload(Requirement.custom_values).joinedload(RequirementCustomValue.field)
     ).filter(Requirement.id == req.id).first()
 
-    doc_bytes = generate_requirement_doc_bytes(req, proj, db, only_description=only_description)
+    # 构建附件导出名映射：(需求段, 源文件名) -> ZIP 内导出文件名（用文档中的名字，重名加序号）
+    attachment_map = {}
+    used_names = set()
+    for seg, fn, display in _extract_attachment_links(req.description):
+        key = (seg, fn)
+        if key in attachment_map:
+            continue
+        attachment_map[key] = _unique_export_name(_make_export_filename(display, fn), used_names)
+
+    doc_bytes = generate_requirement_doc_bytes(
+        req, proj, db, only_description=only_description,
+        attachment_map=attachment_map, link_prefix='requirements/',
+    )
 
     # 创建 ZIP 压缩包
     mode_tag = '详情描述' if only_description else '需求文档'
@@ -1770,7 +1867,7 @@ def export_requirement_doc(
         doc_name = f'{req.title}_{mode_tag}_{datetime.now().strftime("%Y%m%d%H%M%S")}.docx'
         zf.writestr(doc_name, doc_bytes)
 
-        # 收集描述中引用的附件文件
+        # 收集描述中引用的附件文件（按导出名写入，与 DOCX 内超链接一致）
         if req.description:
             file_pattern = re.compile(
                 r'/uploads/' + re.escape(proj.display_id) +
@@ -1788,7 +1885,8 @@ def export_requirement_doc(
                     UPLOAD_DIR, proj.display_id, 'requirements', seg, 'files', fn
                 )
                 if os.path.isfile(file_path):
-                    zf.write(file_path, f'requirements/{seg}/files/{fn}')
+                    new_name = attachment_map.get(key, fn)
+                    zf.write(file_path, f'requirements/{seg}/files/{new_name}')
 
     zip_bytes = zip_buf.getvalue()
 
@@ -1883,7 +1981,8 @@ def _darken_color(hex_color: str, factor: float = 0.6) -> str:
 
 
 def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_pools: dict = None,
-                         img_base_dir: str = None, comm_content: bool = False, num_id: int = None):
+                         img_base_dir: str = None, comm_content: bool = False, num_id: int = None,
+                         attachment_map: dict = None, link_prefix: str = ''):
     """
     将 WangEditor 生成的 HTML 描述渲染到 docx 文档中，
     尽可能复刻 Web 上看到的效果。
@@ -2522,10 +2621,12 @@ def _render_html_to_docx(doc, html: str, status_pools: dict = None, priority_poo
                 if isinstance(item, tuple):
                     if item[0] == 'a':
                         link_url = item[1]
-                        # 需求附件文件 → 转为 ZIP 内相对路径
-                        m = re.match(r'^/uploads/[^/]+/requirements/[^/]+/files/(.+)$', link_url)
+                        # 需求附件文件 → 转为 ZIP 内相对路径（按导出名映射，定位到实际打包路径）
+                        m = re.match(r'^/uploads/[^/]+/requirements/([^/]+)/files/(.+)$', link_url)
                         if m:
-                            link_url = 'files/' + m.group(1)
+                            seg, fn = m.group(1), m.group(2)
+                            new_name = (attachment_map or {}).get((seg, fn), fn)
+                            link_url = f'{link_prefix}{seg}/files/{new_name}'
                         # 补全缺少协议的链接（如 www.baidu.com → https://www.baidu.com）
                         elif link_url and not re.match(r'^[a-zA-Z][a-zA-Z0-9+\-.]*://', link_url) and not link_url.startswith('/'):
                             link_url = 'https://' + link_url
