@@ -35,6 +35,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[lifespan] checkin_projects 迁移失败: {e}", flush=True)
 
+    # ── 启动迁移：补齐 checkin_projects.days 列（多项目按项目自填天数） ──
+    try:
+        from .database import _ensure_checkin_project_days_column
+        _ensure_checkin_project_days_column()
+    except Exception as e:
+        print(f"[lifespan] checkin_projects.days 迁移失败: {e}", flush=True)
+
     # ── 启动时 ──
     try:
         from .process_manager import on_startup

@@ -502,6 +502,8 @@ class CheckinProject(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), primary_key=True)
     # 该签到记录下本项目分配的人天（多项目时各项目分别填写，合计=当天人天）
     man_days = Column(Float, default=1.0, nullable=False)
+    # 该签到记录下本项目分配的天数（多项目时用户自填；NULL=未填，统计端按人天占比兜底）
+    days = Column(Float, nullable=True)
 
 
 class CheckinTask(Base):
@@ -1113,3 +1115,22 @@ def _ensure_checkin_project_mandays_column():
         print("[migrate] checkin_projects.man_days 回填完成", flush=True)
     except Exception as e:
         print(f"[migrate] 检查/添加 checkin_projects.man_days 列失败: {e}", flush=True)
+
+
+def _ensure_checkin_project_days_column():
+    """为 checkin_projects 关联表补充 days 列（多项目时各项目单独填写的天数）。
+
+    已存在则跳过。历史行不强制回填（置 NULL），统计端遇到 NULL 时按人天占比兜底，
+    与新功能上线前的行为保持一致。"""
+    try:
+        insp = inspect(engine)
+        cols = [c["name"] for c in insp.get_columns("checkin_projects")]
+        if "days" not in cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE checkin_projects ADD COLUMN days REAL"))
+                conn.commit()
+            print("[migrate] checkin_projects.days 列已添加", flush=True)
+        else:
+            print("[migrate] checkin_projects.days 列已存在", flush=True)
+    except Exception as e:
+        print(f"[migrate] 检查/添加 checkin_projects.days 列失败: {e}", flush=True)

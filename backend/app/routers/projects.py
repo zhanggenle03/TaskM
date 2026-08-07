@@ -15,12 +15,16 @@ from ..schemas import (
 )
 
 
-def _apply_checkin_projects(db, chk, project_ids, project_man_days, day_man_days):
-    """设置签到关联项目，并按 project_man_days 写入各项目分配的人天（checkin_projects.man_days）。
-    返回当天人天合计（= 各项目分配之和）。"""
+def _apply_checkin_projects(db, chk, project_ids, project_man_days, project_days, day_man_days):
+    """设置签到关联项目，并按 project_man_days / project_days 写入各项目分配的人天与天数
+    （checkin_projects.man_days / days）。
+    返回当天人天合计（= 各项目分配之和）。天数规则：用户填了就用；单项目默认 1；多项目未填置 NULL，
+    由统计端按人天占比兜底。"""
     alloc = project_man_days or {}
+    day_alloc = project_days or {}
     n = len(project_ids)
     md_map = {}
+    day_map = {}
     projects = []
     for pid in project_ids:
         proj = db.query(Project).filter(Project.id == pid).first()
@@ -34,6 +38,12 @@ def _apply_checkin_projects(db, chk, project_ids, project_man_days, day_man_days
         else:
             md = round(float(day_man_days) / n, 4)
         md_map[pid] = md
+        if pid in day_alloc and day_alloc[pid] is not None:
+            day_map[pid] = float(day_alloc[pid])
+        elif n == 1:
+            day_map[pid] = 1.0
+        else:
+            day_map[pid] = None
     # 通过 secondary 关系写入 checkin_projects（默认 man_days），随后用分配值覆盖
     chk.projects = projects
     db.flush()
@@ -41,24 +51,29 @@ def _apply_checkin_projects(db, chk, project_ids, project_man_days, day_man_days
         db.execute(
             update(CheckinProject)
             .where(CheckinProject.checkin_id == chk.id, CheckinProject.project_id == pid)
-            .values(man_days=md)
+            .values(man_days=md, days=day_map.get(pid))
         )
     return sum(md_map.values())
 
 
 def _attach_project_man_days(db, checkins):
-    """为返回给前端的 Checkin 对象附加 project_man_days 字典（各项目分配的人天）。"""
+    """为返回给前端的 Checkin 对象附加 project_man_days / project_days 字典
+    （各项目分配的人天 / 天数）。"""
     if not checkins:
         return checkins
     ids = [c.id for c in checkins]
     rows = db.query(
-        CheckinProject.checkin_id, CheckinProject.project_id, CheckinProject.man_days
+        CheckinProject.checkin_id, CheckinProject.project_id,
+        CheckinProject.man_days, CheckinProject.days,
     ).filter(CheckinProject.checkin_id.in_(ids)).all()
-    by_c = {}
-    for cid, pid, md in rows:
-        by_c.setdefault(cid, {})[pid] = md
+    by_md = {}
+    by_d = {}
+    for cid, pid, md, dy in rows:
+        by_md.setdefault(cid, {})[pid] = md
+        by_d.setdefault(cid, {})[pid] = dy
     for c in checkins:
-        c.project_man_days = by_c.get(c.id, {})
+        c.project_man_days = by_md.get(c.id, {})
+        c.project_days = by_d.get(c.id, {})
     return checkins
 
 
@@ -370,7 +385,7 @@ def create_checkin_global(data: CheckinCreate, db: Session = Depends(get_db)):
     db.add(chk)
     db.flush()
     # 关联项目（按 project_man_days 分配各项目人天）
-    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.man_days)
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days)
     chk.man_days = total
     # 关联任务
     for tid in data.task_ids:
@@ -408,7 +423,7 @@ def update_checkin(checkin_id: int, data: CheckinCreate, db: Session = Depends(g
     # 更新关联项目（按 project_man_days 分配各项目人天）
     chk.projects = []
     db.flush()
-    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.man_days)
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days)
     chk.man_days = total
     # 更新关联任务
     chk.tasks = []
@@ -737,7 +752,7 @@ def create_checkin(project_id: str, data: CheckinCreate, db: Session = Depends(g
     db.add(chk)
     db.flush()
     pids = data.project_ids if data.project_ids else [proj.id]
-    total = _apply_checkin_projects(db, chk, pids, data.project_man_days, data.man_days)
+    total = _apply_checkin_projects(db, chk, pids, data.project_man_days, data.project_days, data.man_days)
     chk.man_days = total
     for tid in data.task_ids:
         task = db.query(Task).filter(Task.id == tid).first()
@@ -775,7 +790,7 @@ def update_checkin_project(project_id: str, checkin_id: int, data: CheckinCreate
     # 更新关联项目（按 project_man_days 分配各项目人天）
     chk.projects = []
     db.flush()
-    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.man_days)
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days)
     chk.man_days = total
     # 更新关联任务
     chk.tasks = []

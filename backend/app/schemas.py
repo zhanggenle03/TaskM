@@ -316,6 +316,8 @@ class CheckinCreate(BaseModel):
     man_day_reason: str = ""   # 人天说明（自由文本）
     # 多项目时各项目分配的人天：{project_id: man_days}，合计应等于当天 man_days
     project_man_days: Dict[int, float] = {}
+    # 多项目时各项目分配的天数：{project_id: days}，用户自填；缺省时统计端按人天占比兜底
+    project_days: Dict[int, float] = {}
 
 class ProjectBrief(BaseModel):
     id: int
@@ -344,6 +346,7 @@ class CheckinOut(BaseModel):
     projects: List[ProjectBrief] = []
     tasks: List[TaskBrief] = []
     project_man_days: Dict[int, float] = {}  # 各项目分配的人天
+    project_days: Dict[int, Optional[float]] = {}  # 各项目分配的天数（NULL=未填，按人天占比兜底）
     class Config:
         from_attributes = True
 
