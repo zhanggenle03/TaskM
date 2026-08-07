@@ -310,6 +310,7 @@ import {
   getReqCustomFields, getReqStatusPools, getReqPriorityPools,
   exportRequirementDoc, uploadRequirementImage, uploadRequirementFile, deleteRequirementFile,
 } from '../api/index.js'
+import { registerLinkMenus, ensureProtocol as _ensureProtocol } from '../utils/linkMenus'
 
 // ── 引用块颜色选择器 ──
 const BQ_PRESETS = [
@@ -410,87 +411,6 @@ try {
 } catch (e) {
   // 预期：第二次注册时抛 "Duplicated key" — 忽略即可，无需重新注册
   if (e.message && !e.message.includes('Duplicated key')) throw e
-}
-
-// ── 插入链接菜单（自定义对话框，与插入文件风格统一）──
-
-class ReqLinkMenu {
-  constructor() {
-    this.title = '插入链接'
-    this.iconSvg = '<svg viewBox="0 0 1024 1024"><path d="M574 665.4a8.03 8.03 0 0 0-11.3 0L446.5 781.6c-53.8 53.8-144.6 59.5-204 0-59.5-59.5-53.8-150.2 0-204l116.2-116.2c3.1-3.1 3.1-8.2 0-11.3l-39.8-39.8a8.03 8.03 0 0 0-11.3 0L191.4 526.5c-84.6 84.6-84.6 221.5 0 306s221.5 84.6 306 0l116.2-116.2c3.1-3.1 3.1-8.2 0-11.3L574 665.4zm258.6-474c-84.6-84.6-221.5-84.6-306 0L410.3 307.6a8.03 8.03 0 0 0 0 11.3l39.7 39.7c3.1 3.1 8.2 3.1 11.3 0l116.2-116.2c53.8-53.8 144.6-59.5 204 0 59.5 59.5 53.8 150.2 0 204L665.3 562.6a8.03 8.03 0 0 0 0 11.3l39.8 39.8c3.1 3.1 8.2 3.1 11.3 0l116.2-116.2c84.5-84.6 84.5-221.5 0-306.1z"/></svg>'
-    this.tag = 'button'
-  }
-  getValue() { return '' }
-  isActive() { return false }
-  isDisabled() { return false }
-  exec(editor, value) {
-    // 复用与插入文件相同的对话框布局，包含文本和链接两个字段
-    const overlay = document.createElement('div')
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:10000;display:flex;align-items:center;justify-content:center'
-    const dialog = document.createElement('div')
-    dialog.style.cssText = 'background:#fff;border-radius:8px;padding:24px;width:420px;box-shadow:0 4px 24px rgba(0,0,0,0.15);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
-    dialog.innerHTML = `
-      <div style="font-size:16px;font-weight:600;margin-bottom:20px;color:#303133">插入链接</div>
-      <div style="margin-bottom:12px">
-        <label style="font-size:13px;color:#606266;display:block;margin-bottom:6px">显示文本</label>
-        <input id="req-link-text" type="text" placeholder="链接显示的文字" style="width:100%;padding:8px 12px;border:1px solid #dcdfe6;border-radius:4px;font-size:14px;box-sizing:border-box;outline:none" />
-      </div>
-      <div style="margin-bottom:4px">
-        <label style="font-size:13px;color:#606266;display:block;margin-bottom:6px">链接地址</label>
-        <input id="req-link-url" type="text" placeholder="https:// 或 www.example.com" style="width:100%;padding:8px 12px;border:1px solid #dcdfe6;border-radius:4px;font-size:14px;box-sizing:border-box;outline:none" />
-      </div>
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
-        <button id="req-link-cancel" type="button" style="padding:8px 20px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;color:#606266">取消</button>
-        <button id="req-link-confirm" type="button" style="padding:8px 20px;border:none;border-radius:4px;background:#534ab7;cursor:pointer;font-size:13px;color:#fff;opacity:0.6" disabled>确定</button>
-      </div>`
-    overlay.appendChild(dialog)
-    document.body.appendChild(overlay)
-
-    const textInput = dialog.querySelector('#req-link-text')
-    const urlInput = dialog.querySelector('#req-link-url')
-    const btnConfirm = dialog.querySelector('#req-link-confirm')
-    const btnCancel = dialog.querySelector('#req-link-cancel')
-
-    // 与插入文件一致的交互：URL 非空时激活确定按钮
-    const setBtnState = () => {
-      if (urlInput.value.trim()) {
-        btnConfirm.disabled = false
-        btnConfirm.style.opacity = '1'
-      } else {
-        btnConfirm.disabled = true
-        btnConfirm.style.opacity = '0.6'
-      }
-    }
-    urlInput.addEventListener('input', setBtnState)
-
-    const close = () => { document.body.removeChild(overlay) }
-    btnCancel.onclick = close
-
-    btnConfirm.onclick = () => {
-      let url = urlInput.value.trim()
-      let text = textInput.value.trim()
-      if (!url) return
-      // 复用 parseLinkUrl 逻辑：自动补协议
-      if (!/^[\/\.#\?]/.test(url) && !/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(url)) {
-        url = 'https://' + url
-      }
-      if (!text) text = url
-      close()
-      editor.restoreSelection()
-      editor.insertNode({
-        type: 'link',
-        url: url,
-        target: '_blank',
-        children: [{ text: text }]
-      })
-      try { editor.move(1) } catch (e) {}
-      hasUnsaved.value = true
-    }
-
-    // 回车确认
-    urlInput.onkeydown = (e) => { if (e.key === 'Enter') btnConfirm.click() }
-    textInput.onkeydown = (e) => { if (e.key === 'Enter') btnConfirm.click() }
-  }
 }
 
 // ── 插入文件菜单（自定义对话框）──
@@ -601,273 +521,6 @@ try {
   if (e.message && !e.message.includes('Duplicated key')) throw e
 }
 
-// 注册插入链接菜单（自定义键名，避免与内置 insertLink 模态菜单冲突）
-try {
-  Boot.registerMenu({
-    key: 'reqInsertLink',
-    factory() { return new ReqLinkMenu() }
-  })
-} catch (e) {
-  if (e.message && !e.message.includes('Duplicated key')) throw e
-}
-
-// 编辑链接菜单（悬浮栏"编辑链接"），自定义键名避免与内置模态菜单冲突
-class EditLinkMenu extends ReqLinkMenu {
-  constructor() {
-    super()
-    this.title = '编辑链接'
-    this.iconSvg = '<svg viewBox="0 0 1024 1024"><path d="M257.7 752c2 0 4-.2 6-.5L431.9 722c2-.4 3.9-1.3 5.3-2.8l423.9-423.9a9.96 9.96 0 0 0 0-14.1L694.9 114.9c-1.9-1.9-4.4-2.9-7.1-2.9s-5.2 1-7.1 2.9L256.8 538.8c-1.5 1.5-2.4 3.3-2.8 5.3l-29.5 168.2a33.5 33.5 0 0 0 9.4 29.8c6.6 6.4 14.9 9.9 23.8 9.9z"/></svg>'
-  }
-  exec(editor, value) {
-    // 从 DOM 获取当前链接的文本和 href
-    let linkText = '', linkUrl = ''
-    try {
-      const sel = window.getSelection()
-      if (sel && sel.anchorNode) {
-        let el = sel.anchorNode
-        while (el && el.nodeName !== 'A') el = el.parentElement
-        if (el) {
-          linkText = (el.textContent || '').trim()
-          linkUrl = el.getAttribute('href') || ''
-        }
-      }
-    } catch {}
-
-    const isFileLink = /\/uploads\/.+\/requirements\/.+\/files\//.test(linkUrl)
-    if (!req.value?.id && isFileLink) return
-
-    const overlay = document.createElement('div')
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:10000;display:flex;align-items:center;justify-content:center'
-    const dialog = document.createElement('div')
-    dialog.style.cssText = 'background:#fff;border-radius:8px;padding:24px;width:420px;box-shadow:0 4px 24px rgba(0,0,0,0.15);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif'
-    dialog.innerHTML = `
-      <div style="font-size:16px;font-weight:600;margin-bottom:20px;color:#303133">${isFileLink ? '编辑文件' : '编辑链接'}</div>
-      <div style="margin-bottom:12px">
-        <label style="font-size:13px;color:#606266;display:block;margin-bottom:6px">显示文本</label>
-        <input id="req-link-text" type="text" value="${linkText.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;border:1px solid #dcdfe6;border-radius:4px;font-size:14px;box-sizing:border-box;outline:none" />
-      </div>
-      <div style="margin-bottom:4px">
-        <label style="font-size:13px;color:#606266;display:block;margin-bottom:6px">${isFileLink ? '选择文件' : '链接地址'}</label>
-        ${isFileLink
-          ? `<div style="display:flex;gap:8px;align-items:center">
-              <button id="req-link-file-pick" type="button" style="padding:8px 16px;border:1px solid #dcdfe6;border-radius:4px;background:#f5f7fa;cursor:pointer;font-size:13px;color:#606266">选择文件</button>
-              <span id="req-link-file-name" style="font-size:12px;color:#303133;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${linkText.replace(/"/g, '&quot;')}</span>
-            </div>`
-          : `<input id="req-link-url" type="text" value="${linkUrl.replace(/"/g, '&quot;')}" style="width:100%;padding:8px 12px;border:1px solid #dcdfe6;border-radius:4px;font-size:14px;box-sizing:border-box;outline:none" />`
-        }
-      </div>
-      <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:20px">
-        <button id="req-link-cancel" type="button" style="padding:8px 20px;border:1px solid #dcdfe6;border-radius:4px;background:#fff;cursor:pointer;font-size:13px;color:#606266">取消</button>
-        <button id="req-link-confirm" type="button" style="padding:8px 20px;border:none;border-radius:4px;background:#534ab7;cursor:pointer;font-size:13px;color:#fff;opacity:0.6" disabled>确定</button>
-      </div>`
-    overlay.appendChild(dialog)
-    document.body.appendChild(overlay)
-
-    const textInput = dialog.querySelector('#req-link-text')
-    const btnConfirm = dialog.querySelector('#req-link-confirm')
-    const btnCancel = dialog.querySelector('#req-link-cancel')
-    let selectedFile = null
-
-    if (isFileLink) {
-      const filePick = dialog.querySelector('#req-link-file-pick')
-      const fileNameSpan = dialog.querySelector('#req-link-file-name')
-      // 文件已存在，直接激活按钮
-      btnConfirm.disabled = false
-      btnConfirm.style.opacity = '1'
-      filePick.onclick = () => {
-        const input = document.createElement('input')
-        input.type = 'file'
-        input.onchange = () => {
-          selectedFile = input.files?.[0] || null
-          if (selectedFile) {
-            fileNameSpan.textContent = selectedFile.name
-            fileNameSpan.style.color = '#303133'
-            btnConfirm.disabled = false
-            btnConfirm.style.opacity = '1'
-          }
-        }
-        input.click()
-      }
-    } else {
-      const urlInput = dialog.querySelector('#req-link-url')
-      // 已预填 URL，直接激活按钮
-      if (linkUrl.trim()) {
-        btnConfirm.disabled = false
-        btnConfirm.style.opacity = '1'
-      }
-      urlInput.addEventListener('input', () => {
-        if (urlInput.value.trim()) {
-          btnConfirm.disabled = false
-          btnConfirm.style.opacity = '1'
-        } else {
-          btnConfirm.disabled = true
-          btnConfirm.style.opacity = '0.6'
-        }
-      })
-      urlInput.onkeydown = (e) => { if (e.key === 'Enter') btnConfirm.click() }
-    }
-
-    const close = () => { document.body.removeChild(overlay) }
-    btnCancel.onclick = close
-
-    btnConfirm.onclick = isFileLink
-      ? async () => {
-          let text = textInput.value.trim()
-          if (!selectedFile && !linkUrl) return
-          close()
-          let newUrl = linkUrl
-          if (selectedFile) {
-            try {
-              const result = await uploadRequirementFile(projectId.value, req.value.id, selectedFile)
-              if (result.url) newUrl = result.url
-              if (!text) text = result.original_filename || selectedFile.name
-            } catch { return }
-          }
-          if (!text) text = newUrl.split('/').pop() || newUrl
-          // 选中整个超链节点后完整替换
-          try {
-            editor.restoreSelection()
-            const linkEntry = SlateEditor.above(editor, {
-              match: n => n.type === 'link'
-            })
-            if (linkEntry) {
-              const [, linkPath] = linkEntry
-              SlateTransforms.select(editor, {
-                anchor: SlateEditor.start(editor, linkPath),
-                focus: SlateEditor.end(editor, linkPath)
-              })
-              editor.deleteFragment()
-              editor.insertNode({
-                type: 'link',
-                url: newUrl,
-                children: [{ text: text }]
-              })
-              try { editor.move(1) } catch (e) {}
-            }
-          } catch {}
-          hasUnsaved.value = true
-        }
-      : () => {
-          let url = (dialog.querySelector('#req-link-url')).value.trim()
-          let text = textInput.value.trim()
-          if (!url) return
-          if (!/^[\/\.#\?]/.test(url) && !/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(url)) {
-            url = 'https://' + url
-          }
-          if (!text) text = url
-          close()
-          try {
-            editor.restoreSelection()
-            const linkEntry = SlateEditor.above(editor, {
-              match: n => n.type === 'link'
-            })
-            if (linkEntry) {
-              const [, linkPath] = linkEntry
-              SlateTransforms.select(editor, {
-                anchor: SlateEditor.start(editor, linkPath),
-                focus: SlateEditor.end(editor, linkPath)
-              })
-              editor.deleteFragment()
-              editor.insertNode({
-                type: 'link',
-                url: url,
-                children: [{ text: text }]
-              })
-              try { editor.move(1) } catch (e) {}
-            }
-          } catch {}
-          hasUnsaved.value = true
-        }
-
-    textInput.onkeydown = (e) => { if (e.key === 'Enter') btnConfirm.click() }
-  }
-}
-
-try {
-  Boot.registerMenu({
-    key: 'reqEditLink',
-    factory() { return new EditLinkMenu() }
-  })
-} catch (e) {
-  if (e.message && !e.message.includes('Duplicated key')) throw e
-}
-
-// ── 查看链接菜单（悬浮栏"查看链接"），文件链接显示预览弹窗 ──
-class ViewLinkMenu {
-  constructor() {
-    this.title = '查看链接'
-    this.iconSvg = '<svg viewBox="0 0 1024 1024"><path d="M942.2 486.2C847.4 286.5 704.1 186 512 186c-192.2 0-335.4 100.5-430.2 300.3-7.7 16.2-7.7 35.4 0 51.6C176.6 737.5 319.9 838 512 838c192.2 0 335.4-100.5 430.2-300.3 7.7-16.2 7.7-35.4 0-51.5zM512 766c-161.3 0-279.4-81.8-362.7-254C232.6 339.8 350.7 258 512 258c161.3 0 279.4 81.8 362.7 254C791.5 684.2 673.4 766 512 766z"/><path d="M508 330c-62.6 0-113.4 50.8-113.4 113.4S445.4 556.8 508 556.8s113.4-50.8 113.4-113.4S570.6 330 508 330z"/></svg>'
-    this.tag = 'button'
-  }
-  getValue() { return '' }
-  isActive() { return false }
-  isDisabled() { return false }
-  exec(editor, value) {
-    try {
-      const sel = window.getSelection()
-      if (!sel || !sel.anchorNode) return
-      let el = sel.anchorNode
-      while (el && el.nodeName !== 'A') el = el.parentElement
-      if (!el) return
-      const href = el.getAttribute('href') || ''
-      if (!href) return
-      // 文件链接 → 预览弹窗
-      if (/\/uploads\/.+\/requirements\/.+\/files\//.test(href)) {
-        const container = editor.getEditableContainer?.() ||
-          document.querySelector('.w-e-text-container [data-slate-editor]') ||
-          document.querySelector('.w-e-text-container')
-        if (container) {
-          const list = buildUnifiedPreviewList(container)
-          const idx = list.findIndex(item => item.type === 'file' && item.downloadUrl === href)
-          openUnifiedPreview(list, idx >= 0 ? idx : 0)
-        }
-        return
-      }
-      // 普通链接 → 新标签页
-      const fixed = _ensureProtocol(href)
-      window.open(fixed, '_blank', 'noopener')
-    } catch {}
-  }
-}
-
-try {
-  Boot.registerMenu({
-    key: 'reqViewLink',
-    factory() { return new ViewLinkMenu() }
-  })
-} catch (e) {
-  if (e.message && !e.message.includes('Duplicated key')) throw e
-}
-
-// ── 取消链接菜单（悬浮栏"取消链接"），替代内置 unLink ──
-class UnLinkMenu {
-  constructor() {
-    this.title = '取消链接'
-    this.iconSvg = '<svg viewBox="0 0 1024 1024"><path d="M512 64C264.6 64 64 264.6 64 512s200.6 448 448 448 448-200.6 448-448S759.4 64 512 64z m192 484H320c-17.7 0-32-14.3-32-32v-8c0-17.7 14.3-32 32-32h384c17.7 0 32 14.3 32 32v8c0 17.7-14.3 32-32 32z"/></svg>'
-    this.tag = 'button'
-  }
-  getValue() { return '' }
-  isActive() { return false }
-  isDisabled() { return false }
-  exec(editor, value) {
-    try {
-      editor.restoreSelection()
-      SlateTransforms.unwrapNodes(editor, {
-        match: n => n.type === 'link'
-      })
-    } catch {}
-  }
-}
-
-try {
-  Boot.registerMenu({
-    key: 'reqUnLink',
-    factory() { return new UnLinkMenu() }
-  })
-} catch (e) {
-  if (e.message && !e.message.includes('Duplicated key')) throw e
-}
-
 const route = useRoute()
 const router = useRouter()
 // 响应式 projectId，确保路由切换时正确更新（修复第二次进入详情页时内容不加载的问题）
@@ -915,6 +568,31 @@ const hasUnsaved = ref(false)
 // 导出文档弹窗
 const showReqExportDialog = ref(false)
 const reqExportMode = ref('full')
+
+// ── 链接菜单：插入/编辑/取消/查看 与任务沟通编辑器共用共享模块（utils/linkMenus）──
+// 需求侧附加能力：附件文件链接的识别/替换上传/预览弹窗；编辑后标记未保存
+registerLinkMenus('req', {
+  isFileLink: (url) => /\/uploads\/.+\/requirements\/.+\/files\//.test(url || ''),
+  uploadFile: async (file) => {
+    if (!req.value?.id) return null
+    const result = await uploadRequirementFile(projectId.value, req.value.id, file)
+    return result ? { url: result.url, filename: result.original_filename || file.name } : null
+  },
+  onViewFileLink: (editor, href) => {
+    // 文件链接 → 统一预览弹窗（与双击/点击预览一致）
+    const container = editor.getEditableContainer?.() ||
+      document.querySelector('.w-e-text-container [data-slate-editor]') ||
+      document.querySelector('.w-e-text-container')
+    if (container) {
+      const list = buildUnifiedPreviewList(container)
+      const idx = list.findIndex(item => item.type === 'file' && item.downloadUrl === href)
+      openUnifiedPreview(list, idx >= 0 ? idx : 0)
+    }
+    return true
+  },
+  onAfterInsert: () => { hasUnsaved.value = true },
+  onAfterEdit: () => { hasUnsaved.value = true },
+})
 
 const toolbarConfig = {
   toolbarKeys: [
@@ -1179,17 +857,6 @@ const handleEditorClick = (e) => {
   window.open(href, '_blank', 'noopener')
 }
 
-/** 修复 DOM 中链接 href 属性，由 fixLinkHrefsInHtml 调用更可靠 */
-const _ensureProtocol = (href) => {
-  if (!href) return href
-  // 绝对路径、相对路径、锚点等不处理
-  if (/^[\/\.#\?]/.test(href)) return href
-  if (!/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//.test(href)) {
-    return 'https://' + href
-  }
-  return href
-}
-
 /** 修复 HTML 字符串中所有 <a> 标签的 href，补全缺少的协议 */
 const fixLinkHrefsInHtml = (html) => {
   if (!html) return html
@@ -1418,7 +1085,7 @@ const editorConfig = {
     // 编辑模式下悬浮链接显示编辑/取消/查看菜单
     link: { menuKeys: ['reqEditLink', 'reqUnLink', 'reqViewLink'] },
     // 图片悬浮菜单：支持删除/编辑/查看（删除时即时清理后端文件，见 onEditorChange）
-    image: { menuKeys: ['deleteImage', 'editImage', 'viewImage'] },
+    image: { menuKeys: ['deleteImage', 'editImage', 'viewImageLink'] },
     pre: { menuKeys: [] },
     divider: { menuKeys: [] },
   },
