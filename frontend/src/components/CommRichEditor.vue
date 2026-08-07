@@ -23,6 +23,7 @@ import { Editor, Toolbar } from '@wangeditor/editor-for-vue'
 import { ElMessage } from 'element-plus'
 import { uploadCommImage } from '../api'
 import { updateHeadingNumbers } from '../utils/headingNumber'
+import { registerLinkMenus } from '../utils/linkMenus'
 
 const props = defineProps({
   initialHtml: { type: String, default: '' },
@@ -41,6 +42,10 @@ const mode = 'default'
 // { id: blobUrl, file, blobUrl } — id 复用 blobUrl 以在 HTML 中匹配
 const pendingImages = ref([])
 
+// ── 链接菜单：与需求编辑器共用共享模块（插入/编辑/取消/查看），对话框样式对齐 ──
+// 任务沟通无附件文件链接，只需默认行为（普通链接新标签页打开）
+const linkMenuKeys = registerLinkMenus('comm', {})
+
 // 完整基础格式工具栏（不含需求详情页专属的引用块颜色 / 需求文件关联菜单）
 const toolbarConfig = {
   toolbarKeys: [
@@ -56,7 +61,7 @@ const toolbarConfig = {
     '|',
     'clearStyle',
     '|',
-    'uploadImage', 'insertLink',
+    'uploadImage', linkMenuKeys.insertLink,
   ],
 }
 
@@ -64,8 +69,8 @@ const editorConfig = {
   placeholder: '输入沟通内容，支持加粗、列表、图片、链接等…',
   hoverbarKeys: {
     text: { menuKeys: [] },
-    link: { menuKeys: ['editLink', 'unLink', 'viewLink'] },
-    image: { menuKeys: ['deleteImage', 'editImage', 'viewImage'] },
+    link: { menuKeys: [linkMenuKeys.editLink, linkMenuKeys.unLink, linkMenuKeys.viewLink] },
+    image: { menuKeys: ['deleteImage', 'editImage', 'viewImageLink'] },
   },
   MENU_CONF: {
     uploadImage: {
