@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 import os
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import update
+from sqlalchemy import update, delete
 from typing import List, Optional
 from ..database import get_db, Project, RequirementCustomField, RequirementStatusPool, RequirementPriorityPool, StatusPool, CommTypePool, TagPool, Checkin, CheckinProject, CheckinTask, Task, TaskTag, Communication, Contact, HolidayOverride, Leave, touch_project, cleanup_comm_files, generate_project_display_id, _random_prefix, resolve_project, reconcile_task_status, UPLOAD_DIR, CONFIG_DIR
 from ..holiday_service import get_year, ensure_year_async
@@ -401,6 +401,9 @@ def create_checkin_global(data: CheckinCreate, db: Session = Depends(get_db)):
 
 @router.post("/checkins/batch-delete")
 def batch_delete_checkins(data: BatchDeleteIds, db: Session = Depends(get_db)):
+    # bulk delete 不走 ORM 级联，先手动清理 junction 表（SQLite 外键未强制开启，CASCADE 不生效）
+    db.execute(delete(CheckinProject).where(CheckinProject.checkin_id.in_(data.ids)))
+    db.execute(delete(CheckinTask).where(CheckinTask.checkin_id.in_(data.ids)))
     count = db.query(Checkin).filter(Checkin.id.in_(data.ids)).delete(synchronize_session=False)
     db.commit()
     return {"ok": True, "deleted": count}
