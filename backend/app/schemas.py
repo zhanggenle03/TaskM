@@ -381,6 +381,7 @@ class SalaryItemOut(BaseModel):
 
 class SalaryRecordCreate(BaseModel):
     period: str                                      # "YYYY-MM"
+    record_type: str = "salary"                      # salary=工资 / bonus=奖金
     pay_date: Optional[str] = None                  # "YYYY-MM-DD"
     employer: str = ""
     credited_amount: Optional[float] = None          # 实际到账（入卡金额）
@@ -410,6 +411,7 @@ class SalarySlipOut(BaseModel):
 class SalaryRecordOut(BaseModel):
     id: int
     period: str
+    record_type: str = "salary"                      # salary=工资 / bonus=奖金
     pay_date: Optional[date] = None
     employer: str = ""
     credited_amount: Optional[float] = None          # 实际到账（入卡金额）
@@ -439,6 +441,12 @@ class SalarySummaryOut(BaseModel):
     avg_net: float = 0.0                            # 月均实发
     total_credited: float = 0.0                     # 到账合计
     total_actual_tax: float = 0.0                   # 实际个税合计
+    total_theoretical_tax: float = 0.0              # 理论税额合计（明细 tax 类目）
+
+class SalaryCardOrderIn(BaseModel):
+    """指标卡布局更新：order（顺序，可选）+ hidden（隐藏，可选），至少传一项"""
+    order: Optional[List[str]] = None
+    hidden: Optional[List[str]] = None
 
 class SalaryTaxSummaryOut(BaseModel):
     """个税年度汇算汇总（按年累计，含综合汇算调整）"""

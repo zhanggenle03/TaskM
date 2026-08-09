@@ -583,10 +583,11 @@ class TaskRequirement(Base):
 # ========== 薪资模块 ==========
 
 class SalaryRecord(Base):
-    """薪资记录：每月一条（按 period "YYYY-MM" 唯一）"""
+    """薪资记录：按月记录（period "YYYY-MM" + record_type 组合唯一，同月可有多条：工资/奖金）"""
     __tablename__ = "salary_records"
     id = Column(Integer, primary_key=True, index=True)
-    period = Column(String(20), unique=True, nullable=False)  # "2026-07"
+    period = Column(String(20), nullable=False)  # "2026-07"
+    record_type = Column(String(10), default="salary", nullable=False)  # salary=工资 / bonus=奖金
     pay_date = Column(Date, nullable=True)                    # 发放日
     employer = Column(String(200), default="")               # 单位名称（可选）
     credited_amount = Column(Float, nullable=True)            # 当月到账（实际入卡）
@@ -726,6 +727,110 @@ def ensure_salary_record_columns(engine):
             with engine.connect() as conn:
                 conn.execute(text(ddl))
                 conn.commit()
+
+
+def _ensure_salary_record_type_column():
+    """幂等迁移：salary_records 加 record_type 列（salary/bonus），并把 period 唯一约束改为 (period, record_type) 组合唯一。
+
+    SQLite 的列唯一约束（sqlite_autoindex）无法直接删除，需重建表：
+      旧表 → 新表（含 record_type、UNIQUE(period, record_type)），旧数据 record_type 一律 'salary'，
+      id 原样保留 → salary_items / salary_slips 外键按 id 匹配不受影响。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_records" not in inspector.get_table_names():
+        return
+    cols = [c["name"] for c in inspector.get_columns("salary_records")]
+    period_unique = any(
+        ix.get("unique") and ix.get("column_names") == ["period"]
+        for ix in inspector.get_indexes("salary_records")
+    )
+    # 已迁移（有列且唯一约束已移除）则跳过
+    if "record_type" in cols and not period_unique:
+        return
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("BEGIN"))
+        try:
+            conn.execute(text("ALTER TABLE salary_records RENAME TO salary_records_old"))
+            conn.execute(text("""
+                CREATE TABLE salary_records (
+                    id INTEGER NOT NULL,
+                    period VARCHAR(20) NOT NULL,
+                    record_type VARCHAR(10) NOT NULL DEFAULT 'salary',
+                    pay_date DATE,
+                    employer VARCHAR(200) DEFAULT '',
+                    credited_amount FLOAT,
+                    actual_tax FLOAT,
+                    remark TEXT DEFAULT '',
+                    created_at DATETIME,
+                    updated_at DATETIME,
+                    PRIMARY KEY (id),
+                    UNIQUE (period, record_type)
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO salary_records
+                    (id, period, record_type, pay_date, employer, credited_amount, actual_tax, remark, created_at, updated_at)
+                SELECT id, period, 'salary', pay_date, employer, credited_amount, actual_tax, remark, created_at, updated_at
+                FROM salary_records_old
+            """))
+            conn.execute(text("DROP TABLE salary_records_old"))
+            conn.execute(text("COMMIT"))
+        except Exception:
+            conn.execute(text("ROLLBACK"))
+            raise
+        finally:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+    # SQLite 重命名表会把其他表指向它的外键一并改写（salary_items / salary_slips 的 REFERENCES 变成 salary_records_old），
+    # 需重建子表把引用改回 salary_records
+    _fix_salary_child_foreign_keys(engine)
+
+
+def _fix_salary_child_foreign_keys(engine):
+    """修复 ALTER TABLE RENAME 改写的外键引用（salary_items / salary_slips 的 REFERENCES salary_records_old → salary_records）。
+
+    SQLite 的 ALTER TABLE RENAME 会同步更新其他表外键中对该表的引用，
+    导致重建 salary_records 后子表外键指向已删除的 salary_records_old，插入明细时报 "no such table"。
+    幂等：仅当外键仍指向 salary_records_old 时重建子表。
+    """
+    from sqlalchemy import inspect, text
+    for table in ("salary_items", "salary_slips"):
+        with engine.connect() as conn:
+            fks = conn.execute(text(f"PRAGMA foreign_key_list({table})")).fetchall()
+        if not any("salary_records_old" in str(fk) for fk in fks):
+            continue
+        # 在 RENAME 前读取原建表 SQL 与显式索引 SQL（RENAME 后索引随表改名，届时按旧名查不到）
+        with engine.connect() as conn:
+            old_sql = conn.execute(
+                text("SELECT sql FROM sqlite_master WHERE type='table' AND name=:n"), {"n": table}
+            ).scalar()
+            idx_sqls = [r[0] for r in conn.execute(
+                text("SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=:t AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%'"),
+                {"t": table},
+            )]
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            conn.execute(text("PRAGMA foreign_keys=OFF"))
+            conn.execute(text("BEGIN"))
+            try:
+                new_sql = old_sql.replace("salary_records_old", "salary_records")
+                conn.execute(text(f"ALTER TABLE {table} RENAME TO {table}_old"))
+                conn.execute(text(new_sql))
+                cols = [r[1] for r in conn.execute(text(f"PRAGMA table_info({table}_old)"))]
+                collist = ", ".join(cols)
+                conn.execute(text(f"INSERT INTO {table} ({collist}) SELECT {collist} FROM {table}_old"))
+                conn.execute(text(f"DROP TABLE {table}_old"))
+                # 重建显式索引
+                for s in idx_sqls:
+                    if s:
+                        conn.execute(text(s))
+                conn.execute(text("COMMIT"))
+            except Exception:
+                conn.execute(text("ROLLBACK"))
+                raise
+            finally:
+                conn.execute(text("PRAGMA foreign_keys=ON"))
 
 
 def ensure_salary_item_tax_deductible(engine):

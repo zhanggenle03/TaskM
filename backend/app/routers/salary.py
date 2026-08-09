@@ -34,6 +34,7 @@ from ..schemas import (
     SalaryCalcTaxIn,
     SalaryConfigOut,
     SalaryConfigUpdate,
+    SalaryCardOrderIn,
     SalaryConfigTemplateOut,
     SalaryConfigTemplateListOut,
     SalaryConfigTemplateCreate,
@@ -44,7 +45,7 @@ from ..schemas import (
     TaxAdjustmentOut,
 )
 from ..schemas import VALID_SALARY_CATEGORIES
-from ..settings_manager import get_max_file_size
+from ..settings_manager import get_max_file_size, get_salary_card_order, save_salary_card_order, get_salary_card_hidden, save_salary_card_hidden
 from ..salary_export_service import generate_salary_export
 
 router = APIRouter(prefix="/salary")
@@ -119,6 +120,7 @@ def _to_out(record: SalaryRecord) -> SalaryRecordOut:
     return SalaryRecordOut(
         id=record.id,
         period=record.period,
+        record_type=record.record_type or "salary",
         pay_date=record.pay_date,
         employer=record.employer or "",
         credited_amount=record.credited_amount,
@@ -208,7 +210,7 @@ def list_salary_records(
         q = q.filter(SalaryRecord.period >= period_from)
     if period_to:
         q = q.filter(SalaryRecord.period <= period_to)
-    records = q.order_by(SalaryRecord.period.desc()).all()
+    records = q.order_by(SalaryRecord.period.desc(), SalaryRecord.record_type.desc()).all()
     return [_to_out(r) for r in records]
 
 
@@ -236,12 +238,20 @@ def get_salary_record(record_id: int, db: Session = Depends(get_db)):
 def create_salary_record(data: SalaryRecordCreate, db: Session = Depends(get_db)):
     if not _PERIOD_RE.match(data.period or ""):
         raise HTTPException(400, "period 格式应为 YYYY-MM")
-    if db.query(SalaryRecord).filter(SalaryRecord.period == data.period).first():
-        raise HTTPException(409, f"已存在 {data.period} 的薪资记录")
+    if data.record_type not in ("salary", "bonus"):
+        raise HTTPException(400, "record_type 仅支持 salary（工资）或 bonus（奖金）")
     _validate_items(data.items)
+    dup = db.query(SalaryRecord).filter(
+        SalaryRecord.period == data.period,
+        SalaryRecord.record_type == data.record_type,
+    ).first()
+    if dup:
+        kind = "奖金" if data.record_type == "bonus" else "薪资"
+        raise HTTPException(409, f"已存在 {data.period} 的{kind}记录")
 
     rec = SalaryRecord(
         period=data.period,
+        record_type=data.record_type,
         pay_date=_parse_date(data.pay_date),
         employer=data.employer or "",
         credited_amount=data.credited_amount,
@@ -263,15 +273,20 @@ def update_salary_record(record_id: int, data: SalaryRecordCreate, db: Session =
         raise HTTPException(404, "薪资记录不存在")
     if not _PERIOD_RE.match(data.period or ""):
         raise HTTPException(400, "period 格式应为 YYYY-MM")
+    if data.record_type not in ("salary", "bonus"):
+        raise HTTPException(400, "record_type 仅支持 salary（工资）或 bonus（奖金）")
+    _validate_items(data.items)
     dup = db.query(SalaryRecord).filter(
         SalaryRecord.period == data.period,
+        SalaryRecord.record_type == data.record_type,
         SalaryRecord.id != record_id,
     ).first()
     if dup:
-        raise HTTPException(409, f"已存在 {data.period} 的薪资记录")
-    _validate_items(data.items)
+        kind = "奖金" if data.record_type == "bonus" else "薪资"
+        raise HTTPException(409, f"已存在 {data.period} 的{kind}记录")
 
     rec.period = data.period
+    rec.record_type = data.record_type
     rec.pay_date = _parse_date(data.pay_date)
     rec.employer = data.employer or ""
     rec.credited_amount = data.credited_amount
@@ -402,6 +417,30 @@ def delete_salary_slip(record_id: int, slip_id: int, db: Session = Depends(get_d
     return {"ok": True}
 
 
+# ──────────────────────────────────────────────── 指标卡布局（顺序 + 隐藏，持久化到 settings.json） ────────────────────────────────────────────────
+
+@router.get("/card-order")
+def get_salary_card_layout(db: Session = Depends(get_db)):
+    """读取指标卡布局：order（显示顺序）+ hidden（隐藏的卡 key 列表）"""
+    return {
+        "order": get_salary_card_order(),
+        "hidden": get_salary_card_hidden(),
+    }
+
+
+@router.put("/card-order")
+def update_salary_card_layout(data: SalaryCardOrderIn, db: Session = Depends(get_db)):
+    """保存指标卡布局（order / hidden 均为可选，至少传一项；服务端校验 + 补全）"""
+    if data.order is not None:
+        save_salary_card_order(data.order)
+    if data.hidden is not None:
+        save_salary_card_hidden(data.hidden)
+    return {
+        "order": get_salary_card_order(),
+        "hidden": get_salary_card_hidden(),
+    }
+
+
 # ──────────────────────────────────────────────── 年度汇总 ────────────────────────────────────────────────
 
 @router.get("/summary", response_model=SalarySummaryOut)
@@ -416,7 +455,7 @@ def salary_summary(
     if period_to:
         q = q.filter(SalaryRecord.period <= period_to)
     records = q.all()
-    tg = tp = tn = tc = tcrd = tact = 0.0
+    tg = tp = tn = tc = tcrd = tact = ttax = 0.0
     for r in records:
         g, pd, net, cc, pst = _compute_totals(r)
         tg += g
@@ -425,6 +464,7 @@ def salary_summary(
         tc += cc
         tcrd += r.credited_amount or 0.0
         tact += r.actual_tax or 0.0
+        ttax += sum(i.amount for i in r.items if i.category == "tax")
     count = len(records)
     avg = round(tn / count, 2) if count else 0.0
     return SalarySummaryOut(
@@ -438,6 +478,7 @@ def salary_summary(
         avg_net=avg,
         total_credited=round(tcrd, 2),
         total_actual_tax=round(tact, 2),
+        total_theoretical_tax=round(ttax, 2),
     )
 
 
@@ -528,7 +569,7 @@ def salary_tax_summary(
             elif i.category == "deduction" and i.tax_deductible:
                 total_social_insurance += i.amount
 
-    # 减除费用：过去年份按整年，当年按实际月数
+    # 减除费用：过去年份按整年，当年按实际工资月数
     deduction_months = 12 if year < datetime.now().year else (month_count or 1)
     deduction_fee = MONTHLY_DEDUCTION * deduction_months
 
