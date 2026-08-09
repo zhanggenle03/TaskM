@@ -555,7 +555,9 @@ def salary_tax_summary(
     non_taxable_income = 0.0
     total_social_insurance = 0.0
     actual_tax_paid = 0.0
-    month_count = len(records)
+    # 减除费用月份数与折算截止月只统计工资记录（奖金/私下发放不计入工资月份，否则当年减除费用虚高）
+    salary_records = [r for r in records if (r.record_type or "salary") == "salary"]
+    month_count = len(salary_records)
 
     for r in records:
         if r.actual_tax is not None:
@@ -581,11 +583,11 @@ def salary_tax_summary(
         .all()
     )
 
-    # 折算截止月份：优先按薪资数据已有最新月份（如数据到 10 月则按 10 月），无记录时回退系统当前月
+    # 折算截止月份：优先按工资记录已有最新月份（如数据到 10 月则按 10 月），无记录时回退系统当前月
     data_month = 0
-    if records:
+    if salary_records:
         try:
-            data_month = int(records[-1].period.split('-')[1])
+            data_month = int(salary_records[-1].period.split('-')[1])
         except (IndexError, ValueError):
             data_month = 0
     current_month = data_month or datetime.now().month
@@ -820,7 +822,9 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
             prev_actual_tax = round(prev_actual_tax + tax_from_items, 2)
         else:
             prev_actual_tax += r.actual_tax or 0.0
-        prev_month_count += 1
+        # 减除费用月份只计工资记录（奖金不计入工资月份）
+        if (r.record_type or "salary") == "salary":
+            prev_month_count += 1
     prev_income = round(prev_income, 2)
     prev_social = round(prev_social, 2)
 
@@ -910,7 +914,8 @@ def export_salary(
                                 total_gross += i.amount
                         elif i.category == "deduction" and i.tax_deductible:
                             total_social += i.amount
-                month_count = len(year_records)
+                # 展示用月份数只计工资记录（奖金不计入工资月份）
+                month_count = len([r for r in year_records if (r.record_type or "salary") == "salary"])
                 taxable = round(total_gross - 5000 * 12 - total_social, 2)
 
                 # 税率级距查找（TAX_BRACKETS 定义在本模块顶部）
