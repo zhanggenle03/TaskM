@@ -162,6 +162,10 @@ export const createTaxAdjustment = (data) => http.post('/salary/tax-adjustments'
 export const updateTaxAdjustment = (id, data) => http.put(`/salary/tax-adjustments/${id}`, data)
 export const deleteTaxAdjustment = (id) => http.delete(`/salary/tax-adjustments/${id}`)
 
+// --- Salary Card Layout（指标卡顺序 + 隐藏） ---
+export const getSalaryCardOrder = () => http.get('/salary/card-order')
+export const saveSalaryCardOrder = (data) => http.put('/salary/card-order', data)
+
 // --- Holiday Overrides ---
 export const getHolidayOverrides = (year) => http.get('/projects/holiday-overrides', { params: { year } })
 export const getHolidays = (year) => http.get('/projects/holidays', { params: { year }, _silentError: true, timeout: 5000 })

@@ -111,3 +111,59 @@ def set_default_category(key: str) -> str:
     save_settings({"default_category": key})
     return key
 
+
+# ── 薪资指标卡顺序 / 隐藏 ──
+# 卡片 key 顺序存于 settings.json 的 salary_card_order（有序列表），
+# 隐藏的卡片 key 存于 salary_card_hidden（列表）。结构与书签分类（project_categories）同模式。
+SALARY_CARD_DEFAULT_ORDER = ["gross", "deduct", "net", "credited", "company", "taxcmp"]
+
+
+def _normalize_card_order(order) -> list:
+    """校验卡片 key：只保留合法且不重复的，缺失的卡按默认顺序补全（保证列表始终包含全部卡）"""
+    if not isinstance(order, list):
+        order = []
+    seen = set()
+    clean = []
+    for k in order:
+        if k in SALARY_CARD_DEFAULT_ORDER and k not in seen:
+            seen.add(k)
+            clean.append(k)
+    for k in SALARY_CARD_DEFAULT_ORDER:
+        if k not in seen:
+            clean.append(k)
+    return clean
+
+
+def get_salary_card_order() -> list:
+    """读取指标卡顺序；未配置 / 非法时返回默认顺序"""
+    settings = load_settings()
+    order = settings.get("salary_card_order")
+    if not isinstance(order, list) or not order:
+        return list(SALARY_CARD_DEFAULT_ORDER)
+    return _normalize_card_order(order)
+
+
+def save_salary_card_order(order) -> list:
+    """覆盖保存指标卡顺序（校验 + 补全后写回）"""
+    clean = _normalize_card_order(order)
+    save_settings({"salary_card_order": clean})
+    return clean
+
+
+def get_salary_card_hidden() -> list:
+    """读取隐藏的指标卡 key 列表"""
+    settings = load_settings()
+    hidden = settings.get("salary_card_hidden", [])
+    if not isinstance(hidden, list):
+        return []
+    return [k for k in hidden if k in SALARY_CARD_DEFAULT_ORDER]
+
+
+def save_salary_card_hidden(hidden) -> list:
+    """覆盖保存隐藏的指标卡 key 列表（只保留合法 key）"""
+    if not isinstance(hidden, list):
+        hidden = []
+    clean = [k for k in hidden if k in SALARY_CARD_DEFAULT_ORDER]
+    save_settings({"salary_card_hidden": clean})
+    return clean
+
