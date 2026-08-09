@@ -16,9 +16,6 @@
           @change="loadData"
           style="width:260px"
         />
-        <el-button type="primary" @click="openCreate">
-          <el-icon><Plus /></el-icon> 新增薪资
-        </el-button>
         <el-button @click="openConfig">
           <el-icon><Setting /></el-icon> 薪资配置
         </el-button>
@@ -28,32 +25,74 @@
         <el-button @click="$router.push('/salary/tax-summary')">
           <el-icon><DataAnalysis /></el-icon> 个税汇算
         </el-button>
+        <el-button @click="cardMgrVisible = true">
+          <el-icon><Rank /></el-icon> 卡片管理
+        </el-button>
+        <el-dropdown @command="handleAddCommand" trigger="click">
+          <el-button type="primary">
+            <el-icon><Plus /></el-icon> 新增薪资
+            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="salary">新增薪资</el-dropdown-item>
+              <el-dropdown-item command="bonus">新增奖金</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-    <!-- 统计汇总卡片 -->
+    <!-- 统计汇总卡片（v-for 按用户顺序渲染，可拖拽排序 / 隐藏） -->
     <div class="summary-grid" v-if="summary">
-      <div class="sum-card sum-gross">
-        <div class="sum-label">区间应发合计</div>
-        <div class="sum-value">{{ fmt(summary.total_gross) }}</div>
-      </div>
-      <div class="sum-card sum-deduct">
-        <div class="sum-label">个人扣除合计</div>
-        <div class="sum-value">{{ fmt(summary.total_personal_deduction) }}</div>
-      </div>
-      <div class="sum-card sum-net">
-        <div class="sum-label">区间实发合计</div>
-        <div class="sum-value">{{ fmt(summary.total_net) }}</div>
-      </div>
-      <div class="sum-card sum-credited">
-        <div class="sum-label">到账合计</div>
-        <div class="sum-value">{{ fmt(summary.total_credited) }}</div>
-      </div>
-      <div class="sum-card sum-company">
-        <div class="sum-label">公司承担合计</div>
-        <div class="sum-value">{{ fmt(summary.total_company_cost) }}</div>
+      <div v-if="visibleCardCount === 0" class="cards-empty">所有卡片已隐藏，点击右上角「卡片管理」重新显示</div>
+      <div ref="cardListEl" class="sum-row">
+        <div v-for="key in cardOrder" v-show="!isCardHidden(key)" :key="key" class="sum-card" :class="cardMeta(key).cls" :data-key="key">
+          <div class="sum-card-head">
+            <span class="sum-label">{{ cardMeta(key).label }}</span>
+            <el-icon class="drag-handle" title="拖动调整顺序"><Rank /></el-icon>
+          </div>
+          <template v-if="key === 'gross'">
+            <div class="sum-value">{{ fmt(summary.total_gross) }}</div>
+          </template>
+          <template v-else-if="key === 'deduct'">
+            <div class="sum-value">{{ fmt(summary.total_personal_deduction) }}</div>
+            <div class="sum-sub">含税 {{ fmt(summary.total_theoretical_tax) }}</div>
+          </template>
+          <template v-else-if="key === 'net'">
+            <div class="sum-value">{{ fmt(summary.total_net) }}</div>
+            <div class="sum-sub">共 {{ summary.record_count || 0 }} 期 · 月均 {{ fmt(summary.avg_net) }}</div>
+          </template>
+          <template v-else-if="key === 'credited'">
+            <div class="sum-value">{{ fmt(summary.total_credited) }}</div>
+            <div class="sum-sub" :class="creditedDiffClass">{{ creditedDiffText }}</div>
+          </template>
+          <template v-else-if="key === 'company'">
+            <div class="sum-value">{{ fmt(summary.total_company_cost) }}</div>
+          </template>
+          <template v-else-if="key === 'taxcmp'">
+            <div class="taxcmp-row">
+              <span class="taxcmp-val t-theory" title="理论税额（明细个税合计）">{{ fmt(summary.total_theoretical_tax) }}</span>
+              <span class="taxcmp-sep">/</span>
+              <span class="taxcmp-val t-actual" title="实际税额（实际个税）">{{ fmt(summary.total_actual_tax) }}</span>
+            </div>
+            <div class="taxcmp-diff" :class="taxDiffClass">{{ taxDiffText }}</div>
+          </template>
+        </div>
       </div>
     </div>
+
+    <!-- 卡片管理弹窗 -->
+    <el-dialog v-model="cardMgrVisible" title="卡片管理" width="460px" top="18vh" @opened="initMgrSortable" @closed="mgrSortable?.destroy(); mgrSortable = null">
+      <p class="mgr-hint">按住手柄拖动调整顺序；开关控制显示 / 隐藏，改动自动保存</p>
+      <div ref="mgrListEl" class="card-mgr-list">
+        <div v-for="key in cardOrder" :key="key" class="card-mgr-row" :data-key="key">
+          <el-icon class="drag-handle"><Rank /></el-icon>
+          <span class="mgr-name">{{ cardMeta(key).label }}</span>
+          <el-switch :model-value="!isCardHidden(key)" size="small" @change="v => toggleCardHidden(key, v)" />
+        </div>
+      </div>
+    </el-dialog>
 
     <!-- 记录表格 -->
     <div class="table-wrap">
@@ -107,6 +146,11 @@
           </template>
         </el-table-column>
         <el-table-column prop="period" label="月份" width="78" />
+        <el-table-column label="类型" width="72" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.record_type === 'bonus' ? 'warning' : 'info'" size="small" effect="plain">{{ row.record_type === 'bonus' ? '奖金' : '工资' }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column label="发放日期" width="112">
           <template #default="{ row }">{{ row.pay_date || '—' }}</template>
         </el-table-column>
@@ -209,8 +253,7 @@
           </div>
           <div class="items-actions">
             <el-button size="small" @click="addItem"><el-icon><Plus /></el-icon> 加一行</el-button>
-            <el-button size="small" @click="applySocialTemplate"><el-icon><MagicStick /></el-icon> 套用五险一金模板</el-button>
-            <el-button size="small" @click="applyIncomeTemplate"><el-icon><DocumentCopy /></el-icon> 套用默认收入</el-button>
+            <el-button size="small" @click="applyTemplate"><el-icon><MagicStick /></el-icon> 套用配置模板</el-button>
             <span class="actions-spacer"></span>
             <el-dropdown @command="handleCalcTaxCommand" trigger="click">
               <el-button size="small">
@@ -240,11 +283,19 @@
 
           <div class="actual-card">
             <div class="inline-field">
-              <span class="inline-label">实际到账</span>
+              <span class="inline-label">实际到账
+                <el-tooltip content="左侧明细为理论值，可以以财务发送的工资条为准，此处为实际值（实际到账的金额）" placement="bottom" :show-after="200">
+                  <el-icon class="hint-icon"><WarningFilled /></el-icon>
+                </el-tooltip>
+              </span>
               <el-input-number v-model="form.credited_amount" :min="0" controls-position="right" size="small" class="inline-input" placeholder="入卡" />
             </div>
             <div class="inline-field">
-              <span class="inline-label">实际个税</span>
+              <span class="inline-label">实际个税
+                <el-tooltip content="左侧明细为理论值，可以以财务发送的工资条为准，此处为实际值（个税APP上的金额）" placement="bottom" :show-after="200">
+                  <el-icon class="hint-icon"><WarningFilled /></el-icon>
+                </el-tooltip>
+              </span>
               <el-input-number v-model="form.actual_tax" :min="0" controls-position="right" size="small" class="inline-input" placeholder="个税" />
             </div>
           </div>
@@ -257,6 +308,80 @@
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 奖金记录弹窗（独立简洁表单，与薪资录入分离） -->
+    <el-dialog v-model="bonusDialogVisible" :title="bonusForm.id ? '编辑奖金' : '新增奖金'" width="560px" top="10vh" @closed="resetBonusForm">
+      <el-form :model="bonusForm" label-width="96px">
+        <div class="bonus-form-row">
+          <el-form-item label="奖金月份" required>
+            <el-date-picker v-model="bonusForm.period" type="month" value-format="YYYY-MM" placeholder="发放月" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="发放日期">
+            <el-date-picker v-model="bonusForm.pay_date" type="date" value-format="YYYY-MM-DD" placeholder="发放日" style="width:100%" />
+          </el-form-item>
+        </div>
+        <el-form-item label="单位">
+          <el-input v-model="bonusForm.employer" placeholder="公司名（可选）" />
+        </el-form-item>
+        <div class="bonus-form-row">
+          <el-form-item label="奖金名称" required>
+            <el-input v-model="bonusForm.name" placeholder="如：年终奖（2025年度）" />
+          </el-form-item>
+          <el-form-item label="奖金金额" required>
+            <el-input-number v-model="bonusForm.amount" :min="0" :precision="2" :step="1000" controls-position="right" placeholder="金额" style="width:100%" />
+          </el-form-item>
+        </div>
+        <el-form-item label="计税方式" required>
+          <el-radio-group v-model="bonusForm.tax_method">
+            <el-radio-button value="single">单独计税</el-radio-button>
+            <el-radio-button value="merge">并入综合所得</el-radio-button>
+            <el-radio-button value="none">不计税</el-radio-button>
+          </el-radio-group>
+          <div class="bonus-tax-hint">{{ bonusTaxHint }}</div>
+        </el-form-item>
+
+        <!-- 单独计税：理论个税（自动算可改）+ 实际个税（tooltip）+ 差异 -->
+        <div v-if="bonusForm.tax_method === 'single'" class="bonus-tax-calc">
+          <div class="btc-row">
+            <span class="btc-label">理论个税</span>
+            <el-input-number v-model="bonusForm.theoretical_tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="按 ÷12 自动算" style="width:200px" />
+            <span class="btc-sub">按 {{ fmt(bonusForm.amount || 0) }} ÷ 12 查月度税率表自动算，可修改</span>
+          </div>
+          <div class="btc-row">
+            <span class="btc-label">实际个税
+              <el-tooltip content="理论值为计算值，此处为实际扣缴金额（个税APP上的金额）" placement="bottom" :show-after="200">
+                <el-icon class="hint-icon"><WarningFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <el-input-number v-model="bonusForm.actual_tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="个税APP上的金额" style="width:200px" />
+            <span v-if="bonusForm.actual_tax > 0" class="btc-diff" :class="bonusTaxDiffClass">{{ bonusTaxDiffText }}</span>
+          </div>
+        </div>
+        <!-- 并入综合所得：实际个税（可选）+ 提示 -->
+        <div v-else-if="bonusForm.tax_method === 'merge'" class="bonus-tax-calc">
+          <div class="btc-row">
+            <span class="btc-label">实际个税（可选）
+              <el-tooltip content="实际扣缴金额（个税APP上的金额）" placement="bottom" :show-after="200">
+                <el-icon class="hint-icon"><WarningFilled /></el-icon>
+              </el-tooltip>
+            </span>
+            <el-input-number v-model="bonusForm.actual_tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="随工资已扣" style="width:200px" />
+          </div>
+          <div class="btc-sub">并入综合所得：与工资一起按年度税率表计税，最终税额以全年汇算为准（可在「个税汇算」页测算对比）</div>
+        </div>
+
+        <el-form-item label="实际到账">
+          <el-input-number v-model="bonusForm.credited_amount" :min="0" :precision="2" controls-position="right" placeholder="入卡金额（不计税时请填工资 + 奖金总额）" style="width:100%" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="bonusForm.remark" type="textarea" :rows="2" placeholder="可选备注" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bonusDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="savingBonus" @click="saveBonus">保存</el-button>
       </template>
     </el-dialog>
 
@@ -396,8 +521,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import Sortable from 'sortablejs'
 import {
   getSalaryRecords, getSalaryRecord,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
@@ -405,10 +531,34 @@ import {
   getSalaryConfigTemplates, createSalaryConfigTemplate, updateSalaryConfigTemplate,
   deleteSalaryConfigTemplate, setActiveSalaryConfigTemplate,
   exportSalary,
+  getSalaryCardOrder, saveSalaryCardOrder,
 } from '../api'
 import SalarySlipDialog from '../components/SalarySlipDialog.vue'
 
 // ── 常量 ──
+// 指标卡元数据（key 与后端 settings.json 的 salary_card_order 保持一致）
+const CARD_META = [
+  { key: 'gross', label: '区间应发合计', cls: 'sum-gross' },
+  { key: 'deduct', label: '个人扣除合计', cls: 'sum-deduct' },
+  { key: 'net', label: '区间实发合计', cls: 'sum-net' },
+  { key: 'credited', label: '到账合计', cls: 'sum-credited' },
+  { key: 'company', label: '公司承担合计', cls: 'sum-company' },
+  { key: 'taxcmp', label: '理论 vs 实际税额', cls: 'sum-taxcmp' },
+]
+const DEFAULT_CARD_ORDER = CARD_META.map(c => c.key)
+const cardMeta = (key) => CARD_META.find(c => c.key === key) || { key, label: key, cls: '' }
+
+// 全年一次性奖金单独计税：月度换算税率表（A÷12 查档，税 = A×rate − qd；政策有效期至 2027-12-31）
+const MONTHLY_TAX_BRACKETS = [
+  { upper: 3000, rate: 3, qd: 0 },
+  { upper: 12000, rate: 10, qd: 210 },
+  { upper: 25000, rate: 20, qd: 1410 },
+  { upper: 35000, rate: 25, qd: 2660 },
+  { upper: 55000, rate: 30, qd: 4410 },
+  { upper: 80000, rate: 35, qd: 7160 },
+  { upper: Infinity, rate: 45, qd: 15160 },
+]
+
 const CATEGORY_OPTIONS = [
   { value: 'income', label: '收入', cls: 'cat-income' },
   { value: 'deduction', label: '个人扣款', cls: 'cat-deduction' },
@@ -477,11 +627,227 @@ const exporting = ref(false)
 const records = ref([])
 const summary = ref(null)
 
+// 理论税额（明细 tax 类目）− 实际税额（actual_tax 字段）
+const taxDiff = computed(() => ((summary.value?.total_theoretical_tax ?? 0) - (summary.value?.total_actual_tax ?? 0)))
+const taxDiffClass = computed(() => {
+  const d = taxDiff.value
+  if (Math.abs(d) < 0.01) return 'taxcmp-diff-zero'
+  return d > 0 ? 'taxcmp-diff-plus' : 'taxcmp-diff-minus'
+})
+const taxDiffText = computed(() => {
+  const d = taxDiff.value
+  if (Math.abs(d) < 0.01) return '一致'
+  return d > 0 ? `理论个税多 ${fmt(d)}` : `实际个税多 ${fmt(-d)}`
+})
+
+// 到账 vs 实发差额（<0 未到账，>0 到账多）
+const creditedDiff = computed(() => ((summary.value?.total_credited ?? 0) - (summary.value?.total_net ?? 0)))
+const creditedDiffClass = computed(() => {
+  const d = creditedDiff.value
+  if (Math.abs(d) < 0.01) return 'sum-sub-ok'
+  return d > 0 ? 'sum-sub-plus' : 'sum-sub-minus'
+})
+const creditedDiffText = computed(() => {
+  const d = creditedDiff.value
+  if (Math.abs(d) < 0.01) return '实发与到账一致'
+  return d > 0 ? `到账多 ${fmt(d)}` : `未到账 ${fmt(-d)}`
+})
+
+// ── 指标卡布局（顺序 + 隐藏，持久化到 settings.json） ──
+const cardOrder = ref([...DEFAULT_CARD_ORDER])
+const cardHidden = ref([])
+const cardMgrVisible = ref(false)
+const cardListEl = ref(null)
+const mgrListEl = ref(null)
+let cardSortable = null
+let mgrSortable = null
+
+const isCardHidden = (key) => cardHidden.value.includes(key)
+const visibleCardCount = computed(() => cardOrder.value.filter(k => !isCardHidden(k)).length)
+
+function loadCardOrder() {
+  return getSalaryCardOrder().then(res => {
+    if (res && Array.isArray(res.order) && res.order.length) cardOrder.value = res.order
+    cardHidden.value = Array.isArray(res.hidden) ? res.hidden : []
+  }).catch(() => {})
+}
+
+function persistCardLayout() {
+  saveSalaryCardOrder({ order: cardOrder.value, hidden: cardHidden.value })
+    .then(res => {
+      if (res && Array.isArray(res.order) && res.order.length) cardOrder.value = res.order
+      if (res && Array.isArray(res.hidden)) cardHidden.value = res.hidden
+    })
+    .catch(() => ElMessage.error('卡片布局保存失败'))
+}
+
+function syncOrderFromEl(el) {
+  if (!el) return
+  const order = Array.from(el.children).map(c => c.dataset.key).filter(Boolean)
+  if (order.length) cardOrder.value = order
+}
+
+function initCardSortable() {
+  if (!cardListEl.value) return
+  cardSortable?.destroy()
+  cardSortable = Sortable.create(cardListEl.value, {
+    handle: '.drag-handle',
+    animation: 150,
+    onEnd: () => { syncOrderFromEl(cardListEl.value); persistCardLayout() },
+  })
+}
+
+function initMgrSortable() {
+  if (!mgrListEl.value) return
+  mgrSortable?.destroy()
+  mgrSortable = Sortable.create(mgrListEl.value, {
+    handle: '.drag-handle',
+    animation: 150,
+    onEnd: () => { syncOrderFromEl(mgrListEl.value); persistCardLayout() },
+  })
+}
+
+function toggleCardHidden(key, show) {
+  const set = new Set(cardHidden.value)
+  if (show) set.delete(key)
+  else set.add(key)
+  cardHidden.value = [...set]
+  persistCardLayout()
+}
+
 // 月份范围过滤，默认当前年
 const now = new Date()
 const periodRange = ref([`${now.getFullYear()}-01`, `${now.getFullYear()}-12`])
 
 const dialogVisible = ref(false)
+
+// ── 奖金记录弹窗（独立表单：名称/金额/计税方式/理论个税/实际个税） ──
+const bonusDialogVisible = ref(false)
+const savingBonus = ref(false)
+const bonusForm = reactive({
+  id: null, period: '', pay_date: '', employer: '',
+  name: '年终奖', amount: null, tax_method: 'single',
+  theoretical_tax: null, actual_tax: null,
+  credited_amount: null, remark: '',
+})
+// 单独计税理论税额（A÷12 查月度税率表）
+function autoSingleTax(a) {
+  a = Number(a) || 0
+  if (a <= 0) return 0
+  const m = a / 12
+  for (const b of MONTHLY_TAX_BRACKETS) {
+    if (m <= b.upper) return Math.max(0, Math.round((a * b.rate / 100 - b.qd) * 100) / 100)
+  }
+  return 0
+}
+const resetBonusForm = () => {
+  Object.assign(bonusForm, {
+    id: null, period: '', pay_date: '', employer: '',
+    name: '年终奖', amount: null, tax_method: 'single',
+    theoretical_tax: null, actual_tax: null,
+    credited_amount: null, remark: '',
+  })
+}
+// 单独计税时：金额变化自动重算理论个税（并入/不计税时理论列不适用）
+watch(() => bonusForm.amount, (v) => {
+  if (bonusForm.tax_method === 'single') {
+    bonusForm.theoretical_tax = v > 0 ? autoSingleTax(v) : null
+  }
+})
+// 切换到单独计税：按当前金额补理论个税；离开单独计税：清空（避免误带入明细）
+watch(() => bonusForm.tax_method, (m) => {
+  if (m === 'single' && bonusForm.amount > 0 && !bonusForm.theoretical_tax) {
+    bonusForm.theoretical_tax = autoSingleTax(bonusForm.amount)
+  } else if (m !== 'single') {
+    bonusForm.theoretical_tax = null
+  }
+})
+const bonusTaxHint = computed(() => {
+  switch (bonusForm.tax_method) {
+    case 'single': return '全年一次性奖金单独计税：A÷12 查月度税率表，不并入综合所得汇算（政策至 2027 底）'
+    case 'merge': return '奖金并入当年综合所得，与工资一起按年度税率表计税'
+    default: return '私下发放、不进税务系统，仅记账；实际到账请填工资 + 奖金总额'
+  }
+})
+// 理论个税（明细 tax 行）vs 实际个税（actual_tax）差异
+const bonusTaxDiffText = computed(() => {
+  const t = bonusForm.theoretical_tax || 0
+  const a = bonusForm.actual_tax || 0
+  const d = Math.round((t - a) * 100) / 100
+  if (Math.abs(d) < 0.01) return '理论与实际一致'
+  return d > 0 ? `理论多，应补 ${fmt(d)}` : `实际多，应退 ${fmt(-d)}`
+})
+const bonusTaxDiffClass = computed(() => {
+  const t = bonusForm.theoretical_tax || 0
+  const a = bonusForm.actual_tax || 0
+  const d = Math.round((t - a) * 100) / 100
+  if (Math.abs(d) < 0.01) return 'btc-diff-ok'
+  return d > 0 ? 'btc-diff-plus' : 'btc-diff-minus'
+})
+function openBonusCreate() {
+  resetBonusForm()
+  // 默认带出当前激活薪资模板的单位
+  const cfg = salaryConfig.value
+  if (cfg) bonusForm.employer = cfg.employer || ''
+  bonusDialogVisible.value = true
+}
+function handleAddCommand(cmd) {
+  if (cmd === 'bonus') openBonusCreate()
+  else openCreate()
+}
+function openBonusEdit(detail) {
+  const income = (detail.items || []).find(it => it.category === 'income')
+  const tax = (detail.items || []).find(it => it.category === 'tax')
+  Object.assign(bonusForm, {
+    id: detail.id,
+    period: detail.period,
+    pay_date: detail.pay_date || '',
+    employer: detail.employer || '',
+    name: income?.name || '年终奖',
+    amount: income?.amount ?? null,
+    // taxable=false 可能是单独计税或不计税，无法区分，编辑默认按单独计税，用户可改
+    tax_method: income?.taxable === false ? 'single' : 'merge',
+    theoretical_tax: tax?.amount ?? null,
+    actual_tax: detail.actual_tax ?? null,
+    credited_amount: detail.credited_amount ?? null,
+    remark: detail.remark || '',
+  })
+  bonusDialogVisible.value = true
+}
+async function saveBonus() {
+  if (!bonusForm.period) { ElMessage.warning('请选择奖金月份'); return }
+  if (!(bonusForm.amount > 0)) { ElMessage.warning('请填写奖金金额'); return }
+  const taxable = bonusForm.tax_method === 'merge'
+  const items = [{
+    category: 'income', name: bonusForm.name || '年终奖', amount: bonusForm.amount,
+    base: null, rate: null, funded_by: '', tax_deductible: false, taxable, sort_order: 0,
+  }]
+  // 理论个税 → 明细 tax 行（仅单独计税适用，应扣/汇总口径）；实际个税 → actual_tax（实缴口径，与薪资双轨一致）
+  const theoTax = bonusForm.tax_method === 'single' && bonusForm.theoretical_tax > 0 ? Number(bonusForm.theoretical_tax) : 0
+  const actTax = bonusForm.actual_tax != null && bonusForm.actual_tax !== '' ? Number(bonusForm.actual_tax) : null
+  if (theoTax > 0) {
+    items.push({ category: 'tax', name: '个税', amount: theoTax, base: null, rate: null, funded_by: 'personal', tax_deductible: false, taxable: true, sort_order: 1 })
+  }
+  const payload = {
+    period: bonusForm.period,
+    record_type: 'bonus',
+    pay_date: bonusForm.pay_date || null,
+    employer: bonusForm.employer || '',
+    credited_amount: bonusForm.credited_amount ?? null,
+    actual_tax: actTax,
+    remark: bonusForm.remark || '',
+    items,
+  }
+  savingBonus.value = true
+  try {
+    if (bonusForm.id) await updateSalaryRecord(bonusForm.id, payload)
+    else await createSalaryRecord(payload)
+    ElMessage.success('已保存')
+    bonusDialogVisible.value = false
+    await loadData()
+  } catch { /* 拦截器已提示 */ }
+  finally { savingBonus.value = false }
+}
 
 // ── 工资条附件弹窗 ──
 const slipDialogVisible = ref(false)
@@ -520,7 +886,7 @@ const tplCreateVisible = ref(false)
 const tplCreating = ref(false)
 const tplCreateForm = reactive({ name: '', activate: true })
 
-const emptyForm = () => ({ id: null, period: '', pay_date: '', employer: '', credited_amount: null, actual_tax: null, remark: '', items: [] })
+const emptyForm = () => ({ id: null, period: '', record_type: 'salary', pay_date: '', employer: '', credited_amount: null, actual_tax: null, remark: '', items: [] })
 const form = reactive(emptyForm())
 
 // ── 工具 ──
@@ -551,6 +917,7 @@ function loadData() {
   ]).then(([recs, sum]) => {
     records.value = recs || []
     summary.value = sum
+    nextTick(() => initCardSortable())
   }).catch(() => {
     records.value = []
     summary.value = null
@@ -583,7 +950,7 @@ async function doExport() {
   }
 }
 
-onMounted(async () => { await loadData(); await loadConfig() })
+onMounted(async () => { await loadData(); await loadConfig(); await loadCardOrder(); nextTick(() => initCardSortable()) })
 
 // ── 薪资通用配置 ──
 function loadConfig() {
@@ -757,50 +1124,56 @@ function isRateMode(item) {
   return item.base !== '' && item.base != null && item.rate !== '' && item.rate != null
 }
 const numOrNull = (v) => (v === '' || v == null ? null : Number(v))
-async function applySocialTemplate(silent = false) {
-  // 套用激活模板：按「各项缴费基数」+ 比例自动生成明细；已存在同名项不重复添加
+async function applyTemplate() {
+  // 一键套用激活配置模板：五险一金（按各项缴费基数+比例自动计算）+ 默认收入项；已存在同名项不重复添加
   const cfg = salaryConfig.value
   const rates = (cfg && cfg.social_rates) ? cfg.social_rates : SOCIAL_RATES
   const bases = (cfg && cfg.social_bases) ? cfg.social_bases : {}
-  const exist = new Set(form.items.map(i => i.name))
-  let anyBase = false
-  SOCIAL_TEMPLATE.forEach(t => {
-    if (!exist.has(t.name)) {
-      const rate = rates[t.name] ?? 0
-      const rawBase = bases[t.name]
-      const base = (rawBase !== '' && rawBase != null && !isNaN(Number(rawBase))) ? Number(rawBase) : null
-      if (base != null) anyBase = true
-      const amount = base != null ? round2(base * rate / 100) : 0
-      form.items.push({
-        category: t.category, name: t.name, funded_by: t.funded_by,
-        base: base, rate: rate, amount: amount,
-        tax_deductible: t.category === 'deduction',
-        taxable: true,
-        sort_order: form.items.length,
-      })
-    }
-  })
-  if (!silent) {
-    ElMessage.success(anyBase ? '已套用五险一金模板（按各项缴费基数自动计算）' : '已套用五险一金模板（各项基数请在套用后分别填写）')
-  }
-}
-async function applyIncomeTemplate() {
-  const cfg = salaryConfig.value
-  if (!cfg || !cfg.default_income_items || !cfg.default_income_items.length) {
-    ElMessage.warning('请先在「薪资配置」中设置默认收入项')
+  const incomeItems = (cfg && cfg.default_income_items) || []
+  const hasSocial = SOCIAL_TEMPLATE.some(t => (rates[t.name] ?? 0) > 0)
+  const hasIncome = incomeItems.length > 0
+  if (!hasSocial && !hasIncome) {
+    ElMessage.warning('请先在「薪资配置」中设置五险一金或默认收入项')
     openConfig()
     return
   }
   const exist = new Set(form.items.map(i => i.name))
-  cfg.default_income_items.forEach(it => {
-    if (!exist.has(it.name)) {
-      form.items.push({
-        category: 'income', name: it.name, amount: it.amount || 0,
-        base: null, rate: null, funded_by: '', tax_deductible: false, taxable: it.taxable !== false, sort_order: form.items.length,
-      })
-    }
+  let anyBase = false
+  let added = 0
+  SOCIAL_TEMPLATE.forEach(t => {
+    if (exist.has(t.name)) return
+    exist.add(t.name)
+    const rate = rates[t.name] ?? 0
+    const rawBase = bases[t.name]
+    const base = (rawBase !== '' && rawBase != null && !isNaN(Number(rawBase))) ? Number(rawBase) : null
+    if (base != null) anyBase = true
+    const amount = base != null ? round2(base * rate / 100) : 0
+    form.items.push({
+      category: t.category, name: t.name, funded_by: t.funded_by,
+      base: base, rate: rate, amount: amount,
+      tax_deductible: t.category === 'deduction',
+      taxable: true,
+      sort_order: form.items.length,
+    })
+    added++
   })
-  ElMessage.success('已套用默认收入项')
+  incomeItems.forEach(it => {
+    if (exist.has(it.name)) return
+    exist.add(it.name)
+    form.items.push({
+      category: 'income', name: it.name, amount: it.amount || 0,
+      base: null, rate: null, funded_by: '', tax_deductible: false, taxable: it.taxable !== false, sort_order: form.items.length,
+    })
+    added++
+  })
+  if (added === 0) {
+    ElMessage.info('配置项均已存在，无需重复套用')
+    return
+  }
+  const parts = []
+  if (hasSocial) parts.push('五险一金' + (anyBase ? '（按基数自动计算）' : '（基数待填）'))
+  if (hasIncome) parts.push('默认收入')
+  ElMessage.success(`已套用配置模板：${parts.join(' + ')}`)
 }
 
 async function calcTax() {
@@ -975,9 +1348,12 @@ watch(
 async function openEdit(row) {
   try {
     const detail = await getSalaryRecord(row.id)
+    // 奖金记录走独立弹窗
+    if (detail.record_type === 'bonus') { openBonusEdit(detail); return }
     Object.assign(form, {
       id: detail.id,
       period: detail.period,
+      record_type: detail.record_type === 'bonus' ? 'bonus' : 'salary',
       pay_date: detail.pay_date || '',
       employer: detail.employer || '',
       credited_amount: detail.credited_amount ?? null,
@@ -998,6 +1374,7 @@ async function save() {
   if (!form.period) { ElMessage.warning('请选择薪资月份'); return }
   const payload = {
     period: form.period,
+    record_type: form.record_type === 'bonus' ? 'bonus' : 'salary',
     pay_date: form.pay_date || null,
     employer: form.employer || '',
     credited_amount: form.credited_amount ?? null,
@@ -1048,16 +1425,39 @@ async function remove(row) {
 .page-title { font-size: 22px; font-weight: 600; color: #2c2c2a; margin: 0; }
 .page-sub { margin: 4px 0 0; font-size: 13px; color: #999; }
 
-.summary-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 18px; }
-.sum-card { background: #fff; border: 1px solid #e8e8e4; border-radius: 10px; padding: 14px 16px; }
+.summary-grid { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.sum-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+.sum-card { background: #fff; border: 1px solid #e8e8e4; border-radius: 10px; padding: 14px 16px; position: relative; min-height: 96px; }
+.sum-card-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 8px; }
+.sum-card-head .sum-label { margin-bottom: 0; }
+.drag-handle { color: #c0c0c0; cursor: grab; font-size: 14px; opacity: 0; transition: opacity .15s; flex-shrink: 0; }
+.sum-card:hover .drag-handle { opacity: 1; }
+.drag-handle:hover { color: #534ab7; }
+.drag-handle:active { cursor: grabbing; }
+.cards-empty { text-align: center; font-size: 13px; color: #bbb; padding: 24px 0; border: 1px dashed #e8e8e4; border-radius: 10px; }
 .sum-label { font-size: 12px; color: #999; margin-bottom: 8px; }
 .sum-value { font-size: 18px; font-weight: 600; color: #2c2c2a; }
+.sum-sub { margin-top: 5px; font-size: 11px; color: #909399; white-space: nowrap; }
+.sum-sub-plus { color: #E6A23C; }
+.sum-sub-minus { color: #d9534f; }
+.sum-sub-ok { color: #909399; }
 .sum-gross .sum-value { color: #67C23A; }
 .sum-deduct .sum-value { color: #E6A23C; }
 .sum-net .sum-value { color: #534AB7; }
-.sum-credited .sum-value { color: #1d953f; }
+.sum-credited .sum-value { color: #185FA5; }
 .sum-company .sum-value { color: #909399; }
 .sum-avg .sum-value { color: #2c2c2a; }
+
+/* 理论 vs 实际税额对比卡 */
+.taxcmp-row { display: flex; align-items: center; gap: 5px; }
+.taxcmp-sep { font-size: 14px; color: #c0c0c0; }
+.taxcmp-val { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
+.taxcmp-val.t-theory { color: #993556; }
+.taxcmp-val.t-actual { color: #185FA5; }
+.taxcmp-diff { margin-top: 5px; font-size: 11px; white-space: nowrap; }
+.taxcmp-diff-plus { color: #d9534f; }
+.taxcmp-diff-minus { color: #67C23A; }
+.taxcmp-diff-zero { color: #909399; }
 
 .salary-table { background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; }
 .salary-table :deep(.el-table__expanded-cell) { padding: 10px 16px !important; }
@@ -1118,6 +1518,22 @@ async function remove(row) {
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-row .el-form-item { min-width: 0; }
 
+/* 奖金记录弹窗 */
+.bonus-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.bonus-form-row .el-form-item { margin-bottom: 16px; }
+.bonus-tax-hint { font-size: 12px; color: #909399; line-height: 1.6; margin-top: 6px; }
+.bonus-tax-calc { background: #f8f9fa; border: 1px solid #eef0f2; border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px; }
+.btc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btc-label { font-size: 13px; color: #2c2c2a; white-space: nowrap; min-width: 88px; display: inline-flex; align-items: center; }
+.btc-label .hint-icon { margin-left: 2px; font-size: 12px; color: #bbb; cursor: help; }
+.btc-label .hint-icon:hover { color: #534ab7; }
+.btc-val { font-size: 18px; font-weight: 600; color: #534ab7; font-variant-numeric: tabular-nums; }
+.btc-sub { font-size: 12px; color: #909399; }
+.btc-diff { font-size: 12px; }
+.btc-diff-plus { color: #d9534f; }
+.btc-diff-minus { color: #67C23A; }
+.btc-diff-ok { color: #909399; }
+
 /* 分栏布局：左侧明细可滚动，右侧汇总固定 */
 .record-split { display: flex; gap: 20px; height: 100%; }
 .record-main { flex: 1; overflow-y: auto; overflow-x: hidden; min-width: 0; padding-right: 4px; }
@@ -1140,7 +1556,9 @@ async function remove(row) {
 }
 .inline-field { display: flex; align-items: center; gap: 8px; }
 .inline-field + .inline-field { margin-top: 8px; }
-.inline-label { font-size: 12px; color: #666; white-space: nowrap; flex-shrink: 0; }
+.inline-label { font-size: 12px; color: #666; white-space: nowrap; flex-shrink: 0; display: inline-flex; align-items: center; }
+.hint-icon { margin-left: 3px; font-size: 12px; color: #bbb; cursor: help; }
+.hint-icon:hover { color: #534ab7; }
 .inline-input { flex: 0 0 120px; }
 .inline-input .el-input-number { width: 100%; }
 
@@ -1281,6 +1699,18 @@ async function remove(row) {
 .income-tpl-row .tpl-tax { flex: 0 0 auto; margin-right: 2px; }
 .income-tpl-row .tpl-tax .el-checkbox__label { font-size: 12px; color: #666; }
 .add-income { align-self: flex-start; }
+
+/* 卡片管理弹窗 */
+.mgr-hint { font-size: 12px; color: #909399; margin: 0 0 12px; }
+.card-mgr-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow-y: auto; padding: 2px; }
+.card-mgr-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; background: #fafbfc;
+  border: 1px solid #eef0f2; border-radius: 8px;
+}
+.card-mgr-row .drag-handle { opacity: 1; }
+.card-mgr-row:hover { border-color: #d5d0f2; }
+.mgr-name { flex: 1; font-size: 13px; color: #2c2c2a; }
 </style>
 
 <!-- el-dialog Teleport 到 body，固定高度须用非 scoped 样式 -->

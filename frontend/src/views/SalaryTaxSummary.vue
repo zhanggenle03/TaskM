@@ -160,6 +160,40 @@
           <span>其他扣除：<b>{{ fmt(sectionTotal('other_deduction')) }}</b></span>
         </div>
       </div>
+
+      <!-- ── 年终奖计税测算 ── -->
+      <div class="bonus-section">
+        <div class="bonus-head">
+          <span class="bonus-title">年终奖计税测算</span>
+          <span class="bonus-tip">全年一次性奖金单独计税政策有效期至 2027 年底</span>
+        </div>
+        <div class="bonus-body">
+          <div class="bonus-inputs">
+            <div class="bonus-field">
+              <span class="bonus-field-label">奖金金额</span>
+              <el-input-number v-model="bonusAmount" :min="0" :precision="2" :step="1000" controls-position="right" style="width:160px" />
+            </div>
+            <div class="bonus-field">
+              <span class="bonus-field-label">已扣税额（可选）</span>
+              <el-input-number v-model="bonusTaxPaid" :min="0" :precision="2" :step="100" controls-position="right" style="width:160px" />
+            </div>
+            <span class="bonus-hint">基于本年度已录入数据，对比两种计税方式哪种划算</span>
+          </div>
+          <div v-if="bonusAmount > 0" class="bonus-result">
+            <div class="bonus-item">
+              <span class="bonus-label">单独计税</span>
+              <span class="bonus-val">{{ fmt(bonusSingleTax) }}</span>
+              <span v-if="bonusTaxPaid > 0" class="bonus-sub">已扣 {{ fmt(bonusTaxPaid) }}，应{{ bonusSingleDiff >= 0 ? '补' : '退' }} {{ fmt(Math.abs(bonusSingleDiff)) }}</span>
+            </div>
+            <div class="bonus-item">
+              <span class="bonus-label">并入综合所得</span>
+              <span class="bonus-val">{{ fmt(bonusMergeTax) }}</span>
+              <span v-if="bonusTaxPaid > 0" class="bonus-sub">已扣 {{ fmt(bonusTaxPaid) }}，应{{ bonusMergeDiff >= 0 ? '补' : '退' }} {{ fmt(Math.abs(bonusMergeDiff)) }}</span>
+            </div>
+            <div v-if="bonusRecommend" class="bonus-rec">推荐：<b>{{ bonusRecommend }}</b></div>
+          </div>
+        </div>
+      </div>
     </template>
 
     <!-- ── 统一添加/编辑对话框 ── -->
@@ -290,6 +324,54 @@ const TAX_BRACKETS = [
   { upper: 960000, rate: 35, qd: 85920 },
   { upper: Infinity, rate: 45, qd: 181920 },
 ]
+
+// 全年一次性奖金单独计税：月度换算税率表（A÷12 查档，税 = A×rate − qd；政策有效期至 2027-12-31）
+const MONTHLY_TAX_BRACKETS = [
+  { upper: 3000, rate: 3, qd: 0 },
+  { upper: 12000, rate: 10, qd: 210 },
+  { upper: 25000, rate: 20, qd: 1410 },
+  { upper: 35000, rate: 25, qd: 2660 },
+  { upper: 55000, rate: 30, qd: 4410 },
+  { upper: 80000, rate: 35, qd: 7160 },
+  { upper: Infinity, rate: 45, qd: 15160 },
+]
+
+// ── 年终奖计税测算 ──
+const bonusAmount = ref(0)
+const bonusTaxPaid = ref(0)
+
+function yearTax(x) {
+  if (x <= 0) return 0
+  for (const b of TAX_BRACKETS) {
+    if (x <= b.upper) return Math.max(0, Math.round((x * b.rate / 100 - b.qd) * 100) / 100)
+  }
+  return 0
+}
+const bonusSingleTax = computed(() => {
+  const a = bonusAmount.value || 0
+  if (a <= 0) return 0
+  const m = a / 12
+  for (const b of MONTHLY_TAX_BRACKETS) {
+    if (m <= b.upper) return Math.max(0, Math.round((a * b.rate / 100 - b.qd) * 100) / 100)
+  }
+  return 0
+})
+// 并入综合所得新增税额 = f(原应纳税所得额 + 奖金) − f(原应纳税所得额)
+const bonusMergeTax = computed(() => {
+  const a = bonusAmount.value || 0
+  if (a <= 0) return 0
+  const cur = Math.max(0, ps.value.taxable_income || 0)
+  return Math.max(0, Math.round((yearTax(cur + a) - yearTax(cur)) * 100) / 100)
+})
+const bonusSingleDiff = computed(() => Math.round((bonusSingleTax.value - (bonusTaxPaid.value || 0)) * 100) / 100)
+const bonusMergeDiff = computed(() => Math.round((bonusMergeTax.value - (bonusTaxPaid.value || 0)) * 100) / 100)
+const bonusRecommend = computed(() => {
+  const s = bonusSingleTax.value, m = bonusMergeTax.value
+  if (s === m) return ''
+  return s < m
+    ? `单独计税（比并入少缴 ${fmt(m - s)}）`
+    : `并入综合所得（比单独计税少缴 ${fmt(s - m)}）`
+})
 
 // ── 状态 ──
 const taxSummary = ref(null)
@@ -682,6 +764,23 @@ onMounted(() => { loadAll() })
 
 .adj-footer { display:flex; gap:24px; padding-top:14px; margin-top:8px; border-top:1px solid #eef0f2; font-size:13px; color:#666; }
 .adj-footer b { color:#534ab7; }
+
+/* 年终奖计税测算 */
+.bonus-section { background:#fff; border:1px solid #e8e8e4; border-radius:12px; padding:20px 24px; margin-bottom:16px; }
+.bonus-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+.bonus-title { font-size:14px; font-weight:600; color:#2c2c2a; }
+.bonus-tip { font-size:12px; color:#909399; }
+.bonus-inputs { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.bonus-field { display:flex; align-items:center; gap:8px; }
+.bonus-field-label { font-size:13px; color:#2c2c2a; white-space:nowrap; }
+.bonus-hint { font-size:12px; color:#909399; }
+.bonus-result { display:flex; align-items:center; gap:24px; margin-top:14px; padding:14px 16px; background:#f8f9fa; border:1px solid #eef0f2; border-radius:8px; flex-wrap:wrap; }
+.bonus-item { display:flex; align-items:baseline; gap:8px; }
+.bonus-label { font-size:12px; color:#888; white-space:nowrap; }
+.bonus-val { font-size:18px; font-weight:600; color:#534ab7; font-variant-numeric:tabular-nums; }
+.bonus-sub { font-size:12px; color:#909399; }
+.bonus-rec { font-size:13px; color:#E6A23C; }
+.bonus-rec b { color:#d9534f; font-weight:600; }
 
 /* 对话框布局 */
 .dlg-row2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
