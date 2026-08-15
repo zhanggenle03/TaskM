@@ -599,6 +599,9 @@ def salary_tax_summary(
     tax_paid_from_adjustments = 0.0
 
     for a in adj_items:
+        # 停用的调整项不参与汇算计算（记录保留，可随时重新启用）
+        if a.is_enabled is False:
+            continue
         # 对当年数据做月份比例折算（超出当前月不计入）
         eff_amt = _prorate_amount(a, year, current_month) if is_current_year else (a.amount or 0)
 
@@ -672,7 +675,8 @@ def salary_tax_summary(
             monthly_amount=a.monthly_amount or 0,
             tax_paid=a.tax_paid or 0,
             original_amount=a.original_amount,
-            amount=a.amount, remark=a.remark, sort_order=a.sort_order,
+            amount=a.amount, is_enabled=a.is_enabled if a.is_enabled is not None else True,
+            remark=a.remark, sort_order=a.sort_order,
         ))
 
     return SalaryTaxSummaryOut(

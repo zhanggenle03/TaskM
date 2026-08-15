@@ -578,6 +578,7 @@ class TaxAdjustmentCreate(BaseModel):
     tax_paid: float = 0.0
     original_amount: Optional[float] = None
     amount: float = 0.0
+    is_enabled: bool = True
     remark: str = ""
     sort_order: int = 0
 
@@ -590,6 +591,7 @@ class TaxAdjustmentUpdate(BaseModel):
     tax_paid: Optional[float] = None
     original_amount: Optional[float] = None
     amount: Optional[float] = None
+    is_enabled: Optional[bool] = None
     remark: Optional[str] = None
     sort_order: Optional[int] = None
 
@@ -606,6 +608,7 @@ class TaxAdjustmentOut(BaseModel):
     tax_paid: float = 0.0
     original_amount: Optional[float] = None
     amount: float
+    is_enabled: bool = True
     remark: str = ""
     sort_order: int = 0
 

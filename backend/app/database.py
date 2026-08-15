@@ -685,6 +685,7 @@ class TaxAdjustment(Base):
     tax_paid = Column(Float, default=0.0)                         # 对该项已预缴的个税（如劳务报酬预扣税）
     original_amount = Column(Float, nullable=True)                # 原始金额（对收入项，未乘计入比例前）
     amount = Column(Float, default=0.0)                          # 实际计入金额（period内合计）
+    is_enabled = Column(Boolean, default=True, nullable=False)   # 是否启用（停用后不参与汇算计算，记录保留）
     remark = Column(String(200), default="")
     sort_order = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -896,6 +897,7 @@ def ensure_tax_adjustment_table(engine):
         ("monthly_amount", "ALTER TABLE tax_adjustments ADD COLUMN monthly_amount REAL DEFAULT 0.0"),
         ("label", "ALTER TABLE tax_adjustments ADD COLUMN label VARCHAR(200) DEFAULT ''"),
         ("tax_paid", "ALTER TABLE tax_adjustments ADD COLUMN tax_paid REAL DEFAULT 0.0"),
+        ("is_enabled", "ALTER TABLE tax_adjustments ADD COLUMN is_enabled BOOLEAN DEFAULT 1"),
     ):
         if col not in cols:
             with engine.connect() as conn:

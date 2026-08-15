@@ -129,6 +129,7 @@
               v-for="item in grouped[cat.key]"
               :key="item._key"
               class="adj-item"
+              :class="{ 'is-disabled': item.is_enabled === false }"
             >
               <div class="adj-item-main">
                 <span class="adj-item-type">{{ typeLabel(item) }}</span>
@@ -146,6 +147,14 @@
                 <span v-if="showProrate(item)" class="adj-item-prorate">按已录入 {{ dataMonth }} 月折算 {{ fmt(prorateAmt(item)) }}</span>
                 <span class="adj-item-amt">{{ fmt(item.amount || 0) }}</span>
                 <div class="adj-item-actions">
+                  <el-tooltip :content="item.is_enabled === false ? '已停用，不参与汇算' : '已启用，参与汇算'" placement="top">
+                    <el-switch
+                      :model-value="item.is_enabled !== false"
+                      size="small"
+                      :loading="item._toggling"
+                      @change="(v) => toggleItem(item, v)"
+                    />
+                  </el-tooltip>
                   <el-button text size="small" @click="editItem(item)">编辑</el-button>
                   <el-button text size="small" type="danger" @click="deleteItem(item)">删除</el-button>
                 </div>
@@ -262,6 +271,11 @@
             </el-form-item>
           </div>
         </template>
+
+        <el-form-item label="启用">
+          <el-switch v-model="form.is_enabled" />
+          <div class="form-hint">停用后该记录保留但不参与汇算计算，可随时重新启用</div>
+        </el-form-item>
       </el-form>
 
       <template #footer>
@@ -417,6 +431,7 @@ const defaultForm = () => ({
   tax_paid: 0,
   original_amount: null,
   amount: 0,
+  is_enabled: true,
 })
 const form = reactive(defaultForm())
 
@@ -425,6 +440,9 @@ const base = computed(() => taxSummary.value || { total_gross: 0, non_taxable_in
 
 // 按当前年份过滤
 const currentRows = computed(() => rows.value.filter(r => r.year === taxYear.value))
+
+// 仅启用项参与汇算计算（停用项保留展示但不计入）
+const enabledRows = computed(() => currentRows.value.filter(r => r.is_enabled !== false))
 
 // ── 预览汇算（仅当前年份，超出当前月的部分折算） ──
 const ps = computed(() => {
@@ -446,7 +464,7 @@ const ps = computed(() => {
   }
 
   let oi = 0, sd = 0, od = 0
-  for (const r of currentRows.value) {
+  for (const r of enabledRows.value) {
     const a = effAmt(r)
     if (r.category === 'other_income') oi += a
     else if (r.category === 'special_deduction') sd += a
@@ -463,9 +481,9 @@ const ps = computed(() => {
     }
   } else { remain = 36000 + Math.abs(taxable) }
   const tp = Math.max(0, Math.round((taxable * tr / 100 - qd) * 100) / 100)
-  // 实际已缴税额 = 薪资个税（来自后端）+ 各调整项已预缴税额
+  // 实际已缴税额 = 薪资个税（来自后端）+ 各调整项已预缴税额（仅启用项）
   let actualTax = b.actual_tax_paid || 0
-  for (const r of currentRows.value) {
+  for (const r of enabledRows.value) {
     if (r.tax_paid) actualTax += r.tax_paid
   }
   const at = Math.round(actualTax * 100) / 100
@@ -532,10 +550,10 @@ function periodMonths(item) {
   const f = item.period_from.split('-').map(Number), t = item.period_to.split('-').map(Number)
   return (t[0] - f[0]) * 12 + (t[1] - f[1]) + 1
 }
-function sectionTotal(cat) { return currentRows.value.filter(r => r.category === cat).reduce((s, r) => s + (r.amount || 0), 0) }
+function sectionTotal(cat) { return enabledRows.value.filter(r => r.category === cat).reduce((s, r) => s + (r.amount || 0), 0) }
 
 function makeRow(data) {
-  _keySeq++; return { _key: 'r' + _keySeq, _saving: false, id: null, year: taxYear.value, category: 'special_deduction', item_type: 'children_education', label: '', period_from: taxYear.value + '-01', period_to: taxYear.value + '-12', monthly_amount: 0, tax_paid: 0, original_amount: null, amount: 0, ...data }
+  _keySeq++; return { _key: 'r' + _keySeq, _saving: false, id: null, year: taxYear.value, category: 'special_deduction', item_type: 'children_education', label: '', period_from: taxYear.value + '-01', period_to: taxYear.value + '-12', monthly_amount: 0, tax_paid: 0, original_amount: null, amount: 0, is_enabled: true, ...data }
 }
 
 // ── 对话框 ──
@@ -546,7 +564,7 @@ function openAdd() {
 
 function editItem(item) {
   dlg.mode = 'edit'; dlg.title = '编辑调整项'; dlg.editTarget = item; dlg.visible = true
-  Object.assign(form, { category: item.category, item_type: item.item_type, label: item.label || '', period_from: item.period_from || (taxYear.value + '-01'), period_to: item.period_to || (taxYear.value + '-12'), monthly_amount: item.monthly_amount || 0, tax_paid: item.tax_paid || 0, original_amount: item.original_amount, amount: item.amount || 0 })
+  Object.assign(form, { category: item.category, item_type: item.item_type, label: item.label || '', period_from: item.period_from || (taxYear.value + '-01'), period_to: item.period_to || (taxYear.value + '-12'), monthly_amount: item.monthly_amount || 0, tax_paid: item.tax_paid || 0, original_amount: item.original_amount, amount: item.amount || 0, is_enabled: item.is_enabled !== false })
 }
 
 function onCatChange() {
@@ -669,8 +687,24 @@ function confirmDlg() {
       tax_paid: form.tax_paid || 0,
       original_amount: form.category === 'other_income' ? (form.original_amount || 0) : null,
       amount: amt,
+      is_enabled: form.is_enabled,
     }
   }
+}
+
+// ── 启用/停用 ──
+function toggleItem(item, v) {
+  // 未保存的新行（尚未点保存全部）：仅本地切换
+  if (!item.id) { item.is_enabled = v; return }
+  item._toggling = true
+  updateTaxAdjustment(item.id, { is_enabled: v }).then(() => {
+    item.is_enabled = v
+    item._toggling = false
+  }).catch(e => {
+    item._toggling = false
+    ElMessage.error('操作失败：' + (e.message || e))
+    // 不更新 is_enabled，switch 因 model-value 未变自动回弹
+  })
 }
 
 // ── 删除 ──
@@ -687,7 +721,7 @@ async function saveAllRows() {
   for (const row of rows.value) {
     try {
       const rowYear = row.year || taxYear.value
-      const payload = { year: rowYear, category: row.category, item_type: row.item_type, label: row.label || '', period_from: row.period_from || (rowYear + '-01'), period_to: row.period_to || (rowYear + '-12'), monthly_amount: row.monthly_amount || 0, tax_paid: row.tax_paid || 0, original_amount: row.category === 'other_income' ? (row.original_amount || 0) : null, amount: row.amount || 0 }
+      const payload = { year: rowYear, category: row.category, item_type: row.item_type, label: row.label || '', period_from: row.period_from || (rowYear + '-01'), period_to: row.period_to || (rowYear + '-12'), monthly_amount: row.monthly_amount || 0, tax_paid: row.tax_paid || 0, original_amount: row.category === 'other_income' ? (row.original_amount || 0) : null, amount: row.amount || 0, is_enabled: row.is_enabled !== false }
       if (row.id) { await updateTaxAdjustment(row.id, payload) }
       else { const res = await createTaxAdjustment(payload); Object.assign(row, res, { id: res.id }) }
       ok++
@@ -753,6 +787,9 @@ onMounted(() => { loadAll() })
 .adj-group-total { font-weight:400; color:#999; margin-left:8px; font-size:12px; }
 
 .adj-item { background:#f8f9fa; border:1px solid #eef0f2; border-radius:8px; padding:12px 16px; margin-bottom:6px; }
+.adj-item.is-disabled { opacity:.55; background:#fafafa; }
+.adj-item.is-disabled .adj-item-type,
+.adj-item.is-disabled .adj-item-amt { color:#909399; text-decoration:line-through; }
 .adj-item-main { display:flex; align-items:center; gap:10px; }
 .adj-item-type { font-size:13px; font-weight:600; color:#2c2c2a; flex-shrink:0; }
 .adj-item-label { font-size:12px; color:#909399; background:#eef0f2; padding:1px 8px; border-radius:4px; flex-shrink:0; }
