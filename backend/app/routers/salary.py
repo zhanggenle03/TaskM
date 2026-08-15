@@ -455,8 +455,10 @@ def salary_summary(
     if period_to:
         q = q.filter(SalaryRecord.period <= period_to)
     records = q.all()
+    # 指标卡只统计工资记录（奖金为纯记录，不参与应发/实发/到账/税等统计）
+    salary_records = [r for r in records if (r.record_type or "salary") == "salary"]
     tg = tp = tn = tc = tcrd = tact = ttax = 0.0
-    for r in records:
+    for r in salary_records:
         g, pd, net, cc, pst = _compute_totals(r)
         tg += g
         tp += pd
@@ -465,7 +467,7 @@ def salary_summary(
         tcrd += r.credited_amount or 0.0
         tact += r.actual_tax or 0.0
         ttax += sum(i.amount for i in r.items if i.category == "tax")
-    count = len(records)
+    count = len(salary_records)
     avg = round(tn / count, 2) if count else 0.0
     return SalarySummaryOut(
         period_from=period_from or "",
@@ -555,11 +557,16 @@ def salary_tax_summary(
     non_taxable_income = 0.0
     total_social_insurance = 0.0
     actual_tax_paid = 0.0
-    # 减除费用月份数与折算截止月只统计工资记录（奖金/私下发放不计入工资月份，否则当年减除费用虚高）
+    # 奖金为纯记录，与工资计算完全隔离：不参与收入/社保/实缴，仅统计金额供汇算页测算
     salary_records = [r for r in records if (r.record_type or "salary") == "salary"]
+    bonus_records = [r for r in records if (r.record_type or "salary") == "bonus"]
     month_count = len(salary_records)
+    bonus_single_amount = round(sum(
+        i.amount for r in bonus_records
+        for i in r.items if i.category == "income" and i.taxable is False
+    ), 2)
 
-    for r in records:
+    for r in salary_records:
         if r.actual_tax is not None:
             actual_tax_paid += r.actual_tax
         for i in r.items:
@@ -704,6 +711,7 @@ def salary_tax_summary(
         next_tax_rate=next_rate,
         tax_payable=tax_payable,
         tax_difference=tax_difference,
+        bonus_single_amount=round(bonus_single_amount, 2),
         adjustments=adjustments_out,
     )
 
@@ -806,6 +814,9 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
     if body.edit_id:
         q = q.filter(SalaryRecord.id != body.edit_id)
     prev_records = q.order_by(SalaryRecord.period.asc()).all()
+    # 累计预扣法只统计工资记录：奖金（单独计税/不计税）不并入综合所得，
+    # 其税款走单独通道，不应混入当月工资个税的累计预扣计算
+    prev_records = [r for r in prev_records if (r.record_type or "salary") == "salary"]
 
     # 累计历史数据
     prev_income = 0.0
@@ -877,9 +888,10 @@ def export_salary(
             q = q.filter(SalaryRecord.period <= period_to)
         records = q.order_by(SalaryRecord.period.asc()).all()
 
-        # 统计汇总
+        # 统计汇总（仅工资记录；奖金为纯记录，不参与导出汇总，与指标卡口径一致）
+        salary_records = [r for r in records if (r.record_type or "salary") == "salary"]
         tg = tp = tn = tc = tcrd = tact = 0.0
-        for r in records:
+        for r in salary_records:
             g = sum(i.amount for i in r.items if i.category == "income")
             pd = sum(i.amount for i in r.items if i.category in ("deduction", "tax"))
             cc = sum(i.amount for i in r.items if i.category == "company_cost")
@@ -889,7 +901,7 @@ def export_salary(
             tc += cc
             tcrd += r.credited_amount or 0.0
             tact += r.actual_tax or 0.0
-        count = len(records)
+        count = len(salary_records)
         summary = {
             "record_count": count,
             "total_gross": round(tg, 2),

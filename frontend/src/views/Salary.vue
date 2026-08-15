@@ -100,7 +100,7 @@
         <el-table-column type="expand" label="" width="44" fixed="left">
           <template #default="{ row }">
             <div class="detail-cards">
-              <div v-for="(grp, cat) in grouped(row.items)" :key="cat" class="dc-card" :class="'dc-' + cat">
+              <div v-for="(grp, cat) in grouped(normItems(row))" :key="cat" class="dc-card" :class="'dc-' + cat">
                 <div class="dc-head">
                   <span class="dc-badge" :class="'b-' + cat">{{ catLabel(cat) }}</span>
                   <span class="dc-count">{{ grp.length }} 项</span>
@@ -161,7 +161,10 @@
           <template #default="{ row }"><span class="amt amt-gross">{{ fmt(row.gross) }}</span></template>
         </el-table-column>
         <el-table-column label="应扣（含税）" width="152" align="center">
-          <template #default="{ row }"><span class="amt amt-deduct">{{ fmt(row.personal_deduction) }}<small class="amt-tax-part">({{ taxOf(row) }})</small></span></template>
+          <template #default="{ row }">
+            <span v-if="row.record_type === 'bonus'" class="amt amt-muted">—</span>
+            <span v-else class="amt amt-deduct">{{ fmt(row.personal_deduction) }}<small class="amt-tax-part">({{ taxOf(row) }})</small></span>
+          </template>
         </el-table-column>
         <el-table-column label="实发" width="100" align="center">
           <template #default="{ row }"><span class="amt amt-net">{{ fmt(row.net) }}</span></template>
@@ -170,10 +173,16 @@
           <template #default="{ row }"><span class="amt amt-credited" :class="{ 'amt-muted': row.credited_amount == null }">{{ row.credited_amount != null ? fmt(row.credited_amount) : '—' }}</span></template>
         </el-table-column>
         <el-table-column label="实际个税" width="96" align="center">
-          <template #default="{ row }"><span class="amt amt-tax" :class="{ 'amt-muted': row.actual_tax == null }">{{ row.actual_tax != null ? fmt(row.actual_tax) : '—' }}</span></template>
+          <template #default="{ row }">
+            <span v-if="row.record_type === 'bonus'" class="amt amt-muted">—</span>
+            <span v-else class="amt amt-tax">{{ fmt(row.actual_tax) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="公司承担" width="96" align="center">
-          <template #default="{ row }"><span class="amt amt-company">{{ fmt(row.company_cost) }}</span></template>
+          <template #default="{ row }">
+            <span v-if="row.record_type === 'bonus'" class="amt amt-muted">—</span>
+            <span v-else class="amt amt-company">{{ fmt(row.company_cost) }}</span>
+          </template>
         </el-table-column>
         <el-table-column label="工资条" width="72" align="center">
           <template #default="{ row }">
@@ -330,54 +339,22 @@
             <el-input v-model="bonusForm.name" placeholder="如：年终奖（2025年度）" />
           </el-form-item>
           <el-form-item label="奖金金额" required>
-            <el-input-number v-model="bonusForm.amount" :min="0" :precision="2" :step="1000" controls-position="right" placeholder="金额" style="width:100%" />
+            <el-input-number v-model="bonusForm.amount" :min="0" :precision="2" :step="1000" controls-position="right" placeholder="应发金额" style="width:100%" />
           </el-form-item>
         </div>
-        <el-form-item label="计税方式" required>
-          <el-radio-group v-model="bonusForm.tax_method">
-            <el-radio-button value="single">单独计税</el-radio-button>
-            <el-radio-button value="merge">并入综合所得</el-radio-button>
-            <el-radio-button value="none">不计税</el-radio-button>
-          </el-radio-group>
-          <div class="bonus-tax-hint">{{ bonusTaxHint }}</div>
-        </el-form-item>
-
-        <!-- 单独计税：理论个税（自动算可改）+ 实际个税（tooltip）+ 差异 -->
-        <div v-if="bonusForm.tax_method === 'single'" class="bonus-tax-calc">
-          <div class="btc-row">
-            <span class="btc-label">理论个税</span>
-            <el-input-number v-model="bonusForm.theoretical_tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="按 ÷12 自动算" style="width:200px" />
-            <span class="btc-sub">按 {{ fmt(bonusForm.amount || 0) }} ÷ 12 查月度税率表自动算，可修改</span>
-          </div>
-          <div class="btc-row">
-            <span class="btc-label">实际个税
-              <el-tooltip content="理论值为计算值，此处为实际扣缴金额（个税APP上的金额）" placement="bottom" :show-after="200">
-                <el-icon class="hint-icon"><WarningFilled /></el-icon>
-              </el-tooltip>
-            </span>
-            <el-input-number v-model="bonusForm.actual_tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="个税APP上的金额" style="width:200px" />
-            <span v-if="bonusForm.actual_tax > 0" class="btc-diff" :class="bonusTaxDiffClass">{{ bonusTaxDiffText }}</span>
-          </div>
+        <div class="bonus-form-row">
+          <el-form-item label="扣款">
+            <el-input-number v-model="bonusForm.deduction" :min="0" :precision="2" :step="100" controls-position="right" placeholder="如：个税等（可选）" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="实际到账">
+            <el-input-number v-model="bonusForm.credited_amount" :min="0" :precision="2" controls-position="right" placeholder="默认等于实发" style="width:100%" />
+          </el-form-item>
         </div>
-        <!-- 并入综合所得：实际个税（可选）+ 提示 -->
-        <div v-else-if="bonusForm.tax_method === 'merge'" class="bonus-tax-calc">
-          <div class="btc-row">
-            <span class="btc-label">实际个税（可选）
-              <el-tooltip content="实际扣缴金额（个税APP上的金额）" placement="bottom" :show-after="200">
-                <el-icon class="hint-icon"><WarningFilled /></el-icon>
-              </el-tooltip>
-            </span>
-            <el-input-number v-model="bonusForm.actual_tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="随工资已扣" style="width:200px" />
-          </div>
-          <div class="btc-sub">并入综合所得：与工资一起按年度税率表计税，最终税额以全年汇算为准（可在「个税汇算」页测算对比）</div>
-        </div>
-
-        <el-form-item label="实际到账">
-          <el-input-number v-model="bonusForm.credited_amount" :min="0" :precision="2" controls-position="right" placeholder="入卡金额（不计税时请填工资 + 奖金总额）" style="width:100%" />
-        </el-form-item>
+        <div class="bonus-net-hint">实发 = 金额 − 扣款 = <b>{{ fmt(bonusNet) }}</b>，保存后与到账保持一致</div>
         <el-form-item label="备注">
           <el-input v-model="bonusForm.remark" type="textarea" :rows="2" placeholder="可选备注" />
         </el-form-item>
+        <div class="bonus-record-hint">奖金仅作记录，不参与指标卡统计与个税计算；计税测算请到「个税汇算」页查看</div>
       </el-form>
       <template #footer>
         <el-button @click="bonusDialogVisible = false">取消</el-button>
@@ -548,17 +525,6 @@ const CARD_META = [
 const DEFAULT_CARD_ORDER = CARD_META.map(c => c.key)
 const cardMeta = (key) => CARD_META.find(c => c.key === key) || { key, label: key, cls: '' }
 
-// 全年一次性奖金单独计税：月度换算税率表（A÷12 查档，税 = A×rate − qd；政策有效期至 2027-12-31）
-const MONTHLY_TAX_BRACKETS = [
-  { upper: 3000, rate: 3, qd: 0 },
-  { upper: 12000, rate: 10, qd: 210 },
-  { upper: 25000, rate: 20, qd: 1410 },
-  { upper: 35000, rate: 25, qd: 2660 },
-  { upper: 55000, rate: 30, qd: 4410 },
-  { upper: 80000, rate: 35, qd: 7160 },
-  { upper: Infinity, rate: 45, qd: 15160 },
-]
-
 const CATEGORY_OPTIONS = [
   { value: 'income', label: '收入', cls: 'cat-income' },
   { value: 'deduction', label: '个人扣款', cls: 'cat-deduction' },
@@ -721,69 +687,21 @@ const periodRange = ref([`${now.getFullYear()}-01`, `${now.getFullYear()}-12`])
 
 const dialogVisible = ref(false)
 
-// ── 奖金记录弹窗（独立表单：名称/金额/计税方式/理论个税/实际个税） ──
+// ── 奖金记录弹窗（纯记录：不参与指标卡统计与个税计算，测算在汇算页） ──
 const bonusDialogVisible = ref(false)
 const savingBonus = ref(false)
 const bonusForm = reactive({
   id: null, period: '', pay_date: '', employer: '',
-  name: '年终奖', amount: null, tax_method: 'single',
-  theoretical_tax: null, actual_tax: null,
+  name: '年终奖', amount: null, deduction: null,
   credited_amount: null, remark: '',
 })
-// 单独计税理论税额（A÷12 查月度税率表）
-function autoSingleTax(a) {
-  a = Number(a) || 0
-  if (a <= 0) return 0
-  const m = a / 12
-  for (const b of MONTHLY_TAX_BRACKETS) {
-    if (m <= b.upper) return Math.max(0, Math.round((a * b.rate / 100 - b.qd) * 100) / 100)
-  }
-  return 0
-}
 const resetBonusForm = () => {
   Object.assign(bonusForm, {
     id: null, period: '', pay_date: '', employer: '',
-    name: '年终奖', amount: null, tax_method: 'single',
-    theoretical_tax: null, actual_tax: null,
+    name: '年终奖', amount: null, deduction: null,
     credited_amount: null, remark: '',
   })
 }
-// 单独计税时：金额变化自动重算理论个税（并入/不计税时理论列不适用）
-watch(() => bonusForm.amount, (v) => {
-  if (bonusForm.tax_method === 'single') {
-    bonusForm.theoretical_tax = v > 0 ? autoSingleTax(v) : null
-  }
-})
-// 切换到单独计税：按当前金额补理论个税；离开单独计税：清空（避免误带入明细）
-watch(() => bonusForm.tax_method, (m) => {
-  if (m === 'single' && bonusForm.amount > 0 && !bonusForm.theoretical_tax) {
-    bonusForm.theoretical_tax = autoSingleTax(bonusForm.amount)
-  } else if (m !== 'single') {
-    bonusForm.theoretical_tax = null
-  }
-})
-const bonusTaxHint = computed(() => {
-  switch (bonusForm.tax_method) {
-    case 'single': return '全年一次性奖金单独计税：A÷12 查月度税率表，不并入综合所得汇算（政策至 2027 底）'
-    case 'merge': return '奖金并入当年综合所得，与工资一起按年度税率表计税'
-    default: return '私下发放、不进税务系统，仅记账；实际到账请填工资 + 奖金总额'
-  }
-})
-// 理论个税（明细 tax 行）vs 实际个税（actual_tax）差异
-const bonusTaxDiffText = computed(() => {
-  const t = bonusForm.theoretical_tax || 0
-  const a = bonusForm.actual_tax || 0
-  const d = Math.round((t - a) * 100) / 100
-  if (Math.abs(d) < 0.01) return '理论与实际一致'
-  return d > 0 ? `理论多，应补 ${fmt(d)}` : `实际多，应退 ${fmt(-d)}`
-})
-const bonusTaxDiffClass = computed(() => {
-  const t = bonusForm.theoretical_tax || 0
-  const a = bonusForm.actual_tax || 0
-  const d = Math.round((t - a) * 100) / 100
-  if (Math.abs(d) < 0.01) return 'btc-diff-ok'
-  return d > 0 ? 'btc-diff-plus' : 'btc-diff-minus'
-})
 function openBonusCreate() {
   resetBonusForm()
   // 默认带出当前激活薪资模板的单位
@@ -791,13 +709,17 @@ function openBonusCreate() {
   if (cfg) bonusForm.employer = cfg.employer || ''
   bonusDialogVisible.value = true
 }
+// 实发 = 金额 − 扣款（应发保持名义金额，不与到账绑定）
+const bonusNet = computed(() => Math.max(0, (bonusForm.amount || 0) - (bonusForm.deduction || 0)))
 function handleAddCommand(cmd) {
   if (cmd === 'bonus') openBonusCreate()
   else openCreate()
 }
 function openBonusEdit(detail) {
   const income = (detail.items || []).find(it => it.category === 'income')
-  const tax = (detail.items || []).find(it => it.category === 'tax')
+  // 扣款兼容：旧记录为 deduction-扣款，新记录为 tax-个税
+  const deduction = (detail.items || []).find(it => it.category === 'tax')
+    || (detail.items || []).find(it => it.category === 'deduction' && it.name === '扣款')
   Object.assign(bonusForm, {
     id: detail.id,
     period: detail.period,
@@ -805,10 +727,7 @@ function openBonusEdit(detail) {
     employer: detail.employer || '',
     name: income?.name || '年终奖',
     amount: income?.amount ?? null,
-    // taxable=false 可能是单独计税或不计税，无法区分，编辑默认按单独计税，用户可改
-    tax_method: income?.taxable === false ? 'single' : 'merge',
-    theoretical_tax: tax?.amount ?? null,
-    actual_tax: detail.actual_tax ?? null,
+    deduction: deduction?.amount ?? null,
     credited_amount: detail.credited_amount ?? null,
     remark: detail.remark || '',
   })
@@ -817,24 +736,25 @@ function openBonusEdit(detail) {
 async function saveBonus() {
   if (!bonusForm.period) { ElMessage.warning('请选择奖金月份'); return }
   if (!(bonusForm.amount > 0)) { ElMessage.warning('请填写奖金金额'); return }
-  const taxable = bonusForm.tax_method === 'merge'
+  const deduction = bonusForm.deduction > 0 ? Number(bonusForm.deduction) : 0
+  const net = Math.max(0, Number(bonusForm.amount) - deduction)
+  // 到账未填时默认等于实发（金额 − 扣款）
+  const credited = bonusForm.credited_amount != null && bonusForm.credited_amount !== '' ? Number(bonusForm.credited_amount) : net
+  // 仅记录：income 行恒非计税（taxable=false），不生成 tax 行，不记录实际个税
   const items = [{
-    category: 'income', name: bonusForm.name || '年终奖', amount: bonusForm.amount,
-    base: null, rate: null, funded_by: '', tax_deductible: false, taxable, sort_order: 0,
+    category: 'income', name: bonusForm.name || '年终奖', amount: Number(bonusForm.amount),
+    base: null, rate: null, funded_by: '', tax_deductible: false, taxable: false, sort_order: 0,
   }]
-  // 理论个税 → 明细 tax 行（仅单独计税适用，应扣/汇总口径）；实际个税 → actual_tax（实缴口径，与薪资双轨一致）
-  const theoTax = bonusForm.tax_method === 'single' && bonusForm.theoretical_tax > 0 ? Number(bonusForm.theoretical_tax) : 0
-  const actTax = bonusForm.actual_tax != null && bonusForm.actual_tax !== '' ? Number(bonusForm.actual_tax) : null
-  if (theoTax > 0) {
-    items.push({ category: 'tax', name: '个税', amount: theoTax, base: null, rate: null, funded_by: 'personal', tax_deductible: false, taxable: true, sort_order: 1 })
+  if (deduction > 0) {
+    items.push({ category: 'tax', name: '个税', amount: deduction, base: null, rate: null, funded_by: 'personal', tax_deductible: false, taxable: false, sort_order: 1 })
   }
   const payload = {
     period: bonusForm.period,
     record_type: 'bonus',
     pay_date: bonusForm.pay_date || null,
     employer: bonusForm.employer || '',
-    credited_amount: bonusForm.credited_amount ?? null,
-    actual_tax: actTax,
+    credited_amount: credited,
+    actual_tax: null,
     remark: bonusForm.remark || '',
     items,
   }
@@ -907,6 +827,15 @@ const grouped = (items) => {
     if (map[cat]) result[cat] = map[cat]
   }
   return result
+}
+// 展开明细：奖金（纯记录）旧数据的「个人扣款-扣款」在展示层归入「个税-个税」卡（不改原数据）
+const normItems = (row) => {
+  if (row.record_type !== 'bonus') return row.items || []
+  return (row.items || []).map(it =>
+    (it.category === 'deduction' && it.name === '扣款')
+      ? { ...it, category: 'tax', name: '个税' }
+      : it
+  )
 }
 function loadData() {
   loading.value = true
@@ -1521,18 +1450,9 @@ async function remove(row) {
 /* 奖金记录弹窗 */
 .bonus-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .bonus-form-row .el-form-item { margin-bottom: 16px; }
-.bonus-tax-hint { font-size: 12px; color: #909399; line-height: 1.6; margin-top: 6px; }
-.bonus-tax-calc { background: #f8f9fa; border: 1px solid #eef0f2; border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; display: flex; flex-direction: column; gap: 10px; }
-.btc-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.btc-label { font-size: 13px; color: #2c2c2a; white-space: nowrap; min-width: 88px; display: inline-flex; align-items: center; }
-.btc-label .hint-icon { margin-left: 2px; font-size: 12px; color: #bbb; cursor: help; }
-.btc-label .hint-icon:hover { color: #534ab7; }
-.btc-val { font-size: 18px; font-weight: 600; color: #534ab7; font-variant-numeric: tabular-nums; }
-.btc-sub { font-size: 12px; color: #909399; }
-.btc-diff { font-size: 12px; }
-.btc-diff-plus { color: #d9534f; }
-.btc-diff-minus { color: #67C23A; }
-.btc-diff-ok { color: #909399; }
+.bonus-net-hint { font-size: 12px; color: #909399; margin: -8px 0 14px; }
+.bonus-net-hint b { color: #534ab7; }
+.bonus-record-hint { font-size: 12px; color: #909399; line-height: 1.6; padding: 8px 12px; background: #f8f9fa; border: 1px solid #eef0f2; border-radius: 8px; }
 
 /* 分栏布局：左侧明细可滚动，右侧汇总固定 */
 .record-split { display: flex; gap: 20px; height: 100%; }

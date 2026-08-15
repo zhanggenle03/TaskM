@@ -479,6 +479,9 @@ class SalaryTaxSummaryOut(BaseModel):
     tax_payable: float = 0.0                         # 当年应交税额（应纳税所得额×税率−速算扣除数）
     tax_difference: float = 0.0                      # 差值（应交−实缴）
 
+    # 全年一次性奖金（单独计税，不并入综合所得；仅统计金额供测算，与工资计算完全隔离）
+    bonus_single_amount: float = 0.0                 # 单独计税奖金金额合计
+
     # 调整项列表（供前端编辑）
     adjustments: List['TaxAdjustmentOut'] = []
 

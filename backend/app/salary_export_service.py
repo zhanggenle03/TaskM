@@ -205,6 +205,12 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
     """填充 Sheet 2：明细（宽表格式，每月份一行，各项目为独立列）"""
     sorted_records = sorted(records, key=lambda x: x.period)
 
+    def _norm_item(it):
+        """奖金记录（纯记录）旧数据的扣款项在导出中归入个税列显示"""
+        if it.category == 'deduction' and it.name == '扣款':
+            return 'tax', '个税'
+        return it.category, it.name
+
     # 类别标签与颜色映射
     CAT_LABELS = {
         'income': '收入', 'deduction': '个人扣款', 'tax': '个税', 'company_cost': '公司承担',
@@ -224,13 +230,14 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
         for it in sorted(rec.items, key=lambda x: (cat_order.get(x.category, 9), x.sort_order)):
             if not it.name:
                 continue
-            tax_flag = 'nontax' if (it.category == 'income' and it.taxable is False) else 'tax'
-            key = (it.name, tax_flag)
+            cat, name = _norm_item(it)
+            tax_flag = 'nontax' if (cat == 'income' and it.taxable is False) else 'tax'
+            key = (name, tax_flag)
             if key not in item_info:
                 item_info[key] = {
-                    'name': it.name,
-                    'category': it.category,
-                    'cat_label': CAT_LABELS.get(it.category, it.category),
+                    'name': name,
+                    'category': cat,
+                    'cat_label': CAT_LABELS.get(cat, cat),
                     'taxable': tax_flag == 'nontax',
                 }
 
@@ -283,13 +290,14 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
     for rec in sorted_records:
         gross, pd, net, cc = _compute_totals(rec)
 
-        # 构建 (name, tax_flag) → 金额映射（同名同计税状态累加）
+        # 构建 (name, tax_flag) → 金额映射（同名同计税状态累加；奖金扣款归入个税列）
         item_amt = {}
         tax_from_items = 0.0
         for it in rec.items:
             if it.name:
-                tax_flag = 'nontax' if (it.category == 'income' and it.taxable is False) else 'tax'
-                key = (it.name, tax_flag)
+                cat, name = _norm_item(it)
+                tax_flag = 'nontax' if (cat == 'income' and it.taxable is False) else 'tax'
+                key = (name, tax_flag)
                 item_amt[key] = item_amt.get(key, 0.0) + (it.amount or 0.0)
             if it.category == 'tax':
                 tax_from_items += it.amount or 0.0
@@ -312,10 +320,14 @@ def _build_detail_sheet(ws, records: List[SalaryRecord]):
             else:
                 _apply_cell(ws, r, col, '', font=FONT_BODY)
 
-        # 汇总列
+        # 汇总列（奖金为纯记录：应扣合计/公司承担显示 "—"，应发/实发保留数值）
         sum_col_start = n_base + n_item + 1
+        is_bonus = (rec.record_type or 'salary') == 'bonus'
         sum_values = [
-            gross, pd, net, cc,
+            gross,
+            '—' if is_bonus else pd,
+            net,
+            '—' if is_bonus else cc,
             rec.credited_amount if rec.credited_amount is not None else '—',
             rec.actual_tax if rec.actual_tax is not None else '—',
             rec.remark or '',
