@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, joinedload
 from .database import (
     Communication, Attachment, Contact, StatusPool,
     TagPool, TaskTag, Project, Requirement,
+    RequirementCustomField, RequirementCustomValue,
     UPLOAD_DIR, derive_task_status
 )
 
@@ -678,7 +679,6 @@ def generate_export_package(
     if 'linked_requirements' in selected_fields and linked_req_data:
         from .routers.requirements import generate_requirement_doc_bytes, _extract_attachment_links, \
             _make_export_filename, _unique_export_name
-        from .database import Requirement, RequirementCustomField, RequirementCustomValue
 
         all_used_names = set()  # 跨需求共享，保证整个 ZIP 内附件文件名唯一（重名加序号）
         for req_info in linked_req_data:
