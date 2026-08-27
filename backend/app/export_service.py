@@ -835,7 +835,9 @@ def generate_export_package(
     zip_buffer = io.BytesIO()
     ts = datetime.now().strftime("%Y%m%d%H%M%S")
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr(f'{task_attrs["title"]}_说明文档_{ts}.docx', docx_bytes)
+        # 任务名可能含 / 等非法字符，须先清理，否则会被 ZIP 解析为路径分隔符
+        docx_name = f'{_sanitize_filename(task_attrs["title"]) or "任务"}_说明文档_{ts}.docx'
+        zf.writestr(docx_name, docx_bytes)
 
         # 添加需求文档与需求附件（仅当勾选"关联需求"导出时才打包，未勾选则需求相关均不导出）
         if include_requirements:

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from typing import Optional, List
 
 from ..database import get_db
-from ..export_service import generate_export_package, TASK_ATTR_OPTIONS
+from ..export_service import generate_export_package, TASK_ATTR_OPTIONS, _sanitize_filename
 
 router = APIRouter(prefix="/projects/{project_id}/tasks/{task_id}", tags=["export"])
 
@@ -72,7 +72,8 @@ def export_task_doc(
     task = resolve_task(db, proj.id, task_id)
 
     file_ts = datetime.now().strftime("%Y%m%d%H%M%S")
-    filename = f'{task.title}_{file_ts}.zip'
+    # 任务名可能含 / 等非法字符，须清理后再作文件名，否则浏览器会拒绝或截断
+    filename = f'{_sanitize_filename(task.title) or "任务"}_{file_ts}.zip'
     # 对非 ASCII 字符进行 URL 编码
     encoded_filename = urllib.parse.quote(filename)
 
