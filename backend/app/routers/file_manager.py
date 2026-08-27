@@ -102,6 +102,15 @@ def get_task_files(project_id: str, task_id: str, db: Session = Depends(get_db))
         ).group_by(CommunicationFile.attachment_id).all()
         link_counts = {aid: cnt for aid, cnt in rows}
 
+    # 沟通上传附件的来源时间（comm_id -> comm_at），用于来源标签展示
+    comm_times = {}
+    comm_ids = {a.comm_id for a in attachments if a.comm_id is not None}
+    if comm_ids:
+        rows = db.query(Communication.id, Communication.comm_at).filter(
+            Communication.id.in_(comm_ids)
+        ).all()
+        comm_times = {cid: at for cid, at in rows}
+
     path_fn = _folder_path_fn(folders)
     files = []
     for a in attachments:
@@ -119,7 +128,11 @@ def get_task_files(project_id: str, task_id: str, db: Session = Depends(get_db))
             "folder_path": path_fn(a.folder_id),
             "source": "comm" if is_comm else "manual",
             "source_comm_id": a.comm_id,
-            "source_comm_label": f"沟通 #{a.comm_id}" if is_comm else "",
+            # 来源标签 = 沟通记录时间，如「2026-08-27 17:30记录」；无时间兜底显示记录
+            "source_comm_label": (
+                (comm_times.get(a.comm_id).strftime('%Y-%m-%d %H:%M') + '记录')
+                if is_comm and comm_times.get(a.comm_id) else ('记录' if is_comm else '')
+            ),
             "linked_count": link_counts.get(a.id, 0),
         })
 
