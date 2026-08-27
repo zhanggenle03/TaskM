@@ -609,11 +609,13 @@ def generate_export_package(
     fields: Optional[List[str]] = None,
     comm_ids: Optional[List[int]] = None,
     comm_minimal: bool = False,
+    include_attachments: bool = True,
 ) -> bytes:
     """
     生成导出包（ZIP 文件），内含：
     1. DOCX 说明文档（含内嵌图片）
     2. attachments/{记录序号}/ 目录（每个沟通记录的附件各自放在对应编号的文件夹）
+    include_attachments=False 时：DOCX 不渲染附件部分，ZIP 也不打包附件文件。
     """
     all_field_keys = list(TASK_ATTR_OPTIONS.keys())
     selected_fields = fields if fields is not None else all_field_keys
@@ -786,41 +788,42 @@ def generate_export_package(
                         if line.strip():
                             _new_paragraph(doc, line.strip(), size=BODY_SIZE, first_line_indent=480)
 
-        # ---- 附件 ----
-        image_atts = [a for a in comm['attachments'] if a['is_image']]
-        non_image_atts = [a for a in comm['attachments'] if not a['is_image']]
+        # ---- 附件（不导出附件时整段跳过：DOCX 不展示、ZIP 不打包） ----
+        if include_attachments:
+            image_atts = [a for a in comm['attachments'] if a['is_image']]
+            non_image_atts = [a for a in comm['attachments'] if not a['is_image']]
 
-        # 非图片附件
-        if non_image_atts:
-            _new_paragraph(doc, '附件：', size=BODY_SIZE, bold=True, before=120)
-            for att in non_image_atts:
-                size_str = _format_size(att['file_size'])
-                p = _new_paragraph(doc, '', size=BODY_SIZE, before=20, first_line_indent=480)
-                if att['full_path']:
-                    rel_path = f'attachments/{record_num}/{att["original_filename"]}'
-                    _add_hyperlink(p, att['original_filename'], rel_path, size=BODY_SIZE)
-                else:
-                    _add_run(p, att['original_filename'], size=BODY_SIZE)
-                _add_run(p, f'（{size_str}）', size=BODY_SIZE)
-
-        # 内嵌图片
-        if image_atts:
-            _new_paragraph(doc, '【图片附件】', size=BODY_SIZE, bold=True, before=120)
-            for att in image_atts:
-                if att['full_path']:
-                    try:
-                        pic_p = _new_paragraph(doc, '', alignment=WD_ALIGN_PARAGRAPH.CENTER,
-                                               before=80, after=40)
-                        pic_p.add_run().add_picture(att['full_path'], width=Inches(5.0))
-                        cap_p = _new_paragraph(doc, '', alignment=WD_ALIGN_PARAGRAPH.CENTER, before=20)
+            # 非图片附件
+            if non_image_atts:
+                _new_paragraph(doc, '附件：', size=BODY_SIZE, bold=True, before=120)
+                for att in non_image_atts:
+                    size_str = _format_size(att['file_size'])
+                    p = _new_paragraph(doc, '', size=BODY_SIZE, before=20, first_line_indent=480)
+                    if att['full_path']:
                         rel_path = f'attachments/{record_num}/{att["original_filename"]}'
-                        _add_hyperlink(cap_p, att['original_filename'], rel_path, size=SMALL_SIZE)
-                    except Exception:
-                        _new_paragraph(doc, f'　　[图片加载失败：{att["original_filename"]}]',
+                        _add_hyperlink(p, att['original_filename'], rel_path, size=BODY_SIZE)
+                    else:
+                        _add_run(p, att['original_filename'], size=BODY_SIZE)
+                    _add_run(p, f'（{size_str}）', size=BODY_SIZE)
+
+            # 内嵌图片
+            if image_atts:
+                _new_paragraph(doc, '【图片附件】', size=BODY_SIZE, bold=True, before=120)
+                for att in image_atts:
+                    if att['full_path']:
+                        try:
+                            pic_p = _new_paragraph(doc, '', alignment=WD_ALIGN_PARAGRAPH.CENTER,
+                                                   before=80, after=40)
+                            pic_p.add_run().add_picture(att['full_path'], width=Inches(5.0))
+                            cap_p = _new_paragraph(doc, '', alignment=WD_ALIGN_PARAGRAPH.CENTER, before=20)
+                            rel_path = f'attachments/{record_num}/{att["original_filename"]}'
+                            _add_hyperlink(cap_p, att['original_filename'], rel_path, size=SMALL_SIZE)
+                        except Exception:
+                            _new_paragraph(doc, f'　　[图片加载失败：{att["original_filename"]}]',
+                                           size=BODY_SIZE, color=RGBColor(180, 0, 0))
+                    else:
+                        _new_paragraph(doc, f'　　[文件不可访问：{att["original_filename"]}]',
                                        size=BODY_SIZE, color=RGBColor(180, 0, 0))
-                else:
-                    _new_paragraph(doc, f'　　[文件不可访问：{att["original_filename"]}]',
-                                   size=BODY_SIZE, color=RGBColor(180, 0, 0))
 
         # 分隔线
         if idx < len(communications) - 1:
@@ -885,17 +888,18 @@ def generate_export_package(
                     pass
 
         att_count = 0
-        for rec_idx, comm in enumerate(communications):
-            record_number = rec_idx + 1
-            for att in comm['attachments']:
-                if att.get('is_image'):  # 图片已内嵌到 DOCX 正文，不单独打包
-                    continue
-                if att['full_path']:
-                    try:
-                        arcname = f'attachments/{record_number}/{att["original_filename"]}'
-                        zf.write(att['full_path'], arcname)
-                        att_count += 1
-                    except Exception:
-                        pass
+        if include_attachments:
+            for rec_idx, comm in enumerate(communications):
+                record_number = rec_idx + 1
+                for att in comm['attachments']:
+                    if att.get('is_image'):  # 图片已内嵌到 DOCX 正文，不单独打包
+                        continue
+                    if att['full_path']:
+                        try:
+                            arcname = f'attachments/{record_number}/{att["original_filename"]}'
+                            zf.write(att['full_path'], arcname)
+                            att_count += 1
+                        except Exception:
+                            pass
 
     return zip_buffer.getvalue(), len(communications), att_count

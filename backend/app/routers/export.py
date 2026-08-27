@@ -22,6 +22,7 @@ def export_task_doc(
     fields: Optional[str] = Query(None, description="任务属性字段，逗号分隔"),
     comm_ids: Optional[str] = Query(None, description="沟通记录ID，逗号分隔，指定后忽略时间范围"),
     comm_minimal: Optional[str] = Query(None, description="沟通记录极简模式，为 '1' 时只显示内容和附件"),
+    export_attachments: Optional[str] = Query(None, description="是否导出沟通记录附件，'0' 表示不导出（DOCX 与 ZIP 均不含附件）"),
     db: Session = Depends(get_db),
 ):
     """
@@ -60,6 +61,7 @@ def export_task_doc(
             fields=selected_fields,
             comm_ids=selected_comm_ids,
             comm_minimal=comm_minimal == '1',
+            include_attachments=export_attachments != '0',
         )
     except HTTPException:
         raise

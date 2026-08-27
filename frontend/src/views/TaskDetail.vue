@@ -553,6 +553,7 @@
         </el-form-item>
         <el-form-item label="沟通记录">
           <el-checkbox v-model="exportCommMinimal">极简模式</el-checkbox>
+          <el-checkbox v-model="exportAttachments">导出附件</el-checkbox>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -820,6 +821,7 @@ const exportTimeRange = ref('all')
 const exportDateRange = ref(null)
 const exportFields = ref([])
 const exportCommMinimal = ref(false)
+const exportAttachments = ref(true)
 const exportFieldsAll = ref(false)
 const exportFieldsIndeterminate = ref(false)
 const exportFieldOptions = [
@@ -1487,6 +1489,7 @@ const initExportDialog = () => {
   }
   handleExportFieldsChange()
   exportCommMinimal.value = false
+  exportAttachments.value = true
 }
 
 const exportDisabledDate = (time) => {
@@ -1540,6 +1543,8 @@ const submitExport = async () => {
     if (exportCommMinimal.value) {
       params.comm_minimal = '1'
     }
+    // 是否导出沟通记录附件（默认导出，'0' 时不导出）
+    params.export_attachments = exportAttachments.value ? '1' : '0'
 
     const res = await exportTaskDoc(projectId, taskId, params)
     // res 是完整 response（含 headers），res.data 是 blob
