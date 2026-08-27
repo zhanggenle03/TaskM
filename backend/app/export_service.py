@@ -676,7 +676,9 @@ def generate_export_package(
     linked_req_data = data.get('linked_requirements', [])
     req_doc_bytes_list = []  # 保存供 ZIP 打包用
     req_attachment_maps = {}  # req.id -> {(需求段, 源文件名): 导出文件名}
-    if 'linked_requirements' in selected_fields and linked_req_data:
+    # 关联需求是否参与导出：勾选"关联需求"字段且任务确实有关联需求时才导出（文档+附件）
+    include_requirements = 'linked_requirements' in selected_fields and bool(linked_req_data)
+    if include_requirements:
         from .routers.requirements import generate_requirement_doc_bytes, _extract_attachment_links, \
             _make_export_filename, _unique_export_name
 
@@ -835,48 +837,50 @@ def generate_export_package(
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f'{task_attrs["title"]}_说明文档_{ts}.docx', docx_bytes)
 
-        # 添加需求文档
-        if req_doc_bytes_list:
-            for _, req_bytes, req_filename, _ in req_doc_bytes_list:
-                zf.writestr(req_filename, req_bytes)
+        # 添加需求文档与需求附件（仅当勾选"关联需求"导出时才打包，未勾选则需求相关均不导出）
+        if include_requirements:
+            # 添加需求文档
+            if req_doc_bytes_list:
+                for _, req_bytes, req_filename, _ in req_doc_bytes_list:
+                    zf.writestr(req_filename, req_bytes)
 
-        # 收集并添加需求附件文件
-        req_file_entries = []  # (arcname, file_path)
-        # 按 (需求段, 文件名) 去重，避免不同需求同名文件互相覆盖（#10）
-        seen_files = set()
-        for req_info in linked_req_data:
-            req = db.query(Requirement).filter(
-                Requirement.id == req_info['id'],
-                Requirement.project_id == proj.id
-            ).first()
-            if not req or not req.description:
-                continue
-            # 同时捕获需求段与文件名，写入带段的路径，杜绝跨需求同名冲突
-            file_pattern = re.compile(
-                r'/uploads/' + re.escape(proj.display_id) +
-                r'/requirements/([^/]+)/files/([^"\s)]+)'
-            )
-            for m in file_pattern.finditer(req.description):
-                seg = m.group(1)
-                fn = m.group(2)
-                key = (seg, fn)
-                if key in seen_files:
+            # 收集并添加需求附件文件
+            req_file_entries = []  # (arcname, file_path)
+            # 按 (需求段, 文件名) 去重，避免不同需求同名文件互相覆盖（#10）
+            seen_files = set()
+            for req_info in linked_req_data:
+                req = db.query(Requirement).filter(
+                    Requirement.id == req_info['id'],
+                    Requirement.project_id == proj.id
+                ).first()
+                if not req or not req.description:
                     continue
-                seen_files.add(key)
-                file_path = os.path.join(
-                    UPLOAD_DIR, proj.display_id, 'requirements', seg, 'files', fn
+                # 同时捕获需求段与文件名，写入带段的路径，杜绝跨需求同名冲突
+                file_pattern = re.compile(
+                    r'/uploads/' + re.escape(proj.display_id) +
+                    r'/requirements/([^/]+)/files/([^"\s)]+)'
                 )
-                if os.path.isfile(file_path):
-                    # 按导出名写入，与需求文档 DOCX 内超链接一致
-                    new_name = (req_attachment_maps.get(req.id) or {}).get(key, fn)
-                    arcname = f'requirements/{seg}/files/{new_name}'
-                    req_file_entries.append((arcname, file_path))
+                for m in file_pattern.finditer(req.description):
+                    seg = m.group(1)
+                    fn = m.group(2)
+                    key = (seg, fn)
+                    if key in seen_files:
+                        continue
+                    seen_files.add(key)
+                    file_path = os.path.join(
+                        UPLOAD_DIR, proj.display_id, 'requirements', seg, 'files', fn
+                    )
+                    if os.path.isfile(file_path):
+                        # 按导出名写入，与需求文档 DOCX 内超链接一致
+                        new_name = (req_attachment_maps.get(req.id) or {}).get(key, fn)
+                        arcname = f'requirements/{seg}/files/{new_name}'
+                        req_file_entries.append((arcname, file_path))
 
-        for arcname, file_path in req_file_entries:
-            try:
-                zf.write(file_path, arcname)
-            except Exception:
-                pass
+            for arcname, file_path in req_file_entries:
+                try:
+                    zf.write(file_path, arcname)
+                except Exception:
+                    pass
 
         att_count = 0
         for rec_idx, comm in enumerate(communications):
