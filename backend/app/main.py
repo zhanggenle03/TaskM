@@ -11,6 +11,7 @@ from .routers import projects, tasks, attachments, process, project_contacts, ex
 from .routers import categories as categories_router
 from .routers import salary as salary_router
 from .routers import leave
+from .routers import file_manager as file_manager_router
 
 
 # ── 从配置读取端口（用于 CORS 白名单） ──
@@ -133,6 +134,8 @@ app.include_router(attendance_export.router, prefix="/api")
 app.include_router(categories_router.router, prefix="/api")
 app.include_router(salary_router.router, prefix="/api")
 app.include_router(leave.router, prefix="/api/leave")
+app.include_router(file_manager_router.router, prefix="/api")
+app.include_router(file_manager_router.comm_router, prefix="/api")
 
 # 挂载上传目录为静态文件（供富文本图片等访问）
 import os

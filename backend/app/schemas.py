@@ -151,7 +151,9 @@ class AttachmentUpdate(BaseModel):
 
 class AttachmentOut(BaseModel):
     id: int
-    comm_id: int
+    comm_id: Optional[int] = None   # 空=文件管理独立上传
+    task_id: Optional[int] = None
+    folder_id: Optional[int] = None # 空=根层级
     filename: str
     original_filename: str
     file_size: int
@@ -159,6 +161,49 @@ class AttachmentOut(BaseModel):
     uploaded_at: datetime
     class Config:
         from_attributes = True
+
+
+# ---- 任务文件管理 ----
+class FileFolderCreate(BaseModel):
+    name: str
+    parent_id: Optional[int] = None
+
+class FileFolderUpdate(BaseModel):
+    name: Optional[str] = None
+    parent_id: Optional[int] = None   # 移动文件夹；None 表示移到根
+
+class FileFolderOut(BaseModel):
+    id: int
+    task_id: int
+    parent_id: Optional[int] = None
+    name: str
+    created_at: datetime
+    children: List["FileFolderOut"] = []
+    class Config:
+        from_attributes = True
+
+class FileItemOut(AttachmentOut):
+    """文件管理列表条目：Attachment + 展示辅助字段"""
+    folder_path: str = ""            # 面包屑路径，如「文件夹1/子文件夹」
+    source: str = "comm"             # comm=沟通上传 / manual=独立上传
+    source_comm_id: Optional[int] = None
+    source_comm_label: str = ""      # 如「沟通 #3」；独立文件为空
+    linked_count: int = 0            # 被多少条沟通记录引用
+
+class TaskFilesOut(BaseModel):
+    folders: List[FileFolderOut] = []
+    files: List[FileItemOut] = []
+
+class AttachmentMoveIn(BaseModel):
+    folder_id: Optional[int] = None  # None=移到根层级
+
+class CommunicationLinkIn(BaseModel):
+    attachment_ids: List[int]        # 要引用的文件管理文件（仅允许独立上传文件）
+
+class CommunicationUnlinkIn(BaseModel):
+    attachment_id: int
+
+FileFolderOut.model_rebuild()
 
 
 # ---- Communication ----
@@ -198,7 +243,8 @@ class CommunicationOut(BaseModel):
     comm_at: datetime
     comm_type: str
     created_at: datetime
-    attachments: List[AttachmentOut] = []
+    attachments: List[AttachmentOut] = []      # 该沟通直接上传的附件
+    linked_files: List[AttachmentOut] = []     # 引用的文件管理文件（可随文件管理移动/重命名）
     contact: Optional[ContactBrief] = None
     contacts: List[ContactBrief] = []
     class Config:

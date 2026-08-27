@@ -385,6 +385,8 @@ class Task(Base):
     communications = relationship("Communication", back_populates="task", cascade="all, delete-orphan", order_by="Communication.comm_at")
     tags = relationship("TagPool", secondary="task_tags", back_populates="tasks", passive_deletes=True)
     linked_requirements = relationship("Requirement", secondary="task_requirements")
+    attachments = relationship("Attachment", back_populates="task", cascade="all, delete-orphan")
+    file_folders = relationship("FileFolder", back_populates="task", cascade="all, delete-orphan")
 
 
 class ProjectContact(Base):
@@ -437,6 +439,19 @@ class Communication(Base):
     contact = relationship("Contact", foreign_keys=[contact_id])
     communication_contacts = relationship("CommunicationContact", back_populates="communication", cascade="all, delete-orphan")
     attachments = relationship("Attachment", back_populates="communication", cascade="all, delete-orphan")
+    # 沟通记录引用文件管理文件的关联行（删除沟通时级联清理）
+    file_links = relationship("CommunicationFile", back_populates="communication", cascade="all, delete-orphan")
+    # 被引用的文件管理文件（多对多，secondary 见 communication_files）
+    linked_attachments = relationship(
+        "Attachment", secondary="communication_files",
+        back_populates="linked_comms", passive_deletes=True,
+        overlaps="file_links",
+    )
+
+    @property
+    def linked_files(self):
+        """Pydantic 序列化别名：CommunicationOut.linked_files 读取被引用文件"""
+        return self.linked_attachments
 
     @property
     def contacts(self):
@@ -454,10 +469,30 @@ class CommunicationContact(Base):
     contact = relationship("Contact")
 
 
+class FileFolder(Base):
+    """任务文件管理的文件夹（无限层级，parent_id 自引用）"""
+    __tablename__ = "file_folders"
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
+    parent_id = Column(Integer, ForeignKey("file_folders.id"), nullable=True)
+    name = Column(String(200), nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    task = relationship("Task", back_populates="file_folders")
+    parent = relationship("FileFolder", remote_side=[id], back_populates="children")
+    children = relationship("FileFolder", back_populates="parent", cascade="all, delete-orphan")
+    attachments = relationship("Attachment", back_populates="folder", cascade="all, delete-orphan")
+
+
 class Attachment(Base):
     __tablename__ = "attachments"
     id = Column(Integer, primary_key=True, index=True)
-    comm_id = Column(Integer, ForeignKey("communications.id"), nullable=False)
+    # comm_id 可空：非空=沟通记录直接上传（归属沟通），空=文件管理独立上传
+    comm_id = Column(Integer, ForeignKey("communications.id"), nullable=True)
+    # 所属任务（旧数据由迁移脚本按 comm→task 链路回填）
+    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=True)
+    # 所属文件夹（文件管理），空=根层级
+    folder_id = Column(Integer, ForeignKey("file_folders.id"), nullable=True)
     filename = Column(String(300), nullable=False)
     original_filename = Column(String(300), nullable=False)
     file_path = Column(String(500), nullable=False)
@@ -466,6 +501,23 @@ class Attachment(Base):
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
     communication = relationship("Communication", back_populates="attachments")
+    task = relationship("Task", back_populates="attachments")
+    folder = relationship("FileFolder", back_populates="attachments")
+    linked_comms = relationship("Communication", secondary="communication_files",
+                                back_populates="linked_attachments", passive_deletes=True,
+                                overlaps="file_links")
+
+
+class CommunicationFile(Base):
+    """沟通记录引用文件管理中的文件（多对多）。引用基于附件 ID，文件在文件管理中移动/重命名后引用依然有效"""
+    __tablename__ = "communication_files"
+    id = Column(Integer, primary_key=True, index=True)
+    communication_id = Column(Integer, ForeignKey("communications.id"), nullable=False)
+    attachment_id = Column(Integer, ForeignKey("attachments.id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    communication = relationship("Communication", back_populates="file_links", overlaps="linked_attachments,linked_comms")
+    attachment = relationship("Attachment", overlaps="linked_attachments,linked_comms")
 
 
 class CommTypePool(Base):

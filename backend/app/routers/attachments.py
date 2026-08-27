@@ -6,7 +6,7 @@ import os
 import html as html_mod
 from urllib.parse import quote
 import aiofiles
-from ..database import get_db, Attachment, Communication, Task, Project, UPLOAD_DIR, touch_project, resolve_project
+from ..database import get_db, Attachment, Communication, Task, Project, UPLOAD_DIR, touch_project, resolve_project, CommunicationFile
 from ..schemas import AttachmentOut, AttachmentUpdate
 from ..office_convert import is_office_file, convert_to_pdf
 
@@ -58,7 +58,8 @@ async def upload_comm_attachment(
     if not comm:
         raise HTTPException(404, "沟通记录不存在")
     meta = await save_upload(file, proj.display_id, task.display_id, comm_id)
-    att = Attachment(comm_id=comm_id, **meta)
+    # 回填 task_id：附件归属任务（文件管理按任务聚合展示）
+    att = Attachment(comm_id=comm_id, task_id=task.id, **meta)
     db.add(att)
     db.commit()
     db.refresh(att)
@@ -170,6 +171,8 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db)):
     att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
     if not att:
         raise HTTPException(404, "附件不存在")
+    # 清理沟通记录引用（文件管理独立文件被引用时，删文件同步解除引用）
+    db.query(CommunicationFile).filter(CommunicationFile.attachment_id == att.id).delete()
     if os.path.exists(att.file_path):
         os.remove(att.file_path)
     db.delete(att)

@@ -549,6 +549,8 @@ def get_task(project_id: str, task_id: str, db: Session = Depends(get_db)):
         joinedload(Task.communications)
             .joinedload(Communication.attachments),
         joinedload(Task.communications)
+            .joinedload(Communication.linked_attachments),
+        joinedload(Task.communications)
             .joinedload(Communication.communication_contacts)
             .joinedload(CommunicationContact.contact)
     ).filter(Task.id == found.id).first()
