@@ -26,6 +26,9 @@
             </el-button>
           </div>
           <div style="display:flex;gap:6px">
+            <el-button size="small" @click="openFileManager()">
+              <el-icon><FolderOpened /></el-icon> 文件管理
+            </el-button>
             <el-button size="small" @click="timelineAsc = !timelineAsc">
               <el-icon><Sort /></el-icon> {{ timelineAsc ? '最早优先' : '最新优先' }}
             </el-button>
@@ -105,9 +108,15 @@
                   :html="renderCommContent(c)"
                   @click="onCommContentClick"
                 />
-                <!-- 沟通附件 -->
-                <div v-if="c.attachments?.length" class="att-list">
-                  <div v-for="a in c.attachments" :key="a.id" class="att-item">
+                <!-- 沟通附件（直接上传 + 引用的文件管理文件） -->
+                <div v-if="c.attachments?.length || c.linked_files?.length" class="att-list">
+                  <div class="att-list-head">
+                    <span class="att-list-label">附件</span>
+                    <el-button size="small" text type="primary" style="margin-left:auto" @click="pickLinkFiles(c)">
+                      <el-icon><FolderOpened /></el-icon> 从文件管理添加
+                    </el-button>
+                  </div>
+                  <div v-for="a in c.attachments" :key="'own-' + a.id" class="att-item">
                     <el-icon><Paperclip /></el-icon>
                     <a href="javascript:void(0)" class="att-name" @click="openPreview(a, c.attachments)">{{ a.original_filename }}</a>
                     <span class="att-size">{{ formatSize(a.file_size) }}</span>
@@ -116,6 +125,23 @@
                     </a>
                     <el-button size="small" text @click="renameAtt(a)"><el-icon><Edit /></el-icon></el-button>
                     <el-button size="small" text type="danger" @click="removeAtt(a)"><el-icon><Close /></el-icon></el-button>
+                    <el-tooltip content="定位到文件管理" placement="top">
+                      <el-button size="small" text @click="locateFile(a)"><el-icon><Aim /></el-icon></el-button>
+                    </el-tooltip>
+                  </div>
+                  <div v-for="a in c.linked_files" :key="'link-' + a.id" class="att-item att-item-linked">
+                    <el-icon><FolderOpened /></el-icon>
+                    <a href="javascript:void(0)" class="att-name" @click="openPreview(a, c.linked_files)">{{ a.original_filename }}</a>
+                    <span class="att-size">{{ formatSize(a.file_size) }}</span>
+                    <a :href="downloadUrl(a.id)" class="att-download-btn" title="下载">
+                      <el-icon><Download /></el-icon>
+                    </a>
+                    <el-tooltip content="定位到文件管理" placement="top">
+                      <el-button size="small" text @click="locateFile(a)"><el-icon><Aim /></el-icon></el-button>
+                    </el-tooltip>
+                    <el-tooltip content="解除引用（不删除文件）" placement="top">
+                      <el-button size="small" text type="danger" @click="unlinkFile(a, c)"><el-icon><Unlink /></el-icon></el-button>
+                    </el-tooltip>
                   </div>
                 </div>
               </div>
@@ -563,6 +589,31 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 任务文件管理（右侧抽屉） -->
+    <FileManager
+      :visible="fileManagerVisible"
+      :project-id="projectId"
+      :task-id="taskId"
+      :locate-id="locateFileId"
+      @update:visible="(v) => { fileManagerVisible = v; if (!v) locateFileId = null }"
+    />
+
+    <!-- 沟通记录：从文件管理添加（引用） -->
+    <el-dialog v-model="linkPickerVisible" title="从文件管理添加" width="520px">
+      <div class="link-picker-hint">选择文件管理中的文件挂载到该沟通记录（引用不随文件移动/重命名失效）</div>
+      <el-checkbox-group v-model="linkSelected" class="link-picker-group">
+        <el-checkbox v-for="f in linkFilesAll" :key="f.id" :value="f.id" class="link-picker-item">
+          <span class="link-picker-name">{{ f.original_filename }}</span>
+          <span v-if="f.folder_path" class="link-picker-path">{{ f.folder_path }}</span>
+        </el-checkbox>
+      </el-checkbox-group>
+      <el-empty v-if="!linkFilesAll.length" description="文件管理中暂无独立文件，请先在文件管理上传" :image-size="60" />
+      <template #footer>
+        <el-button @click="linkPickerVisible = false">取消</el-button>
+        <el-button type="primary" :loading="linkSubmitting" @click="submitLink">添加引用</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -579,10 +630,12 @@ import {
   getProjectContacts, getTags, exportTaskDoc,
   linkRequirement, unlinkRequirement, getRequirements,
   getReqStatusPools, getReqPriorityPools,
-  uploadCommImage
+  uploadCommImage,
+  getTaskFiles, linkCommFiles, unlinkCommFile,
 } from '../api'
 import CommRichEditor from '../components/CommRichEditor.vue'
 import RichContent from '../components/RichContent.vue'
+import FileManager from '../components/FileManager.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -1587,6 +1640,68 @@ const submitExport = async () => {
   }
 }
 
+// ── 任务文件管理：抽屉 + 定位 + 沟通引用 ──
+const fileManagerVisible = ref(false)
+const locateFileId = ref(null)
+const openFileManager = (locateId) => {
+  locateFileId.value = locateId ?? null
+  fileManagerVisible.value = true
+}
+const locateFile = (a) => {
+  locateFileId.value = a.id
+  fileManagerVisible.value = true
+}
+
+// 沟通记录「从文件管理添加」：弹窗选择独立文件 → 引用
+const linkPickerVisible = ref(false)
+const linkTargetComm = ref(null)
+const linkFilesAll = ref([])
+const linkSelected = ref([])
+const linkSubmitting = ref(false)
+
+const pickLinkFiles = async (c) => {
+  linkTargetComm.value = c
+  linkSelected.value = []
+  try {
+    const data = await getTaskFiles(projectId, taskId)
+    linkFilesAll.value = (data.files || []).filter((f) => f.source === 'manual')
+  } catch {
+    linkFilesAll.value = []
+    ElMessage.error('加载文件管理列表失败')
+  }
+  linkPickerVisible.value = true
+}
+
+const submitLink = async () => {
+  if (!linkSelected.value.length) return ElMessage.warning('请至少选择一个文件')
+  linkSubmitting.value = true
+  try {
+    await linkCommFiles(projectId, taskId, linkTargetComm.value.id, linkSelected.value)
+    ElMessage.success('已添加引用')
+    linkPickerVisible.value = false
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '添加引用失败')
+  } finally {
+    linkSubmitting.value = false
+  }
+}
+
+const unlinkFile = async (a, c) => {
+  try {
+    await ElMessageBox.confirm(`解除对「${a.original_filename}」的引用？（文件仍保留在文件管理中）`, '解除引用', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await unlinkCommFile(projectId, taskId, c.id, a.id)
+    ElMessage.success('已解除引用')
+    await load()
+  } catch (e) {
+    ElMessage.error(e.response?.data?.detail || '解除引用失败')
+  }
+}
+
 const renameAtt = async (a) => {
   // 提取原文件扩展名
   const dotIdx = a.original_filename.lastIndexOf('.')
@@ -1679,9 +1794,18 @@ const removeAtt = async (a) => {
 .comm-edit-right :deep(.el-form-item) { margin-bottom: 16px; }
 .comm-edit-right :deep(.el-form-item__label) { padding-bottom: 4px; line-height: 1.2; }
 .att-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.att-list-head { display: flex; align-items: center; font-size: 12px; color: #888; margin-bottom: 2px; }
+.att-list-label { font-weight: 500; }
 .att-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #555; background: #f7f7f5; border-radius: 4px; padding: 4px 8px; }
+.att-item-linked { background: #eef4fc; border: 1px dashed #b9d4f2; }
 .att-name { color: #185fa5; text-decoration: none; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .att-name:hover { text-decoration: underline; }
+.link-picker-hint { font-size: 12px; color: #888; margin-bottom: 10px; }
+.link-picker-group { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; padding: 4px; }
+.link-picker-item { display: flex; align-items: center; margin-right: 0; height: auto; padding: 4px 6px; border-radius: 4px; }
+.link-picker-item:hover { background: #f5f5f2; }
+.link-picker-name { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.link-picker-path { margin-left: 8px; font-size: 12px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preview-img-wrap { overflow: auto; height: 70vh; background: #f5f5f5; border-radius: 4px; position: relative; user-select: none; }
 .preview-img-container { min-height: 100%; text-align: center; padding: 16px; }
 .preview-img { max-width: 100%; max-height: calc(70vh - 80px); display: inline-block; vertical-align: top; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }

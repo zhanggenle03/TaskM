@@ -110,6 +110,26 @@ export const downloadAttachment = (id) => `/api/attachments/${id}/download`
 export const deleteAttachment = (id) => http.delete(`/attachments/${id}`)
 export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { original_filename: name })
 
+// --- Task File Manager（任务文件管理） ---
+export const getTaskFiles = (projectId, taskId) => http.get(`/projects/${projectId}/tasks/${taskId}/files`)
+export const createTaskFolder = (projectId, taskId, data) => http.post(`/projects/${projectId}/tasks/${taskId}/files/folders`, data)
+export const updateTaskFolder = (projectId, taskId, folderId, data) => http.put(`/projects/${projectId}/tasks/${taskId}/files/folders/${folderId}`, data)
+export const deleteTaskFolder = (projectId, taskId, folderId) => http.delete(`/projects/${projectId}/tasks/${taskId}/files/folders/${folderId}`)
+export const uploadTaskFile = (projectId, taskId, file, folderId) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (folderId) fd.append('folder_id', folderId)
+  return http.post(`/projects/${projectId}/tasks/${taskId}/files`, fd, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+export const moveTaskFile = (projectId, taskId, attachmentId, folderId) =>
+  http.put(`/projects/${projectId}/tasks/${taskId}/files/attachments/${attachmentId}/move`, { folder_id: folderId ?? null })
+export const linkCommFiles = (projectId, taskId, commId, attachmentIds) =>
+  http.post(`/projects/${projectId}/tasks/${taskId}/communications/${commId}/links`, { attachment_ids: attachmentIds })
+export const unlinkCommFile = (projectId, taskId, commId, attachmentId) =>
+  http.delete(`/projects/${projectId}/tasks/${taskId}/communications/${commId}/links/${attachmentId}`)
+
 // --- Communication Images (内联图片，不创建 Attachment 记录) ---
 export const uploadCommImage = (projectId, taskId, commId, file) => {
   const fd = new FormData()
