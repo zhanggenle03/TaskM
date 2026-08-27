@@ -112,9 +112,6 @@
                 <div v-if="c.attachments?.length || c.linked_files?.length" class="att-list">
                   <div class="att-list-head">
                     <span class="att-list-label">附件</span>
-                    <el-button size="small" text type="primary" style="margin-left:auto" @click="pickLinkFiles(c)">
-                      <el-icon><FolderOpened /></el-icon> 从文件管理添加
-                    </el-button>
                   </div>
                   <div v-for="a in c.attachments" :key="'own-' + a.id" class="att-item">
                     <el-icon><Paperclip /></el-icon>
@@ -323,9 +320,15 @@
                   </div>
                 </div>
               </template>
-              <!-- 编辑沟通：已有附件 + 回形针上传 -->
+              <!-- 编辑沟通：已有附件 + 回形针上传 + 从文件管理添加 -->
               <template v-else>
                 <div style="width:100%">
+                  <div class="dialog-att-head">
+                    <span>附件</span>
+                    <el-button size="small" text type="primary" style="margin-left:auto" @click="pickLinkFiles(editComm)">
+                      <el-icon><FolderOpened /></el-icon> 从文件管理添加
+                    </el-button>
+                  </div>
                   <div class="dialog-att-list" v-if="editComm.attachments?.length">
                     <div v-for="a in editComm.attachments" :key="a.id" class="dialog-att-item">
                       <el-icon><Paperclip /></el-icon>
@@ -1817,6 +1820,7 @@ const removeAtt = async (a) => {
 .att-download-btn:hover { color: #185fa5; background: #e8e8e4; }
 .att-size { color: #aaa; flex-shrink: 0; }
 .dialog-att-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.dialog-att-head { display: flex; align-items: center; font-size: 13px; color: #555; font-weight: 500; margin-bottom: 4px; }
 .dialog-att-item { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 8px; background: #f7f7f5; border-radius: 6px; }
 .dialog-att-name { color: #185fa5; text-decoration: none; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .side-card { background: #fff; border-radius: 8px; border: 1px solid #e8e8e4; padding: 14px 16px; }
