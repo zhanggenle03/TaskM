@@ -2,7 +2,7 @@
   <el-drawer
     :model-value="visible"
     title="文件管理"
-    size="540px"
+    size="700px"
     :destroy-on-close="false"
     @update:model-value="onVisibleChange"
     @open="init"
@@ -42,10 +42,10 @@
             @node-click="onTreeClick"
           >
             <template #default="{ data }">
-              <span class="fm-tree-node">
+              <span class="fm-tree-node" :title="data.name">
                 <el-icon v-if="data.isRoot" style="margin-right:4px"><Folder /></el-icon>
                 <el-icon v-else style="margin-right:4px" :color="data.children?.length ? '#E6A23C' : '#909399'"><Folder /></el-icon>
-                <span>{{ data.name }}</span>
+                <span class="fm-tree-text">{{ data.name }}</span>
               </span>
             </template>
           </el-tree>
@@ -70,7 +70,7 @@
                   {{ f.original_filename }}
                 </a>
                 <div class="fm-file-meta">
-                  <span v-if="f.source === 'comm'" class="fm-badge fm-badge-comm">沟通 #{{ f.source_comm_id }}</span>
+                  <span v-if="f.source === 'comm'" class="fm-badge fm-badge-comm">{{ f.source_comm_label }}</span>
                   <span v-else class="fm-badge fm-badge-manual">独立</span>
                   <span v-if="f.linked_count" class="fm-badge fm-badge-link">被引用 {{ f.linked_count }} 处</span>
                   <span class="fm-file-size">{{ formatSize(f.file_size) }}</span>
@@ -123,9 +123,9 @@
         @node-click="onMoveTargetClick"
       >
         <template #default="{ data }">
-          <span class="fm-tree-node">
+          <span class="fm-tree-node" :title="data.name">
             <el-icon style="margin-right:4px"><Folder /></el-icon>
-            <span>{{ data.name }}</span>
+            <span class="fm-tree-text">{{ data.name }}</span>
           </span>
         </template>
       </el-tree>
@@ -438,7 +438,7 @@ defineExpose({ openRenameFolder, openMoveFolder, removeFolder })
 .fm-actions { display: flex; gap: 8px; }
 .fm-body { display: flex; gap: 12px; height: calc(100vh - 150px); min-height: 380px; }
 .fm-tree {
-  width: 190px;
+  width: 230px;
   flex-shrink: 0;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
@@ -448,7 +448,18 @@ defineExpose({ openRenameFolder, openMoveFolder, removeFolder })
 }
 .fm-tree-title { font-size: 12px; color: var(--el-text-color-secondary); margin-bottom: 6px; padding-left: 4px; }
 .fm-tree-scroll { flex: 1; }
-.fm-tree-node { display: inline-flex; align-items: center; font-size: 13px; }
+.fm-tree-node {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  max-width: 100%;
+  overflow: hidden;
+}
+.fm-tree-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .fm-files {
   flex: 1;
   border: 1px solid var(--el-border-color-lighter);
@@ -460,41 +471,72 @@ defineExpose({ openRenameFolder, openMoveFolder, removeFolder })
 .fm-file-list { display: flex; flex-direction: column; }
 .fm-file-row {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  align-items: stretch;
+  gap: 10px;
+  padding: 6px 10px;
   border-radius: 6px;
   transition: background 0.15s;
+  min-height: 50px;
 }
 .fm-file-row:hover { background: var(--el-fill-color-light); }
 .fm-file-row-highlight {
   background: var(--el-color-primary-light-9);
   outline: 1px solid var(--el-color-primary-light-5);
 }
-.fm-file-icon { font-size: 18px; flex-shrink: 0; }
-.fm-file-main { flex: 1; min-width: 0; }
+.fm-file-icon { font-size: 20px; flex-shrink: 0; align-self: center; }
+.fm-file-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  overflow: hidden;
+}
 .fm-file-name {
   display: block;
   color: var(--el-text-color-primary);
   font-size: 13px;
+  line-height: 1.4;
   text-decoration: none;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .fm-file-name:hover { color: var(--el-color-primary); }
-.fm-file-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
+.fm-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  line-height: 1.4;
+}
 .fm-badge {
   font-size: 11px;
   padding: 0 6px;
   border-radius: 4px;
   line-height: 16px;
+  white-space: nowrap;
 }
 .fm-badge-comm { background: var(--el-color-primary-light-9); color: var(--el-color-primary); }
 .fm-badge-manual { background: var(--el-fill-color); color: var(--el-text-color-secondary); }
 .fm-badge-link { background: var(--el-color-warning-light-9); color: var(--el-color-warning); }
-.fm-file-size { font-size: 12px; color: var(--el-text-color-secondary); }
-.fm-file-ops { display: flex; flex-shrink: 0; opacity: 0.6; transition: opacity 0.15s; }
+.fm-file-size { color: var(--el-text-color-secondary); white-space: nowrap; }
+.fm-file-ops {
+  display: flex;
+  flex-shrink: 0;
+  align-self: center;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  gap: 0;
+}
+.fm-file-ops .el-button {
+  padding: 4px;
+  margin-left: 0;
+}
+.fm-file-ops .el-button + .el-button { margin-left: 0; }
+.fm-file-ops .el-button .el-icon { font-size: 15px; }
 .fm-file-row:hover .fm-file-ops { opacity: 1; }
 .fm-move-hint { margin-top: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
 </style>

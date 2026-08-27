@@ -118,8 +118,9 @@ export const deleteTaskFolder = (projectId, taskId, folderId) => http.delete(`/p
 export const uploadTaskFile = (projectId, taskId, file, folderId) => {
   const fd = new FormData()
   fd.append('file', file)
-  if (folderId) fd.append('folder_id', folderId)
+  // folder_id 是后端 Query 参数，必须走 URL query（放 FormData 里 FastAPI 读不到）
   return http.post(`/projects/${projectId}/tasks/${taskId}/files`, fd, {
+    params: folderId ? { folder_id: folderId } : {},
     headers: { 'Content-Type': 'multipart/form-data' },
   })
 }
