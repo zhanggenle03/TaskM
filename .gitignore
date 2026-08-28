@@ -11,6 +11,7 @@ build/
 
 # --- 后端运行文件 ---
 backend/taskm.db
+backend/taskm.db.bak_*
 backend/frontend_dist/
 backend/settings.json
 *.db

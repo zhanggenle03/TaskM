@@ -12,6 +12,7 @@
 """
 import urllib.parse
 from datetime import datetime, date
+from decimal import Decimal, ROUND_HALF_UP
 import json
 import re
 import uuid
@@ -159,11 +160,20 @@ def _validate_items(items):
     return items
 
 
+def _round2_half_up(v: float) -> float:
+    """四舍五入到分（.xx5 进位），与前端 round2（Math.round 带 EPSILON 补偿）语义一致。
+
+    不能用 Python 内置 round()：其为银行家舍入，且 33.635 的浮点表示略小于 33.635，
+    会得到 33.63 而非前端展示的 33.64，导致明细展开与编辑/配置预览不一致。
+    """
+    return float(Decimal(str(v)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def _item_amount(it):
     """明细金额：base 与 rate 同时非空时按 基数×比例/100 自动算，否则用传入 amount。"""
     if it.base is not None and it.rate is not None:
-        return round((it.base or 0) * (it.rate or 0) / 100.0, 2)
-    return round(it.amount or 0.0, 2)
+        return _round2_half_up((it.base or 0) * (it.rate or 0) / 100.0)
+    return _round2_half_up(it.amount or 0.0)
 
 
 def _funded_by(category: str) -> str:
