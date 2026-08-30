@@ -465,63 +465,11 @@
       </template>
     </el-dialog>
 
-    <!-- 附件预览弹窗 -->
-    <el-dialog v-model="previewDialog" width="80%" top="5vh" destroy-on-close>
-      <template #header>
-        <div class="preview-header">
-          <span class="preview-title">{{ previewTitle }}</span>
-          <span v-if="previewList.length > 1" class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
-        </div>
-      </template>
+    <!-- 附件预览弹窗（公共组件，支持缩放/翻页/下载/加载遮罩） -->
+    <AttachmentPreviewDialog ref="previewRef" />
 
-      <!-- 图片预览 -->
-      <div v-if="previewIsImage" class="preview-img-wrap" @wheel.prevent="onImgWheel">
-        <div class="preview-img-container">
-          <img :src="previewSrc" class="preview-img" draggable="false"
-            :style="{
-              transform: `translate(${imgState.x}px, ${imgState.y}px) scale(${imgState.scale})`,
-              transformOrigin: '0 0',
-              cursor: isDragging ? 'grabbing' : imgState.scale !== 1 ? 'grab' : 'default'
-            }"
-            @mousedown="onImgMouseDown"
-            @mousemove="onImgMouseMove"
-            @mouseup="onImgMouseUp"
-            @mouseleave="onImgMouseUp"
-          />
-        </div>
-      </div>
-
-      <!-- 非图片预览（iframe） -->
-      <div v-else class="preview-other-wrap" @wheel.prevent="onOtherWheel">
-        <iframe :src="previewSrc"
-          :style="{
-            width: `${100 * imgState.scale}%`,
-            height: `${70 * imgState.scale}vh`,
-            border: 'none',
-            borderRadius: '4px',
-            background: '#fff',
-            transformOrigin: 'top left',
-            display: 'block'
-          }"
-        />
-      </div>
-
-      <!-- 工具栏：左右切换 + 重置 -->
-      <div v-if="previewList.length > 1 || imgState.scale !== 1" class="preview-toolbar">
-        <template v-if="previewList.length > 1">
-          <el-button size="small" :disabled="previewIndex <= 0" @click="previewPrev"><el-icon><ArrowLeft /></el-icon></el-button>
-          <span class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
-          <el-button size="small" :disabled="previewIndex >= previewList.length - 1" @click="previewNext"><el-icon><ArrowRight /></el-icon></el-button>
-        </template>
-        <span v-if="previewList.length > 1 && imgState.scale !== 1" class="tb-sep"></span>
-        <el-button v-if="imgState.scale !== 1" size="small" text @click="resetImageZoom">重置</el-button>
-      </div>
-
-      <template #footer>
-        <el-button @click="previewDialog = false">关闭</el-button>
-        <el-button type="primary" @click="downloadPreview">下载</el-button>
-      </template>
-    </el-dialog>
+    <!-- 返回顶部悬浮按钮（时间线/页面滚动均可触发，一并滚回顶部） -->
+    <BackToTop :targets="['.main-content', '.timeline-scroll']" />
 
     <!-- 导出说明文档弹窗 -->
     <el-dialog v-model="showExportDialog" title="导出说明文档" width="560px" @open="initExportDialog" @close="resetExportDialog">
@@ -639,6 +587,8 @@ import {
 import CommRichEditor from '../components/CommRichEditor.vue'
 import RichContent from '../components/RichContent.vue'
 import FileManager from '../components/FileManager.vue'
+import AttachmentPreviewDialog from '../components/AttachmentPreviewDialog.vue'
+import BackToTop from '../components/BackToTop.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -766,15 +716,13 @@ const contactForm = ref({ name: '', role: '', contact_info: '' })
 const showEditTask = ref(false)
 const taskForm = ref({ title: '', description: '', priority: 'normal', tag_ids: [] })
 
-// 附件预览
-const previewDialog = ref(false)
-const previewSrc = ref('')
-const previewTitle = ref('')
-const previewAttId = ref(null)
-const previewIsImage = ref(false)
-const previewList = ref([])
-const previewIndex = ref(0)
-const imageExts = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico']
+// 附件预览：委托公共组件 AttachmentPreviewDialog（支持缩放/翻页/下载/加载遮罩）
+const previewRef = ref(null)
+const openPreview = (a, list) => {
+  const l = list || []
+  const idx = l.findIndex(item => item.id === a.id)
+  previewRef.value?.open(l, idx >= 0 ? idx : 0)
+}
 
 const timelineAsc = ref(false)  // 时间线排序：false=最新的在前面，true=最早的在前
 
@@ -865,11 +813,6 @@ const onCommEditorChange = (html, pendingImages) => {
   commPendingImages.value = pendingImages || []
 }
 
-const imgState = ref({ x: 0, y: 0, scale: 1 })
-const isDragging = ref(false)
-const dragStart = { x: 0, y: 0 }
-const dragImgState = { x: 0, y: 0 }
-
 // 导出说明文档
 const showExportDialog = ref(false)
 const exportLoading = ref(false)
@@ -896,103 +839,6 @@ const exportFieldOptions = [
 const exportMinDate = ref(null)
 const exportMaxDate = ref(null)
 
-const openPreview = (a, list) => {
-  previewList.value = list || []
-  previewIndex.value = previewList.value.findIndex(item => item.id === a.id)
-  applyPreview(a)
-  previewDialog.value = true
-}
-
-const applyPreview = (a) => {
-  previewAttId.value = a.id ?? null
-  previewTitle.value = a.original_filename || ''
-  if (a._isComImage) {
-    // 沟通正文内联图片：直接使用 src 作为预览 URL
-    previewSrc.value = a.src
-    previewIsImage.value = true
-  } else {
-    previewSrc.value = previewUrl(a.id)
-    const ext = (a.original_filename?.split('.').pop() || '').toLowerCase()
-    previewIsImage.value = imageExts.includes('.' + ext)
-  }
-  imgState.value = { x: 0, y: 0, scale: 1 }
-}
-
-const previewPrev = () => {
-  if (previewIndex.value <= 0) return
-  previewIndex.value--
-  applyPreview(previewList.value[previewIndex.value])
-}
-
-const previewNext = () => {
-  if (previewIndex.value >= previewList.value.length - 1) return
-  previewIndex.value++
-  applyPreview(previewList.value[previewIndex.value])
-}
-
-const onImgWheel = (e) => {
-  const step = e.deltaY > 0 ? -0.05 : 0.05
-  const newScale = Math.round((imgState.value.scale + step) * 100) / 100
-  if (newScale < 0.01) { imgState.value = { x: 0, y: 0, scale: 0.01 }; return }
-  // 居中状态（未拖拽过）只调大小不移动位置，保证第一次缩放无跳动
-  if (imgState.value.x === 0 && imgState.value.y === 0) {
-    imgState.value = { x: 0, y: 0, scale: newScale }
-    return
-  }
-  const wrap = e.currentTarget
-  const rect = wrap.getBoundingClientRect()
-  const mx = rect.width / 2
-  const my = rect.height / 2
-  const ratio = newScale / imgState.value.scale
-  imgState.value = {
-    x: Math.round((imgState.value.x + mx * (1 - ratio)) * 10) / 10,
-    y: Math.round((imgState.value.y + my * (1 - ratio)) * 10) / 10,
-    scale: newScale,
-  }
-}
-
-const onImgMouseDown = (e) => {
-  if (e.button !== 0 || imgState.value.scale === 1) return
-  isDragging.value = true
-  dragStart.x = e.clientX
-  dragStart.y = e.clientY
-  dragImgState.x = imgState.value.x
-  dragImgState.y = imgState.value.y
-  e.preventDefault()
-}
-
-const onImgMouseMove = (e) => {
-  if (!isDragging.value) return
-  imgState.value = {
-    ...imgState.value,
-    x: +(dragImgState.x + e.clientX - dragStart.x).toFixed(1),
-    y: +(dragImgState.y + e.clientY - dragStart.y).toFixed(1),
-  }
-}
-
-const onImgMouseUp = () => {
-  isDragging.value = false
-}
-
-const onOtherWheel = (e) => {
-  const step = e.deltaY > 0 ? -0.05 : 0.05
-  const newScale = Math.round((imgState.value.scale + step) * 100) / 100
-  if (newScale < 0.01) { imgState.value = { x: 0, y: 0, scale: 0.01 }; return }
-  imgState.value = { x: 0, y: 0, scale: newScale }
-}
-
-const resetImageZoom = () => {
-  imgState.value = { x: 0, y: 0, scale: 1 }
-}
-
-const downloadPreview = () => {
-  if (previewAttId.value) {
-    window.open(downloadUrl(previewAttId.value), '_blank')
-  } else if (previewSrc.value) {
-    window.open(previewSrc.value, '_blank')
-  }
-}
-
 // 点击沟通正文中的图片 → 打开预览弹窗，支持同一沟通内所有图片前后翻页
 const onCommContentClick = (e) => {
   let target = e.target
@@ -1015,10 +861,7 @@ const onCommContentClick = (e) => {
   if (list.length === 0) return
 
   const idx = list.findIndex(item => item.src === (target.getAttribute('src') || target.src))
-  previewList.value = list
-  previewIndex.value = idx >= 0 ? idx : 0
-  applyPreview(list[previewIndex.value])
-  previewDialog.value = true
+  previewRef.value?.open(list, idx >= 0 ? idx : 0)
 }
 
 // 选择对接人时自动填充角色和联系方式
@@ -1069,7 +912,6 @@ onUnmounted(() => {})
 const formatTime = (t) => dayjs(t).format('YYYY-MM-DD HH:mm')
 const formatSize = (bytes) => bytes > 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)}MB` : `${Math.round(bytes / 1024)}KB`
 const downloadUrl = (id) => `/api/attachments/${id}/download`
-const previewUrl = (id) => `/api/attachments/${id}/preview`
 const priorityLabel = (p) => ({ low: '低', normal: '普通', high: '高', urgent: '紧急' }[p] || p)
 const priorityType = (p) => ({ low: 'info', normal: '', high: 'warning', urgent: 'danger' }[p] || '')
 const commTypeLabel = (name) => commTypes.value.find((ct) => ct.name === name)?.name || name
@@ -1763,8 +1605,6 @@ const removeAtt = async (a) => {
 .task-desc-empty { color: #bbb; }
 .section-title { font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 6px; margin-bottom: 12px; margin-top: 20px; color: #444; flex-wrap: wrap; }
 .timeline-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
-.preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
-.preview-toolbar .tb-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
 .timeline-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .timeline-toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .timeline-count { font-size: 12px; color: #999; white-space: nowrap; }
@@ -1786,7 +1626,7 @@ const removeAtt = async (a) => {
 .comm-content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
 .comm-content :deep(ul), .comm-content :deep(ol) { padding-left: 24px; margin: 6px 0; }
 .comm-content :deep(img) { max-width: 100%; max-height: 50vh; height: auto; border-radius: 4px; cursor: zoom-in; }
-.comm-content :deep(img:hover) { box-shadow: 0 0 0 2px #534ab7; }
+.comm-content :deep(img:hover) { box-shadow: inset 0 0 0 2px #534ab7; }
 /* 添加/编辑沟通记录：左编辑器 + 右设置两栏布局 */
 .comm-edit-layout { display: flex; gap: 20px; align-items: stretch; }
 .comm-edit-left { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
@@ -1809,13 +1649,6 @@ const removeAtt = async (a) => {
 .link-picker-item:hover { background: #f5f5f2; }
 .link-picker-name { max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .link-picker-path { margin-left: 8px; font-size: 12px; color: #aaa; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.preview-img-wrap { overflow: auto; height: 70vh; background: #f5f5f5; border-radius: 4px; position: relative; user-select: none; }
-.preview-img-container { min-height: 100%; text-align: center; padding: 16px; }
-.preview-img { max-width: 100%; max-height: calc(70vh - 80px); display: inline-block; vertical-align: top; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-.preview-other-wrap { overflow: auto; height: 70vh; background: #f5f5f5; border-radius: 4px; }
-.preview-header { display: flex; align-items: center; gap: 10px; }
-.preview-title { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.preview-counter { font-size: 12px; color: #999; flex-shrink: 0; }
 .att-download-btn { display: inline-flex; align-items: center; color: #888; text-decoration: none; padding: 2px; border-radius: 3px; }
 .att-download-btn:hover { color: #185fa5; background: #e8e8e4; }
 .att-size { color: #aaa; flex-shrink: 0; }

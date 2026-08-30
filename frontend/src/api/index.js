@@ -107,6 +107,8 @@ export const uploadCommAttachment = (projectId, taskId, commId, file) => {
   })
 }
 export const downloadAttachment = (id) => `/api/attachments/${id}/download`
+export const openAttachment = (id) => http.post(`/attachments/${id}/open`)
+export const openUploadFile = (url) => http.post('/open-file', { url })
 export const deleteAttachment = (id) => http.delete(`/attachments/${id}`)
 export const renameAttachment = (id, name) => http.put(`/attachments/${id}`, { original_filename: name })
 

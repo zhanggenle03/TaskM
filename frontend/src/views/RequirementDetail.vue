@@ -224,55 +224,8 @@
       </template>
     </el-dialog>
 
-    <!-- 统一预览弹窗（图片+附件） -->
-    <el-dialog v-model="previewDialog" width="80%" top="5vh" destroy-on-close>
-      <template #header>
-        <div class="preview-header">
-          <span class="preview-title">{{ previewTitle }}</span>
-          <span v-if="previewList.length > 1" class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
-        </div>
-      </template>
-
-      <!-- 图片预览 -->
-      <div v-if="!previewIsFile" class="preview-img-wrap" @wheel.prevent="onImgWheel">
-        <div class="preview-img-container">
-          <img :src="previewSrc" class="preview-img" draggable="false"
-            :style="{
-              transform: `translate(${imgState.x}px, ${imgState.y}px) scale(${imgState.scale})`,
-              transformOrigin: '0 0',
-              cursor: isDragging ? 'grabbing' : imgState.scale !== 1 ? 'grab' : 'default'
-            }"
-            @mousedown="onImgMouseDown"
-            @mousemove="onImgMouseMove"
-            @mouseup="onImgMouseUp"
-            @mouseleave="onImgMouseUp"
-          />
-        </div>
-      </div>
-
-      <!-- 附件预览（iframe） -->
-      <div v-else style="height:75vh;background:#f5f5f5;border-radius:4px">
-        <iframe :src="previewSrc"
-          style="width:100%;height:100%;border:none;border-radius:4px;background:#fff"
-        />
-      </div>
-
-      <!-- 工具栏：切换 + 重置 -->
-      <div v-if="previewList.length > 1 || (!previewIsFile && imgState.scale !== 1)" class="preview-toolbar">
-        <template v-if="previewList.length > 1">
-          <el-button size="small" :disabled="previewIndex <= 0" @click="previewPrev"><el-icon><ArrowLeft /></el-icon></el-button>
-          <span class="preview-counter">{{ previewIndex + 1 }} / {{ previewList.length }}</span>
-          <el-button size="small" :disabled="previewIndex >= previewList.length - 1" @click="previewNext"><el-icon><ArrowRight /></el-icon></el-button>
-        </template>
-        <span v-if="previewList.length > 1 && !previewIsFile && imgState.scale !== 1" class="tb-sep"></span>
-        <el-button v-if="!previewIsFile && imgState.scale !== 1" size="small" text @click="resetImageZoom">重置</el-button>
-      </div>
-
-      <template #footer>
-        <el-button @click="previewDialog = false">关闭</el-button>
-        <el-button type="primary" @click="downloadPreview">下载</el-button>
-      </template>
-    </el-dialog>
+    <!-- 统一预览弹窗（公共组件：图片缩放/拖拽、混合翻页、下载重命名、新窗口打开、加载遮罩） -->
+    <AttachmentPreviewDialog ref="previewRef" />
 
     <!-- 需求导出文档弹窗 -->
     <el-dialog
@@ -311,6 +264,7 @@ import {
   exportRequirementDoc, uploadRequirementImage, uploadRequirementFile, deleteRequirementFile,
 } from '../api/index.js'
 import { registerLinkMenus, ensureProtocol as _ensureProtocol } from '../utils/linkMenus'
+import AttachmentPreviewDialog from '../components/AttachmentPreviewDialog.vue'
 
 // ── 引用块颜色选择器 ──
 const BQ_PRESETS = [
@@ -549,16 +503,8 @@ const editTitleVal = ref('')
 const exitConfirmVisible = ref(false)
 let exitResolve = null  // 退出编辑的 Promise resolve
 
-// ── 统一预览（图片+附件） ──
-const previewDialog = ref(false)
-const previewTitle = ref('')
-const previewSrc = ref('')
-const previewList = ref([])     // [{ type:'image'|'file', src, title }]
-const previewIndex = ref(0)
-const previewIsFile = ref(false)
-const imgState = ref({ x: 0, y: 0, scale: 1 })
-const isDragging = ref(false)
-let dragStart = { x: 0, y: 0 }
+// ── 统一预览（图片+附件）→ 委托公共组件 AttachmentPreviewDialog ──
+const previewRef = ref(null)
 
 // ── 富文本编辑器 ──
 const editorRef = shallowRef()
@@ -586,7 +532,7 @@ registerLinkMenus('req', {
     if (container) {
       const list = buildUnifiedPreviewList(container)
       const idx = list.findIndex(item => item.type === 'file' && item.downloadUrl === href)
-      openUnifiedPreview(list, idx >= 0 ? idx : 0)
+      previewRef.value?.open(list, idx >= 0 ? idx : 0)
     }
     return true
   },
@@ -848,7 +794,7 @@ const handleEditorClick = (e) => {
     const list = buildUnifiedPreviewList(container)
     // 按原始 href 匹配（而非标题，因为标题可能是用户自定义文本）
     const idx = list.findIndex(item => item.type === 'file' && item.downloadUrl === href)
-    openUnifiedPreview(list, idx >= 0 ? idx : 0)
+    previewRef.value?.open(list, idx >= 0 ? idx : 0)
     return
   }
 
@@ -1580,15 +1526,16 @@ const onEditorDblClick = (e) => {
   const list = buildUnifiedPreviewList(container)
   const idx = list.findIndex(item => item.type === 'image' && item.src === target.src)
   if (idx < 0) return
-  openUnifiedPreview(list, idx)
+  previewRef.value?.open(list, idx)
 }
 
-// ── 统一预览（图片+附件） ──
+// ── 统一预览（图片+附件）→ 委托公共组件 AttachmentPreviewDialog ──
 
-/** 构建编辑器内所有可预览项的列表（按 DOM 顺序） */
+/** 构建编辑器内所有可预览项的列表（按 DOM 顺序），输出公共组件兼容结构 */
 const buildUnifiedPreviewList = (container) => {
   if (!container) return []
   const items = []
+  const prefix = req.value?.display_id || 'requirement'
   // TreeWalker 按文档顺序遍历所有元素
   const walker = document.createTreeWalker(
     container,
@@ -1606,7 +1553,13 @@ const buildUnifiedPreviewList = (container) => {
     if (node.tagName === 'IMG') {
       imgIdx++
       const ext = (node.src.split('.').pop() || '').split('?')[0]
-      items.push({ type: 'image', src: node.src, downloadUrl: node.src, title: `图片${imgIdx}`, ext: ext ? '.' + ext : '' })
+      const title = `图片${imgIdx}`
+      items.push({
+        type: 'image', src: node.src, downloadUrl: node.src, title,
+        ext: ext ? '.' + ext : '',
+        // 下载重命名：{需求显示ID}_{文件名}（保留原行为）
+        downloadName: `${prefix}_${title}${ext ? '.' + ext : ''}`,
+      })
     } else {
       const href = node.getAttribute('href')
       const urlFilename = href.split('/').pop()
@@ -1615,94 +1568,14 @@ const buildUnifiedPreviewList = (container) => {
       // 如果链接文字已包含相同后缀，不再重复添加
       const finalExt = linkText.toLowerCase().endsWith(ext.toLowerCase()) ? '' : ext
       const previewUrl = `/api/projects/${projectId.value}/requirements/${req.value?.id}/files/${encodeURIComponent(urlFilename)}/preview`
-      items.push({ type: 'file', src: previewUrl, downloadUrl: href, title: linkText, ext: finalExt })
+      items.push({
+        type: 'file', src: previewUrl, downloadUrl: href, title: linkText, ext: finalExt,
+        downloadName: `${prefix}_${linkText}${finalExt}`,
+      })
     }
   }
   return items
 }
-
-/** 应用预览项 */
-const applyPreviewItem = (item) => {
-  previewSrc.value = item.src
-  previewTitle.value = item.title
-  previewIsFile.value = item.type === 'file'
-  imgState.value = { x: 0, y: 0, scale: 1 }
-}
-
-/** 打开统一预览（从给定列表和索引） */
-const openUnifiedPreview = (list, idx) => {
-  previewList.value = list
-  previewIndex.value = idx
-  if (idx >= 0 && idx < list.length) {
-    applyPreviewItem(list[idx])
-  }
-  previewDialog.value = true
-}
-
-/** 上一项 */
-const previewPrev = () => {
-  if (previewIndex.value <= 0) return
-  previewIndex.value--
-  applyPreviewItem(previewList.value[previewIndex.value])
-}
-
-/** 下一项 */
-const previewNext = () => {
-  if (previewIndex.value >= previewList.value.length - 1) return
-  previewIndex.value++
-  applyPreviewItem(previewList.value[previewIndex.value])
-}
-
-/** 重置缩放 */
-const resetImageZoom = () => {
-  imgState.value = { x: 0, y: 0, scale: 1 }
-}
-
-/** 下载当前预览 */
-const downloadPreview = async () => {
-  const item = previewList.value[previewIndex.value]
-  if (!item) return
-  const url = item.downloadUrl || item.src
-  // 下载文件名：{需求显示ID}_{图片N 或 原文件名}
-  const prefix = req.value?.display_id || 'requirement'
-  const downloadName = `${prefix}_${item.title}${item.ext || ''}`
-  try {
-    const res = await fetch(url)
-    const blob = await res.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = downloadName
-    a.click()
-    URL.revokeObjectURL(a.href)
-  } catch {
-    window.open(url, '_blank')
-  }
-}
-
-/** 鼠标滚轮缩放（仅图片） */
-const onImgWheel = (e) => {
-  if (previewIsFile.value) return
-  const step = e.deltaY > 0 ? -0.05 : 0.05
-  const newScale = Math.round((imgState.value.scale + step) * 100) / 100
-  imgState.value.scale = Math.max(0.2, Math.min(10, newScale))
-}
-
-/** 开始拖拽 */
-const onImgMouseDown = (e) => {
-  isDragging.value = true
-  dragStart.x = e.clientX - imgState.value.x
-  dragStart.y = e.clientY - imgState.value.y
-}
-
-/** 拖拽移动 */
-const onImgMouseMove = (e) => {
-  if (!isDragging.value) return
-  imgState.value.x = e.clientX - dragStart.x
-  imgState.value.y = e.clientY - dragStart.y
-}
-
-/** 结束拖拽 */
-const onImgMouseUp = () => { isDragging.value = false }
 </script>
 
 <style scoped>
@@ -1753,8 +1626,20 @@ const onImgMouseUp = () => { isDragging.value = false }
   cursor: zoom-in;
 }
 .editor-readonly :deep(.w-e-text-container [data-slate-editor] img:hover) {
-  box-shadow: 0 0 0 2px #534ab7;
+  /* inset 向内阴影：任何浏览器/容器下都不会产生向外溢出去触发滚动条 */
+  box-shadow: inset 0 0 0 2px #534ab7;
   border-radius: 4px;
+}
+/* 只读模式隐藏 wangEditor 图片悬浮层（hoverbar/resize 手柄等绝对定位元素）：
+   图片跨越滚动容器边界时它们会撑出原生滚动条 */
+.editor-readonly :deep(.w-e-hover-bar),
+.editor-readonly :deep(.w-e-image-dragger) {
+  display: none !important;
+}
+/* 图片容器宽度约束：wangEditor 的 img 外包 span.w-e-image-container（inline-block 收缩宽度），
+   img 的 max-width:100% 相对它失效，大图会溢出容器撑出滚动条 */
+.editor-readonly :deep(.w-e-text-container [data-slate-editor] .w-e-image-container) {
+  max-width: 100%;
 }
 .editor-toolbar {
   position: sticky; top: 0; z-index: 10;
@@ -1829,6 +1714,10 @@ const onImgMouseUp = () => { isDragging.value = false }
 .editor-body :deep(.w-e-text-container [data-slate-editor] img) {
   display: block; margin: 8px auto; max-width: 100%;
 }
+/* 图片容器宽度约束（同上，编辑模式）：span.w-e-image-container 收缩宽度导致 img max-width 失效 */
+.editor-body :deep(.w-e-text-container [data-slate-editor] .w-e-image-container) {
+  max-width: 100%;
+}
 /* 编辑区最小高度（wangEditor v5 的 editorConfig 不支持 minHeight，需用 CSS） */
 .editor-body :deep(.w-e-text-container) {
   min-height: 300px;
@@ -1856,16 +1745,6 @@ const onImgMouseUp = () => { isDragging.value = false }
 .toc-item.lv1 { font-weight: 600; padding-left: 8px; }
 .toc-item.lv2 { padding-left: 22px; }
 .toc-item.lv3 { padding-left: 36px; color: #666; }
-
-/* ── 图片预览弹窗 ── */
-.preview-header { display: flex; align-items: center; gap: 10px; }
-.preview-title { font-size: 15px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.preview-counter { font-size: 12px; color: #999; flex-shrink: 0; }
-.preview-img-wrap { overflow: auto; height: 75vh; background: #f5f5f5; border-radius: 4px; position: relative; user-select: none; }
-.preview-img-container { min-height: 100%; text-align: center; padding: 16px; }
-.preview-img { max-width: 100%; max-height: calc(70vh - 80px); display: inline-block; vertical-align: top; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-.preview-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
-.preview-toolbar .tb-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
 
 /* ── 保存状态 ── */
 .save-indicator { font-size: 12px; padding: 1px 10px; border-radius: 10px; line-height: 22px; }

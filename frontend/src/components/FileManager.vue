@@ -136,6 +136,9 @@
       </template>
     </el-dialog>
   </el-drawer>
+
+  <!-- 附件预览弹窗（公共组件，与任务详情页一致：缩放/翻页/下载/加载遮罩） -->
+  <AttachmentPreviewDialog ref="previewRef" />
 </template>
 
 <script setup>
@@ -145,6 +148,7 @@ import {
   getTaskFiles, createTaskFolder, updateTaskFolder, deleteTaskFolder,
   uploadTaskFile, moveTaskFile, renameAttachment, deleteAttachment,
 } from '../api'
+import AttachmentPreviewDialog from './AttachmentPreviewDialog.vue'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -369,8 +373,12 @@ const removeFolder = async (node) => {
 }
 
 // ---- 预览 / 下载 ----
+const previewRef = ref(null)
 const preview = (f) => {
-  window.open(`/api/attachments/${f.id}/preview`, '_blank')
+  // 打开站内预览弹窗，可在当前文件夹的文件间前后翻页
+  const l = currentFiles.value
+  const idx = l.findIndex(item => item.id === f.id)
+  previewRef.value?.open(l, idx >= 0 ? idx : 0)
 }
 const download = (f) => {
   const a = document.createElement('a')
