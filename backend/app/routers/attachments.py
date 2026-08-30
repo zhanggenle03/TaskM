@@ -8,7 +8,7 @@ from urllib.parse import quote
 import aiofiles
 from ..database import get_db, Attachment, Communication, Task, Project, UPLOAD_DIR, touch_project, resolve_project, CommunicationFile
 from ..schemas import AttachmentOut, AttachmentUpdate
-from ..office_convert import is_office_file, convert_to_pdf
+from ..office_convert import is_office_file, convert_to_pdf, remove_attachment_files
 
 router = APIRouter(tags=["attachments"])
 
@@ -83,10 +83,32 @@ def download_attachment(attachment_id: int, db: Session = Depends(get_db)):
 
 # 预览附件（浏览器内联打开）
 @router.get("/attachments/{attachment_id}/preview")
-def preview_attachment(attachment_id: int, db: Session = Depends(get_db)):
+def preview_attachment(attachment_id: int, as_page: bool = False, db: Session = Depends(get_db)):
     att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
     if not att or not os.path.exists(att.file_path):
         raise HTTPException(404, "文件不存在")
+
+    # as_page=1：返回带 <title> 的 HTML 包装页，新窗口打开时浏览器标签显示文件名。
+    # 直接 inline 图片/PDF 时 Chrome/Edge 用 URL 最后一段当标题，不认 Content-Disposition filename。
+    if as_page:
+        display_name = att.original_filename or "预览"
+        preview_url = f"/api/attachments/{att.id}/preview"
+        ext = os.path.splitext(att.file_path)[1].lower()
+        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'}
+        safe_title = html_mod.escape(display_name)
+        if ext in image_exts:
+            body = ('<div style="height:100vh;display:flex;align-items:center;'
+                    f'justify-content:center;background:#f5f5f5"><img src="{preview_url}" '
+                    'style="max-width:100%;max-height:100vh;object-fit:contain"></div>')
+        else:
+            body = (f'<iframe src="{preview_url}" '
+                    'style="width:100%;height:100vh;border:0;display:block"></iframe>')
+        html_content = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{safe_title}</title>
+<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:#f5f5f5}}</style></head>
+<body>{body}</body></html>'''
+        return HTMLResponse(content=html_content)
 
     file_path = att.file_path
     mime_type = att.mime_type or ""
@@ -147,6 +169,38 @@ pre{{background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:16px;whi
     )
 
 
+# 用系统默认程序打开附件（等价于双击原始文件，触发 Word/Excel 等本地应用）
+@router.post("/attachments/{attachment_id}/open")
+def open_attachment(attachment_id: int, db: Session = Depends(get_db)):
+    att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    if not att or not os.path.exists(att.file_path):
+        raise HTTPException(404, "文件不存在")
+    try:
+        os.startfile(att.file_path)
+    except OSError as e:
+        raise HTTPException(500, f"无法用系统程序打开：{e}")
+    return {"ok": True}
+
+
+# 用系统默认程序打开上传目录内的文件（按 URL 定位磁盘路径，覆盖沟通内联图/需求正文图片与文件等无附件 id 场景）
+@router.post("/open-file")
+def open_upload_file(payload: dict, db: Session = Depends(get_db)):
+    url = (payload or {}).get("url") or ""
+    if not url.startswith("/uploads/"):
+        raise HTTPException(400, "仅支持打开上传目录内的文件")
+    rel_path = url[len("/uploads/"):]
+    if ".." in rel_path:
+        raise HTTPException(400, "非法路径")
+    file_path = os.path.normpath(os.path.join(UPLOAD_DIR, rel_path))
+    if not file_path.startswith(os.path.normpath(UPLOAD_DIR)) or not os.path.isfile(file_path):
+        raise HTTPException(404, "文件不存在")
+    try:
+        os.startfile(file_path)
+    except OSError as e:
+        raise HTTPException(500, f"无法用系统程序打开：{e}")
+    return {"ok": True}
+
+
 # 重命名附件
 @router.put("/attachments/{attachment_id}", response_model=AttachmentOut)
 def rename_attachment(attachment_id: int, data: AttachmentUpdate, db: Session = Depends(get_db)):
@@ -173,8 +227,7 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "附件不存在")
     # 清理沟通记录引用（文件管理独立文件被引用时，删文件同步解除引用）
     db.query(CommunicationFile).filter(CommunicationFile.attachment_id == att.id).delete()
-    if os.path.exists(att.file_path):
-        os.remove(att.file_path)
+    remove_attachment_files(att.file_path)
     db.delete(att)
     db.commit()
     # 通过 Communication → Task → Project 链路更新时间

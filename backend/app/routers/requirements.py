@@ -26,6 +26,7 @@ from ..schemas import (
     ProjectProgress, DashboardData, DistributionItem,
     TaskBrief,
 )
+from ..office_convert import remove_attachment_files
 
 router = APIRouter(prefix="/projects/{project_id}/requirements", tags=["requirements"])
 
@@ -1447,8 +1448,7 @@ def delete_requirement_file(
     file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
     filepath = os.path.join(file_dir, filename)
 
-    if os.path.exists(filepath):
-        os.remove(filepath)
+    remove_attachment_files(filepath)
 
     return {"ok": True}
 
@@ -1458,9 +1458,11 @@ def preview_requirement_file(
     project_id: str,
     requirement_id: str,
     filename: str,
+    as_page: bool = False,
+    title: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """预览需求附件：Office 转 PDF、文本渲染为 HTML，其他 inline 展示"""
+    """预览需求附件：Office 转 PDF、文本渲染为 HTML，其他 inline 展示。as_page=1 返回带 <title> 的包装页。"""
     from fastapi.responses import FileResponse as FR, HTMLResponse
     from urllib.parse import quote
     import html as html_mod
@@ -1475,6 +1477,29 @@ def preview_requirement_file(
 
     if not os.path.isfile(file_path):
         raise HTTPException(404, "文件不存在")
+
+    # as_page=1：返回带 <title> 的 HTML 包装页，新窗口打开时浏览器标签显示文件名
+    # （物理文件名为 uuid 乱码，title 参数由前端传入链接显示文字，缺省回退 filename）
+    if as_page:
+        preview_url = (f"/api/projects/{project_id}/requirements/{requirement_id}/files/"
+                       f"{quote(filename, safe='')}/preview")
+        ext = os.path.splitext(file_path)[1].lower()
+        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'}
+        safe_title = html_mod.escape(title or filename)
+        if ext in image_exts:
+            body = ('<div style="height:100vh;display:flex;align-items:center;'
+                    f'justify-content:center;background:#f5f5f5"><img src="{preview_url}" '
+                    'style="max-width:100%;max-height:100vh;object-fit:contain"></div>')
+        else:
+            body = (f'<iframe src="{preview_url}" '
+                    'style="width:100%;height:100vh;border:0;display:block"></iframe>')
+        return HTMLResponse(
+            content=f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{safe_title}</title>
+<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:#f5f5f5}}</style></head>
+<body>{body}</body></html>'''
+        )
 
     # Office 文档 → 转换为 PDF 后预览
     if is_office_file(file_path):
