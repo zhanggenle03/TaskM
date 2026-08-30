@@ -20,6 +20,7 @@ from ..schemas import (
     KanbanData, KanbanColumn, KanbanTaskSimple,
     SearchHits, SearchCommHit,
 )
+from ..office_convert import remove_attachment_files
 
 router = APIRouter(prefix="/projects/{project_id}/tasks", tags=["tasks"])
 
@@ -837,8 +838,7 @@ def update_communication(project_id: str, task_id: str, comm_id: int, data: Comm
     for att_id in old_att_ids - new_att_ids:
         att = db.query(Attachment).filter(Attachment.id == att_id, Attachment.comm_id == comm.id).first()
         if att:
-            if os.path.exists(att.file_path):
-                os.remove(att.file_path)
+            remove_attachment_files(att.file_path)
             db.delete(att)
 
     db.commit()

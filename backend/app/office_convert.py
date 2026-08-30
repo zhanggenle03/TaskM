@@ -23,6 +23,27 @@ def is_office_file(file_path: str) -> bool:
     return ext.lower() in OFFICE_EXTS
 
 
+def remove_attachment_files(file_path: str) -> None:
+    """删除附件源文件，并清理其 Office 转换缓存 PDF（仅当源文件为 Office 文档时才有同名 .pdf 缓存）。
+
+    转换缓存在源文件同目录（{name}.pdf），删除附件时若不清理会残留孤儿文件。
+    源文件本身是 .pdf 时 is_office_file 为 False，不会误删。
+    """
+    if not file_path or not os.path.isfile(file_path):
+        return
+    try:
+        os.remove(file_path)
+    except OSError:
+        return
+    if is_office_file(file_path):
+        pdf_cache = os.path.splitext(file_path)[0] + ".pdf"
+        if os.path.isfile(pdf_cache):
+            try:
+                os.remove(pdf_cache)
+            except OSError:
+                pass
+
+
 def convert_to_pdf(input_path: str, output_dir: str) -> str | None:
     """将 Office 文档转换为 PDF，返回 PDF 路径；失败或不可用时返回 None。"""
     if not PYWIN32_AVAILABLE:
@@ -32,9 +53,18 @@ def convert_to_pdf(input_path: str, output_dir: str) -> str | None:
     name = os.path.splitext(os.path.basename(input_path))[0]
     output_path = os.path.join(output_dir, f"{name}.pdf")
 
-    # 已有缓存
+    # 缓存判定：源文件未在缓存生成后修改过则复用；
+    # 用户用系统程序（Word/Excel 等）编辑保存后源文件 mtime 更新 → 删旧缓存重新转换
     if os.path.exists(output_path):
-        return output_path
+        try:
+            if os.path.getmtime(input_path) <= os.path.getmtime(output_path):
+                return output_path
+        except OSError:
+            return output_path
+        try:
+            os.remove(output_path)
+        except OSError:
+            return output_path
 
     ext = os.path.splitext(input_path)[1].lower()
     pythoncom.CoInitialize()

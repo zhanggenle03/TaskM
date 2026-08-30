@@ -23,6 +23,7 @@ from ..schemas import (
     TaskFilesOut, AttachmentMoveIn, CommunicationLinkIn,
 )
 from ..settings_manager import get_max_file_size
+from ..office_convert import remove_attachment_files
 
 router = APIRouter(prefix="/projects/{project_id}/tasks/{task_id}/files", tags=["file_manager"])
 comm_router = APIRouter(prefix="/projects/{project_id}/tasks/{task_id}/communications/{comm_id}", tags=["file_manager"])
@@ -239,10 +240,9 @@ def delete_folder(project_id: str, task_id: str, folder_id: int, db: Session = D
         atts = db.query(Attachment).filter(Attachment.folder_id == fid).all()
         for a in atts:
             if a.comm_id is None:
-                # 独立文件：删磁盘 + 解除沟通引用 + 删记录
+                # 独立文件：删磁盘（含转换缓存）+ 解除沟通引用 + 删记录
                 db.query(CommunicationFile).filter(CommunicationFile.attachment_id == a.id).delete()
-                if a.file_path and os.path.isfile(a.file_path):
-                    os.remove(a.file_path)
+                remove_attachment_files(a.file_path)
                 db.delete(a)
             else:
                 # 沟通附件：文件夹删除后归位根层级，沟通记录不受影响
