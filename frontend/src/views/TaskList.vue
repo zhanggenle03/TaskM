@@ -172,11 +172,15 @@
         <el-button type="primary" :loading="loading" @click="submit">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 返回顶部悬浮按钮 -->
+    <BackToTop />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import BackToTop from '../components/BackToTop.vue'
 import { useRoute, useRouter, onBeforeRouteUpdate } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
