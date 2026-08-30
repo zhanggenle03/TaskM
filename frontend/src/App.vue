@@ -95,21 +95,49 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .project-nav-menu .nav-vertical-item .el-icon { margin-right: 0 !important; }
 .project-nav-menu .nav-vertical-item span { font-size: 11px; line-height: 1.2; }
 .project-nav-menu .nav-vertical-item.is-active { color: #534ab7 !important; background: #eeedfe !important; border-right: 3px solid #534ab7; }
-.main-content { padding: 28px 32px 0 32px; overflow-y: auto; scrollbar-gutter: stable; background: #f7f7f5; display: flex; flex-direction: column; }
+.main-content { padding: 28px 32px 0 32px; overflow-y: auto; background: #f7f7f5; display: flex; flex-direction: column; }
 .el-menu-item.is-active { color: #534ab7 !important; background: #eeedfe !important; }
 
-/* 美化主内容区滚动条 */
-.main-content::-webkit-scrollbar { width: 6px; }
-.main-content::-webkit-scrollbar-track { background: transparent; }
-.main-content::-webkit-scrollbar-thumb {
-  background: rgba(83, 74, 183, .22);
-  border-radius: 3px;
-  transition: background .2s;
+/* 隐藏主内容区滚动条：内容可滚动时（长文档/图片一半在屏外），鼠标划过右缘附近会触发浏览器
+   overlay 滚动条弹出（用户反馈"划过图片最右边出现原生滑动条"），隐藏后不干扰视觉，滚动功能保留。
+   注：Chrome/Edge 121+ 的 overlay 滚动条由浏览器 UI 层渲染，可能不响应 webkit 伪元素样式；
+   若仍显示，需在浏览器设置开启"始终显示滚动条"（classic 模式）后本规则即可生效隐藏。 */
+.main-content {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
-.main-content::-webkit-scrollbar-thumb:hover {
-  background: rgba(83, 74, 183, .4);
+.main-content::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
 }
-@supports (scrollbar-color: auto) {
-  .main-content { scrollbar-width: thin; scrollbar-color: rgba(83, 74, 183, .22) transparent; }
+.main-content::-webkit-scrollbar-track,
+.main-content::-webkit-scrollbar-thumb,
+.main-content::-webkit-scrollbar-corner {
+  display: none !important;
+  background: transparent !important;
+}
+
+/* 隐藏 wangEditor 编辑区原生滚动条：图片 hover 悬浮条在图片越界（如一半在屏幕外）时会撑出滚动条，
+   隐藏后不干扰视觉，滚动功能保留（滚轮可用） */
+[data-w-e-textarea],
+[data-w-e-textarea] .w-e-text-container,
+[data-w-e-textarea] .w-e-scroll,
+.editor-wrapper,
+.editor-body [data-w-e-textarea],
+.comm-editor-wrap,
+.comm-editor-body [data-w-e-textarea] {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+[data-w-e-textarea]::-webkit-scrollbar,
+[data-w-e-textarea] .w-e-text-container::-webkit-scrollbar,
+[data-w-e-textarea] .w-e-scroll::-webkit-scrollbar,
+.editor-wrapper::-webkit-scrollbar,
+.editor-body [data-w-e-textarea]::-webkit-scrollbar,
+.comm-editor-wrap::-webkit-scrollbar,
+.comm-editor-body [data-w-e-textarea]::-webkit-scrollbar {
+  display: none;
 }
 </style>

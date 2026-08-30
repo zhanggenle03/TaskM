@@ -178,6 +178,11 @@ onBeforeUnmount(() => {
   margin: 0;
   line-height: 1.5;
 }
+/* 图片容器宽度约束：wangEditor 的 img 外包 span.w-e-image-container（inline-block 收缩宽度），
+   img 的 max-width:100% 相对它失效，大图会溢出容器撑出滚动条 */
+.comm-editor-body :deep(.w-e-text-container [data-slate-editor] .w-e-image-container) {
+  max-width: 100%;
+}
 /* ── 标题多级自动编号（JS 写入 data-heading-num，仅显示，不影响存储的 HTML） ── */
 .comm-editor-body :deep(.w-e-text-container [data-slate-editor] h1) {
   font-size: 18px; font-weight: 700; color: #1f1f1f; margin: 18px 0 8px; scroll-margin-top: 56px;
