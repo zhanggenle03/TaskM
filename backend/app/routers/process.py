@@ -2,7 +2,9 @@
 进程管理路由
 提供服务状态检测、Windows 开机自启动管理、服务关闭
 """
+import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -80,8 +82,104 @@ def _kill_port(port: int):
         pass
 
 
+# ── Node 运行时探测（2026-09-01 重构）──
+# 背景坑：`_detect_components` 曾硬编码 WorkBuddy 托管版本目录名 22.22.2，
+# WorkBuddy 升级为 22.22.2-2 后路径失效，fallback 命中 PATH 老 D:\Node（Node 14），
+# vite 5.4 启动即崩（`??=` SyntaxError）且 pythonw 下静默失败。
+# 方案：B——动态扫描托管目录 + 版本校验 ≥18（目录改名/升级自动命中）；
+#      C——探测结果缓存到 backend/config/runtime.json（探测失败不覆盖旧值）。
+RUNTIME_CACHE_FILE = ROOT / "backend" / "config" / "runtime.json"
+_MIN_NODE_MAJOR = 18  # vite 5.x 要求 Node ^18 || >=20
+
+
+def _node_version(node_dir: str):
+    """运行 node --version，返回 (major, minor, patch) 元组；不可用返回 None"""
+    if not node_dir:
+        return None
+    node_exe = os.path.join(node_dir, "node.exe")
+    if not os.path.isfile(node_exe):
+        return None
+    try:
+        result = subprocess.run(
+            [node_exe, "--version"], capture_output=True, text=True, timeout=10,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        m = re.match(r"^v?(\d+)\.(\d+)\.(\d+)", (result.stdout or result.stderr).strip())
+        if m:
+            return tuple(int(x) for x in m.groups())
+    except Exception:
+        pass
+    return None
+
+
+def _node_dir_usable(node_dir: str) -> bool:
+    """目录需 node.exe + npm 齐全且版本 ≥18 才可用（拒绝老 Node，避免静默用错版本）"""
+    if not node_dir:
+        return False
+    d = Path(node_dir)
+    has_node = (d / "node.exe").is_file()
+    has_npm = (d / "npm.cmd").is_file() or (d / "npm.exe").is_file()
+    if not (has_node and has_npm):
+        return False
+    ver = _node_version(node_dir)
+    return ver is not None and ver >= (_MIN_NODE_MAJOR, 0, 0)
+
+
+def _find_workbuddy_node_dir():
+    """扫描 ~/.workbuddy/binaries/node/versions/*，返回版本 ≥18 的最高版本目录。
+
+    不硬编码版本目录名（WorkBuddy 升级改名自动命中）；跳过 . 开头的
+    临时目录（如 .22.22.2.deleting.* / .locks）。
+    """
+    base = Path.home() / ".workbuddy" / "binaries" / "node" / "versions"
+    if not base.is_dir():
+        return None
+    try:
+        entries = sorted(base.iterdir(), key=lambda p: p.name)
+    except Exception:
+        return None
+    best, best_ver = None, None
+    for d in entries:
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        if not _node_dir_usable(str(d)):
+            continue
+        ver = _node_version(str(d))
+        if ver and (best_ver is None or ver > best_ver):
+            best, best_ver = str(d), ver
+    return best
+
+
+def _load_runtime_cache() -> dict:
+    """读取项目内运行时缓存（方案 C：探测结果持久化，防外部环境突变覆盖坏配置）"""
+    try:
+        if RUNTIME_CACHE_FILE.is_file():
+            data = json.loads(RUNTIME_CACHE_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_runtime_cache(data: dict):
+    try:
+        RUNTIME_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        RUNTIME_CACHE_FILE.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def _detect_components():
-    """检测开发版组件路径：pythonw / node 目录 — 优先使用已知可靠路径"""
+    """检测开发版组件路径：pythonw / node 目录。
+
+    Node 探测链（方案 B）：
+      1) WorkBuddy 托管目录 —— 动态扫描 versions/*，取版本 ≥18 最高版本
+      2) D:\\python310\\Scripts —— node.exe + (npm.cmd 或 npm.exe) 且版本 ≥18
+      3) 系统 PATH 中的 node —— 同样要求 ≥18
+    全部失败 → 回退项目内缓存（方案 C：runtime.json，校验仍有效才用）。
+    探测成功才写缓存（探测失败绝不覆盖旧值）。
+    """
     if _is_standalone():
         return None, None
     import shutil
@@ -97,20 +195,30 @@ def _detect_components():
     if not pythonw_path:
         pythonw_path = shutil.which("pythonw") or "pythonw"
 
-    # 检测可靠的 Node.js 目录（优先 WorkBuddy 管理的 Node 22，避免开机自启时系统 PATH 中的旧版 Node）
-    node_dir = None
-    preferred_nodes = [
-        r"C:\Users\zhk\.workbuddy\binaries\node\versions\22.22.2",
-        r"D:\python310\Scripts",
-    ]
-    for d in preferred_nodes:
-        if os.path.isdir(d) and os.path.isfile(os.path.join(d, "node.exe")) and os.path.isfile(os.path.join(d, "npm.cmd")):
-            node_dir = d
-            break
+    cache = _load_runtime_cache()
+
+    # 1) WorkBuddy 托管目录（动态扫描，免疫目录改名/升级）
+    node_dir = _find_workbuddy_node_dir()
+    # 2) 本机固定候选
+    if not node_dir and _node_dir_usable(r"D:\python310\Scripts"):
+        node_dir = r"D:\python310\Scripts"
+    # 3) PATH fallback + 版本校验（拒绝 <18 的老 Node）
     if not node_dir:
-        # fallback：取系统 PATH 中的 npx 所在目录
-        npx_path = shutil.which("npx.cmd") or shutil.which("npx") or "npx.cmd"
-        node_dir = os.path.dirname(os.path.abspath(npx_path))
+        for name in ("npx.cmd", "npx", "node.cmd", "node"):
+            p = shutil.which(name)
+            if p:
+                d = os.path.dirname(os.path.abspath(p))
+                if _node_dir_usable(d):
+                    node_dir = d
+                    break
+    # 方案 C：探测全失败 → 回退缓存（仍校验有效性）；成功才覆盖写缓存
+    if not node_dir:
+        if _node_dir_usable(cache.get("node_dir")):
+            node_dir = cache["node_dir"]
+    elif node_dir != cache.get("node_dir"):
+        cache["node_dir"] = node_dir
+        _save_runtime_cache(cache)
+
     return pythonw_path, node_dir
 
 
@@ -121,6 +229,9 @@ def _write_launcher_pyw() -> str:
     不含 VBS/隐藏式脚本特征，不会触发杀软启发式。
     """
     pythonw_path, node_dir = _detect_components()
+    if not node_dir:
+        # 方案 B：不静默写入错误路径——明确报错，由 _enable_autostart 保留旧 launcher
+        raise RuntimeError("未找到可用的 Node.js 运行时（需 ≥18），跳过 launcher 重写")
     launcher = (
         "import os\n"
         "import subprocess\n"
@@ -192,7 +303,18 @@ def _enable_autostart():
     else:
         # 开发版：写 .pyw 启动器 + 建指向 pythonw 的快捷方式
         launcher_path = ROOT / LAUNCHER_NAME
-        launcher_path.write_text(_write_launcher_pyw(), encoding="utf-8")
+        try:
+            launcher_content = _write_launcher_pyw()
+        except RuntimeError as e:
+            # 方案 C：探测失败不覆盖——保留磁盘上现有 launcher（可能仍可用），仅重建 lnk
+            print(f"[autostart] {e}：保留现有 launcher，仅重建快捷方式", flush=True)
+            pythonw_path, _ = _detect_components()
+            if not pythonw_path or not launcher_path.exists():
+                raise
+            _create_shortcut(pythonw_path, f'"{launcher_path}"', str(ROOT))
+            _cleanup_legacy()
+            return
+        launcher_path.write_text(launcher_content, encoding="utf-8")
         pythonw_path, _ = _detect_components()
         _create_shortcut(pythonw_path, f'"{launcher_path}"', str(ROOT))
         print(f"[autostart] Created lnk -> {pythonw_path} {launcher_path}", flush=True)
