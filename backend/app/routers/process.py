@@ -426,6 +426,7 @@ class SettingsUpdate(BaseModel):
     entry_date: str | None = None
     backend_port: int | None = None
     frontend_port: int | None = None
+    ui_zoom: int | None = None
 
 
 class UserSettingsUpdate(BaseModel):
@@ -476,6 +477,10 @@ def update_settings(body: SettingsUpdate):
         if body.frontend_port < 1024 or body.frontend_port > 65535:
             raise HTTPException(400, "frontend_port 必须在 1024~65535 之间")
         data["frontend_port"] = body.frontend_port
+    if body.ui_zoom is not None:
+        if body.ui_zoom < 25 or body.ui_zoom > 500:
+            raise HTTPException(400, "ui_zoom 必须在 25~500 之间")
+        data["ui_zoom"] = body.ui_zoom
     return save_settings(data)
 
 

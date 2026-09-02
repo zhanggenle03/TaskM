@@ -16,6 +16,8 @@ DEFAULT_SETTINGS = {
     "autostart": {"mode": "off"},
     "backend_port": 8000,
     "frontend_port": 5173,
+    # 全局显示缩放（%），100 = 不缩放；等价于浏览器页面缩放，前端启动时读取并应用
+    "ui_zoom": 100,
 }
 
 

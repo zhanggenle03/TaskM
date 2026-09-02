@@ -200,7 +200,24 @@
           </div>
           <div class="bk-restore-warn" v-if="!isProjectBackupSelected">⚠ 还原将覆盖现有数据，建议先手动备份</div>
         </div>
+      </div>
 
+      <!-- ── 卡片：显示 ── -->
+      <div class="card">
+        <div class="card-title">显示</div>
+
+        <div class="setting-item">
+          <span class="label">显示缩放 <span class="sub">25-500%，可手填</span></span>
+          <div class="control">
+            <el-input-number v-model="uiZoom" :min="25" :max="500" :step="1" controls-position="right"
+              :disabled="uiZoomSaving" style="width: 130px" @change="previewUiZoom" />
+            <button class="btn" @click="resetUiZoom" :disabled="uiZoomSaving || uiZoom === 100">恢复 100%</button>
+            <button class="btn btn-primary" @click="saveUiZoom" :disabled="uiZoomSaving">
+              {{ uiZoomSaving ? '保存中...' : '保存' }}
+            </button>
+          </div>
+          <div class="hint">等效浏览器页面缩放：直接手填百分比，或用右侧 ± 按钮每次 1% 细调；输入完成按回车/失焦即预览，点「保存」后全局生效并自动记忆。请先将浏览器自身缩放复位为 100%（Ctrl+0），避免两种缩放叠加。</div>
+        </div>
       </div>
     </div>
 
@@ -302,6 +319,7 @@
 import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
 import http from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { applyUiZoom, normalizeUiZoom } from '../utils/uiZoom'
 import {
   createBackup, listBackups, deleteBackup as apiDeleteBackup,
   getBackupDownloadUrl, restoreBackup,
@@ -326,6 +344,10 @@ const portDialogVisible = ref(false)
 // ── 附件大小限制 ──
 const maxFileSizeMB = ref(50)
 const settingsSaving = ref(false)
+
+// ── 显示缩放（后端 settings.json ui_zoom）──
+const uiZoom = ref(100)
+const uiZoomSaving = ref(false)
 
 // ── 工作文件夹 ──
 const openingWorkspace = ref(false)
@@ -414,9 +436,35 @@ async function refreshSettings() {
     frontendPort.value = res.frontend_port ?? 5173
     editBackendPort.value = backendPort.value
     editFrontendPort.value = frontendPort.value
+    uiZoom.value = normalizeUiZoom(res.ui_zoom)
   } catch {
     // 默认值
   }
+}
+
+// ── 显示缩放 ──
+
+function previewUiZoom() {
+  applyUiZoom(uiZoom.value)
+}
+
+function resetUiZoom() {
+  uiZoom.value = 100
+  applyUiZoom(100)
+}
+
+async function saveUiZoom() {
+  const v = normalizeUiZoom(uiZoom.value)
+  uiZoom.value = v
+  uiZoomSaving.value = true
+  try {
+    await http.put('/process/settings', { ui_zoom: v })
+    applyUiZoom(v)
+    ElMessage.success(v === 100 ? '已恢复 100%' : `显示缩放已保存为 ${v}%，立即生效`)
+  } catch {
+    ElMessage.error('保存失败')
+  }
+  uiZoomSaving.value = false
 }
 
 async function saveFileSize() {
