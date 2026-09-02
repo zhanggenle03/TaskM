@@ -310,6 +310,14 @@ export const exportAttendanceExcel = (data) =>
     _silentError: true,
   })
 
+// 项目计算器导出（单项目投入视角，多项目日只取当日该项目分配）
+export const exportProjectExcel = (data) =>
+  http.post('/attendance/export-project-excel', data, {
+    responseType: 'blob',
+    rawResponse: true,
+    _silentError: true,
+  })
+
 // --- Backup & Restore ---
 export const createBackup = (scope) => http.post('/backup/create', { scope })
 

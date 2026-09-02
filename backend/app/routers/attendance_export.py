@@ -212,3 +212,132 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")
+
+
+@router.post("/export-project-excel")
+async def export_project_excel(payload: Dict[str, Any]):
+    """项目计算器 Excel 导出（单项目投入视角）。
+
+    前端把已算好的该项目结果 POST 过来，生成多工作表 xlsx：
+    - 项目明细（逐日：仅该项目投入的天，人天/天数列均为当日该项目分配值）
+    - 项目汇总 / 按月统计
+    - 跨项目对账（多项目日当天各项目分配明细，便于核对"只计本项目"的口径）
+    """
+    try:
+        start = payload.get("start") or ""
+        end = payload.get("end") or ""
+        result = payload.get("result") or {}
+        proj = payload.get("project") or {}
+        pname = proj.get("name") or "项目"
+        total = result.get("total") or {}
+        monthly = result.get("monthly") or []
+        days = result.get("days") or []
+        cross_days = result.get("crossDays") or []
+
+        wb = openpyxl.Workbook()
+
+        # 1) 项目明细（逐日）
+        ws = wb.active
+        ws.title = "项目明细"
+        headers = ["日期", "星期", "类型", "涉及项目", "人天(本项目)", "天数(本项目)", "工作记录"]
+        ws.append(headers)
+        first_monday = None
+        for i, d in enumerate(days):
+            dt = _parse_date(d.get("date", ""))
+            if dt is None:
+                continue
+            if first_monday is None:
+                first_monday = dt - timedelta(days=dt.weekday())
+            week_idx = (dt - first_monday).days // 7
+            rn = i + 2
+            c_date = ws.cell(row=rn, column=1, value=dt)
+            c_date.number_format = "yyyy-mm-dd"
+            ws.cell(row=rn, column=2, value="周" + WEEKDAY_CN[dt.weekday()])
+            ws.cell(row=rn, column=3, value=d.get("type", ""))
+            ws.cell(row=rn, column=4, value=("/".join(d.get("projectNames") or [])) or "-")
+            ws.cell(row=rn, column=5, value=d.get("manDays", 0))
+            ws.cell(row=rn, column=6, value=d.get("days", 0))
+            c_content = ws.cell(row=rn, column=7, value=(d.get("content", "") or ""))
+            c_content.alignment = _WRAP
+            lines = ((d.get("content") or "").count("\n") + 1)
+            if lines > 1:
+                ws.row_dimensions[rn].height = min(lines * 15 + 4, 120)
+            if week_idx % 2 == 1:
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=rn, column=c).fill = _BLUE
+        _header_style(ws, len(headers), len(days))
+        for c, w in enumerate([12, 8, 10, 26, 12, 12, 44], start=1):
+            ws.column_dimensions[get_column_letter(c)].width = w
+
+        # 2) 项目汇总
+        ws_sum = wb.create_sheet("项目汇总")
+        ws_sum.append(["指标", "数值"])
+        for row in [
+            ("项目", pname),
+            ("统计范围", f"{start} 至 {end}" if (start and end) else "-"),
+            ("导出时间", datetime.now().strftime("%Y-%m-%d %H:%M")),
+            ("参与天数", total.get("partDays", 0)),
+            ("投入人天", total.get("manDays", 0)),
+            ("投入天数", total.get("days", 0)),
+            ("纯项目天数", total.get("pureDays", 0)),
+            ("休息日加班天数", total.get("restDays", 0)),
+        ]:
+            ws_sum.append(row)
+        _header_style(ws_sum, 2, len(ws_sum["A"]) - 1)
+        ws_sum.column_dimensions["A"].width = 16
+        ws_sum.column_dimensions["B"].width = 28
+
+        # 3) 按月统计
+        ws_month = wb.create_sheet("按月统计")
+        m_headers = ["月份", "参与天数", "人天", "天数", "纯项目天数", "休息日加班"]
+        ws_month.append(m_headers)
+        for m in monthly:
+            ws_month.append([
+                m.get("month", ""), m.get("partDays", 0), m.get("manDays", 0),
+                m.get("days", 0), m.get("pureDays", 0), m.get("restDays", 0),
+            ])
+        _header_style(ws_month, len(m_headers), len(monthly))
+        for c, w in enumerate([14, 10, 10, 10, 12, 12], start=1):
+            ws_month.column_dimensions[get_column_letter(c)].width = w
+
+        # 4) 跨项目对账（多项目日各项目分配明细）
+        ws_cross = wb.create_sheet("跨项目对账")
+        ws_cross.append(["日期", "星期", "当日各项目分配", "工作记录"])
+        for i, cd in enumerate(cross_days):
+            rn = i + 2
+            dt = _parse_date(cd.get("date", ""))
+            if dt is None:
+                continue
+            c_date = ws_cross.cell(row=rn, column=1, value=dt)
+            c_date.number_format = "yyyy-mm-dd"
+            ws_cross.cell(row=rn, column=2, value="周" + WEEKDAY_CN[dt.weekday()])
+            parts = []
+            for it in cd.get("items") or []:
+                parts.append(f"{it.get('name', '?')}: {it.get('days', 0)}天/{it.get('manDays', 0)}人天")
+            ws_cross.cell(row=rn, column=3, value="；".join(parts))
+            c_content = ws_cross.cell(row=rn, column=4, value=(cd.get("content", "") or ""))
+            c_content.alignment = _WRAP
+            lines = ((cd.get("content") or "").count("\n") + 1)
+            if lines > 1:
+                ws_cross.row_dimensions[rn].height = min(lines * 15 + 4, 120)
+        _header_style(ws_cross, 4, len(cross_days))
+        for c, w in enumerate([12, 8, 40, 40], start=1):
+            ws_cross.column_dimensions[get_column_letter(c)].width = w
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        raw = buf.getvalue()
+        filename = f"{pname}项目统计_{start}_至_{end}.xlsx" if (start and end) else f"{pname}项目统计.xlsx"
+        encoded = urllib.parse.quote(filename)
+        return Response(
+            content=raw,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{encoded}",
+                "Content-Length": str(len(raw)),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"导出失败: {str(e)}")

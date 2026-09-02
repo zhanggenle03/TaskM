@@ -191,6 +191,9 @@
           <el-button text class="cal-tools-btn" @click="showCalcDlg = true">
             <el-icon><DataAnalysis /></el-icon> 出勤计算器
           </el-button>
+          <el-button text class="cal-tools-btn" @click="openProjectCalc">
+            <el-icon><TrendCharts /></el-icon> 项目计算器
+          </el-button>
         </div>
     </div>
 
@@ -483,6 +486,156 @@
       </template>
     </el-dialog>
 
+    <!-- 项目计算器 -->
+    <el-dialog v-model="showProjCalcDlg" title="项目计算器" width="760px" top="5vh">
+      <div class="calc-range">
+        <span style="font-size:13px;color:#888;margin-right:8px">项目</span>
+        <el-select v-model="projCalcProjectId" placeholder="选择项目" style="width:170px" clearable filterable @change="onProjCalcChange">
+          <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="p.name" />
+        </el-select>
+        <span style="font-size:13px;color:#888;margin:0 6px 0 14px">统计范围</span>
+        <el-date-picker
+          v-model="projCalcStart"
+          type="date"
+          placeholder="开始日期"
+          value-format="YYYY-MM-DD"
+          style="width:150px"
+          :disabled-date="disabledCalcStart"
+          @change="onProjCalcChange"
+        />
+        <span style="margin:0 8px;color:#888">至</span>
+        <el-date-picker
+          v-model="projCalcEnd"
+          type="date"
+          placeholder="结束日期"
+          value-format="YYYY-MM-DD"
+          style="width:150px"
+          :disabled-date="disabledCalcEnd"
+          @change="onProjCalcChange"
+        />
+        <el-button size="small" type="primary" style="margin-left:8px" @click="runProjCalc">计算</el-button>
+        <el-button size="small" type="success" plain style="margin-left:8px" :disabled="!projCalcResult" @click="exportProjectXLSX">
+          <el-icon><Download /></el-icon> 导出明细
+        </el-button>
+      </div>
+
+      <template v-if="projCalcResult">
+        <!-- 统计口径提示 -->
+        <div class="calc-proj-picked">
+          项目：<strong>{{ projCalcResult.project.name }}</strong>
+          <span class="calc-proj-picked-tip">多项目日仅计入该项目分配的人天 / 天数</span>
+        </div>
+
+        <!-- 总统计 -->
+        <div class="calc-summary">
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#534ab7">{{ projCalcResult.total.partDays }}</span>
+            <span class="calc-summary-label">参与天数</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#0f6e56">{{ projCalcResult.total.manDays }}</span>
+            <span class="calc-summary-label">投入人天</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#185fa5">{{ projCalcResult.total.days }}</span>
+            <span class="calc-summary-label">投入天数</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#3b6d11">{{ projCalcResult.total.pureDays }}</span>
+            <span class="calc-summary-label">纯项目天</span>
+          </div>
+          <div class="calc-summary-item">
+            <span class="calc-summary-num" style="color:#d48806">{{ projCalcResult.total.restDays }}</span>
+            <span class="calc-summary-label">休息日加班</span>
+          </div>
+        </div>
+
+        <!-- 按月统计 -->
+        <div v-if="projCalcResult.monthly.length" class="calc-section">
+          <div class="calc-section-title">按月统计</div>
+          <table class="calc-month-table">
+            <thead>
+              <tr>
+                <th class="calc-month-th-name">月份</th>
+                <th>参与天数</th>
+                <th>人天</th>
+                <th>天数</th>
+                <th>纯项目天</th>
+                <th>休息日加班</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="m in projCalcResult.monthly" :key="m.month">
+                <td class="calc-month-td-name">{{ m.month }}</td>
+                <td style="color:#534ab7;font-weight:600">{{ m.partDays }}</td>
+                <td style="color:#0f6e56;font-weight:600">{{ m.manDays }}</td>
+                <td style="color:#185fa5;font-weight:600">{{ m.days }}</td>
+                <td style="color:#3b6d11;font-weight:600">{{ m.pureDays }}</td>
+                <td style="color:#d48806;font-weight:600">{{ m.restDays }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 多项目日对账 -->
+        <div v-if="projCalcResult.crossDays.length" class="calc-section">
+          <div class="calc-section-title calc-section-title-warn">
+            <el-icon style="margin-right:4px"><WarningFilled /></el-icon> 跨项目日对账（当日各项目分配）
+          </div>
+          <div class="calc-proj-cross-list">
+            <div v-for="cd in projCalcResult.crossDays" :key="cd.date" class="calc-proj-cross-item">
+              <div class="calc-warn-top">
+                <span class="calc-warn-date">{{ cd.dateLabel }}</span>
+                <span class="calc-warn-weekday">周{{ cd.weekday }}</span>
+              </div>
+              <div class="calc-cross-allocs">
+                <span v-for="(it, idx) in cd.items" :key="idx" class="calc-cross-alloc" :class="{ 'calc-cross-alloc-me': it.isMe }">
+                  {{ it.name }}：{{ it.days }}天 / {{ it.manDays }}人天
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 逐日明细 -->
+        <div v-if="projCalcResult.days.length" class="calc-section">
+          <div class="calc-section-title">逐日明细（{{ projCalcResult.project.name }}）</div>
+          <div class="calc-proj-days-scroll">
+            <table class="calc-month-table">
+              <thead>
+                <tr>
+                  <th class="calc-month-th-name">日期</th>
+                  <th>星期</th>
+                  <th>类型</th>
+                  <th>涉及项目</th>
+                  <th>本项目人天</th>
+                  <th>天数</th>
+                  <th class="calc-proj-day-content">工作记录</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="d in projCalcResult.days" :key="d.date">
+                  <td class="calc-month-td-name">{{ d.dateLabel }}</td>
+                  <td>周{{ d.weekday }}</td>
+                  <td>
+                    <span :style="d.rest ? 'color:#d48806;font-weight:600' : 'color:#534ab7;font-weight:600'">{{ d.type }}</span>
+                  </td>
+                  <td class="calc-proj-day-projs">{{ d.projectNames.join(' / ') || '-' }}</td>
+                  <td style="color:#0f6e56;font-weight:600">{{ d.manDays }}</td>
+                  <td style="color:#185fa5;font-weight:600">{{ d.days }}</td>
+                  <td class="calc-proj-day-content">{{ d.content || '-' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </template>
+
+      <template v-else>
+        <el-empty description="选择项目和日期范围后点击「计算」" :image-size="50" style="padding:30px 0" />
+      </template>
+    </el-dialog>
+
     <!-- 日历设置 -->
     <el-dialog v-model="showHolidaySettings" title="日历设置" width="580px" top="5vh" @opened="initHolidaySettings">
 
@@ -551,14 +704,14 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { DataAnalysis, WarningFilled, Setting, Download } from '@element-plus/icons-vue'
+import { DataAnalysis, WarningFilled, Setting, Download, TrendCharts } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import utc from 'dayjs/plugin/utc'
 dayjs.extend(utc)
 dayjs.locale('zh-cn')
 import {
-  getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks, exportAttendanceExcel,
+  getProjects, getAllCheckins, getTodayCheckinStatus, createCheckin, updateCheckin, deleteCheckin, batchDeleteCheckins, getTasks, exportAttendanceExcel, exportProjectExcel,
   getLeaves, getLeaveWorkdays, createLeave, updateLeave, deleteLeave, batchDeleteLeaves,
 } from '../api'
 import { loadHolidayData, getDayExtraInfo, setHolidayOverride, getHolidayOverride, getAllOverrides, getEntryDate, setEntryDate, loadUserSettingsFromServer } from '../utils/holiday'
@@ -930,6 +1083,190 @@ const exportDetailXLSX = async () => {
     a.href = url
     const rangeStr = (calcStart.value && calcEnd.value) ? `${calcStart.value}_${calcEnd.value}` : dayjs().format('YYYY-MM-DD')
     a.download = `出勤明细_${rangeStr}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success('Excel 已导出')
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('导出失败：' + (e && e.message ? e.message : e))
+  }
+}
+
+// ── 项目计算器（单项目投入视角） ──
+const showProjCalcDlg = ref(false)
+const projCalcStart = ref(null)
+const projCalcEnd = ref(null)
+const projCalcProjectId = ref(null)
+const projCalcResult = ref(null)
+const openProjectCalc = () => {
+  projCalcResult.value = null
+  showProjCalcDlg.value = true
+}
+const onProjCalcChange = () => { projCalcResult.value = null }
+// 判断当日是否为休息日（手动覆盖优先，其次法定假/调休班，最后周末）
+const effectiveIsRest = (dateStr, extra) => {
+  if (extra.override === 'off') return true
+  if (extra.override === 'normal') return false
+  if (extra.badgeType === 'workday') return false
+  if (extra.badgeType === 'holiday') return true
+  const w = dayjs(dateStr).day()
+  return w === 0 || w === 6
+}
+
+const runProjCalc = async () => {
+  const pid = projCalcProjectId.value
+  if (pid == null) { ElMessage.warning('请选择项目'); return }
+  if (!projCalcStart.value || !projCalcEnd.value) { ElMessage.warning('请选择开始和结束日期'); return }
+  const startStr = projCalcStart.value
+  const endStr = projCalcEnd.value
+  const start = dayjs(startStr)
+  const end = dayjs(endStr)
+  if (end.isBefore(start)) { ElMessage.warning('结束日期不能早于开始日期'); return }
+  const proj = projects.value.find((p) => p.id === pid)
+  if (!proj) return
+
+  // 拉取整个日期范围的签到数据（含 project_man_days / project_days 分配明细）
+  const rangeCheckins = await getAllCheckins({ start_date: startStr, end_date: endStr })
+
+  // 逐日归集：算清该日期内每个项目的分配（pmd 优先；pmd 缺失按可见项目均分兜底，
+  // 与出勤计算器"按项目统计"口径一致）
+  const dateMap = {}
+  for (const chk of rangeCheckins) {
+    const d = dayjs(chk.date).format('YYYY-MM-DD')
+    if (!dateMap[d]) dateMap[d] = { checkins: [], alloc: {} }
+    const rec = dateMap[d]
+    rec.checkins.push(chk)
+    const pmd = chk.project_man_days || {}
+    const pdays = chk.project_days || {}
+    const totalMD = chk.man_days == null ? 1 : chk.man_days
+    const keys = Object.keys(pmd)
+    const bump = (keyStr, md, day) => {
+      if (!rec.alloc[keyStr]) rec.alloc[keyStr] = { manDays: 0, days: 0 }
+      rec.alloc[keyStr].manDays += md
+      rec.alloc[keyStr].days += day
+    }
+    if (keys.length) {
+      for (const k of keys) {
+        const md = pmd[k]
+        const dy = pdays[k] != null ? pdays[k] : (totalMD > 0 ? md / totalMD : 1 / keys.length)
+        bump(String(k), md, dy)
+      }
+    } else if ((chk.projects || []).length) {
+      // 无分配明细兜底（历史异常数据）：均分当天人天
+      const n = chk.projects.length
+      const share = totalMD / n
+      for (const p of chk.projects) {
+        bump(String(p.id), share, totalMD > 0 ? share / totalMD : 1 / n)
+      }
+    }
+  }
+
+  const pidKey = String(pid)
+  const byMonth = {}
+  const crossDays = []
+  const days = []
+  const total = { partDays: 0, manDays: 0, days: 0, pureDays: 0, restDays: 0 }
+  const WEEKS = ['日', '一', '二', '三', '四', '五', '六']
+  const sortedDates = Object.keys(dateMap).sort()
+
+  for (const dateStr of sortedDates) {
+    const rec = dateMap[dateStr]
+    const me = rec.alloc[pidKey]
+    if (!me || me.manDays <= 1e-9) continue // 该项目当日无投入，跳过
+    const extra = getDayExtraInfo(dateStr)
+    const rest = effectiveIsRest(dateStr, extra)
+    const d = dayjs(dateStr)
+    const monthKey = d.format('YYYY年M月')
+    if (!byMonth[monthKey]) byMonth[monthKey] = { partDays: 0, manDays: 0, days: 0, pureDays: 0, restDays: 0 }
+
+    const hasOthers = Object.keys(rec.alloc).some((k) => k !== pidKey && rec.alloc[k].manDays > 1e-9)
+    const pure = !hasOthers
+
+    total.partDays++; byMonth[monthKey].partDays++
+    total.manDays += me.manDays; byMonth[monthKey].manDays += me.manDays
+    total.days += me.days; byMonth[monthKey].days += me.days
+    if (pure) { total.pureDays++; byMonth[monthKey].pureDays++ }
+    if (rest) { total.restDays++; byMonth[monthKey].restDays++ }
+
+    // 当日工作记录：文本无法按项目拆分，保留该日签到全文
+    const contents = rec.checkins.map((c) => (c.content && c.content.trim()) ? c.content.trim() : '已签到')
+    const content = contents.filter(Boolean).join('\n')
+    const projNames = []
+    for (const k of Object.keys(rec.alloc)) {
+      if (rec.alloc[k].manDays <= 1e-9) continue
+      const raw = projectNameById(Number(k))
+      projNames.push(raw && raw.startsWith('#') ? '已删除项目' : raw)
+    }
+    days.push({
+      date: dateStr,
+      dateLabel: d.format('M月D日'),
+      weekday: WEEKS[d.day()],
+      type: rest ? '休息日加班' : '上班',
+      rest,
+      projectNames: projNames,
+      manDays: Math.round(me.manDays * 100) / 100,
+      days: Math.round(me.days * 100) / 100,
+      content,
+    })
+
+    // 跨项目日对账：列出当天各项目分配，便于核对"只计本项目"
+    if (hasOthers) {
+      const items = Object.keys(rec.alloc)
+        .filter((k) => rec.alloc[k].manDays > 1e-9)
+        .map((k) => {
+          const raw = projectNameById(Number(k))
+          return {
+            name: raw && raw.startsWith('#') ? '已删除项目' : raw,
+            isMe: k === pidKey,
+            manDays: Math.round(rec.alloc[k].manDays * 100) / 100,
+            days: Math.round(rec.alloc[k].days * 100) / 100,
+          }
+        })
+        .sort((a, b) => b.days - a.days)
+      crossDays.push({ date: dateStr, dateLabel: d.format('M月D日'), weekday: WEEKS[d.day()], items, content })
+    }
+  }
+
+  projCalcResult.value = {
+    project: { id: proj.id, name: proj.name },
+    total: {
+      partDays: total.partDays,
+      manDays: Math.round(total.manDays * 100) / 100,
+      days: Math.round(total.days * 100) / 100,
+      pureDays: total.pureDays,
+      restDays: total.restDays,
+    },
+    monthly: Object.keys(byMonth).map((month) => ({
+      month,
+      partDays: byMonth[month].partDays,
+      manDays: Math.round(byMonth[month].manDays * 100) / 100,
+      days: Math.round(byMonth[month].days * 100) / 100,
+      pureDays: byMonth[month].pureDays,
+      restDays: byMonth[month].restDays,
+    })),
+    days,
+    crossDays,
+  }
+}
+
+// 项目计算器导出
+const exportProjectXLSX = async () => {
+  if (!projCalcResult.value) { ElMessage.warning('请先计算'); return }
+  try {
+    const res = await exportProjectExcel({
+      start: projCalcStart.value,
+      end: projCalcEnd.value,
+      project: projCalcResult.value.project,
+      result: projCalcResult.value,
+    })
+    const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const projName = projCalcResult.value.project.name
+    a.download = `${projName}_项目统计_${projCalcStart.value}_${projCalcEnd.value}.xlsx`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -1842,6 +2179,20 @@ const submitBatch = async () => {
 .calc-warn-weekday { color: #999; font-size: 11px; }
 .calc-warn-projs { display: flex; flex-wrap: wrap; gap: 4px; }
 .calc-warn-proj { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #eeedfe; color: #534ab7; }
+
+/* 项目计算器 */
+.calc-proj-picked { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 14px; color: #333; }
+.calc-proj-picked strong { color: #534ab7; font-size: 15px; }
+.calc-proj-picked-tip { font-size: 12px; color: #999; }
+.calc-proj-cross-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow: auto; }
+.calc-proj-cross-item { background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 6px; padding: 8px 10px; }
+.calc-cross-allocs { display: flex; flex-wrap: wrap; gap: 4px; }
+.calc-cross-alloc { font-size: 12px; padding: 1px 8px; border-radius: 3px; background: #f0f0f0; color: #555; }
+.calc-cross-alloc-me { background: #e6f4ea; color: #1e7e34; font-weight: 600; border: 1px solid #b7e1c3; }
+.calc-proj-days-scroll { max-height: 300px; overflow: auto; }
+.calc-month-table th.calc-proj-day-content { text-align: left; }
+.calc-month-table td.calc-proj-day-content { text-align: left; white-space: pre-wrap; min-width: 220px; color: #555; line-height: 1.5; }
+.calc-month-table td.calc-proj-day-projs { font-size: 12px; color: #888; }
 
 /* 日历设置 */
 .hs-tabs { display: flex; gap: 0; margin-bottom: 16px; border-bottom: 1px solid #e8e8e4; }
