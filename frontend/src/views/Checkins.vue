@@ -349,7 +349,7 @@
     </el-dialog>
 
     <!-- 出勤计算器 -->
-    <el-dialog v-model="showCalcDlg" title="出勤计算器" width="760px" top="5vh">
+    <el-dialog v-model="showCalcDlg" custom-class="calc-dlg" title="出勤计算器" width="760px" top="5vh">
       <div class="calc-toolbar">
         <span class="calc-tool-label">统计范围</span>
         <el-date-picker
@@ -491,7 +491,7 @@
     </el-dialog>
 
     <!-- 项目计算器 -->
-    <el-dialog v-model="showProjCalcDlg" title="项目计算器" width="760px" top="5vh">
+    <el-dialog v-model="showProjCalcDlg" custom-class="calc-dlg" title="项目计算器" width="760px" top="5vh">
       <div class="calc-toolbar">
         <span class="calc-tool-label">项目</span>
         <el-select v-model="projCalcProjectId" placeholder="选择项目" style="width:180px" clearable filterable @change="onProjCalcChange">
@@ -2321,5 +2321,16 @@ const submitBatch = async () => {
 .pmd-unit { font-size: 12px; color: #888; }
 .pmd-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ebeef5; font-size: 13px; color: #666; }
 .pmd-sum-num { color: #0f6e56; font-size: 15px; }
+
+/* 计算器弹窗：整体不超出屏幕，超高内容在弹窗内部滚动 */
+:global(.calc-dlg) { display: flex; flex-direction: column; max-height: 88vh; }
+:global(.calc-dlg .el-dialog__header) { flex: 0 0 auto; padding-bottom: 6px; }
+:global(.calc-dlg .el-dialog__body) { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 22px 16px; }
+:global(.calc-dlg .el-dialog__body::-webkit-scrollbar) { width: 8px; }
+:global(.calc-dlg .el-dialog__body::-webkit-scrollbar-thumb) { background: #d8d8e0; border-radius: 4px; }
+
+/* 多项目提醒/跨项目对账等长卡片列表：自身限高滚动，不再把弹窗撑高 */
+.calc-warn-grid { max-height: 180px; overflow-y: auto; padding-right: 2px; }
+.calc-proj-cross-list { max-height: 180px; }
 
 </style>
