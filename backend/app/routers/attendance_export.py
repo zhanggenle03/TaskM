@@ -22,6 +22,8 @@ router = APIRouter(prefix="/attendance", tags=["attendance-export"])
 WEEKDAY_CN = ["一", "二", "三", "四", "五", "六", "日"]  # Python weekday(): 周一=0
 # 浅蓝填充（表头与周间隔带共用）
 _BLUE = PatternFill(start_color="FFDCE6F1", end_color="FFDCE6F1", fill_type="solid")
+# 单元格文本换行（左/上对齐，用于工作记录等长文本列）
+_WRAP = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
 
 def _parse_date(s: str) -> Optional[date]:
@@ -62,7 +64,6 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         ws.title = "出勤明细"
         headers = ["日期", "星期", "类型", "涉及项目", "人天", "人天说明", "工作记录", "是否预估"]
         ws.append(headers)
-        _WRAP = Alignment(horizontal="left", vertical="top", wrap_text=True)
         first_monday = None
         for i, d in enumerate(days):
             dt = _parse_date(d.get("date", ""))
