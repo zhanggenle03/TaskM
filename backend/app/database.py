@@ -1236,19 +1236,23 @@ def _ensure_project_category_column():
 def _ensure_checkin_project_mandays_column():
     """为 checkin_projects 关联表补充 man_days 列（多项目时各项目单独分配人天）。
 
-    已存在则跳过。补齐后把历史 junction 行（仍为默认 1.0）按「当天人天 / 关联项目数」回填，
-    保证历史单项目签到 man_days 等于当天人天、多项目签到平均分摊（消除旧版重复计算）。
-    """
+    幂等规则（重要）：只有当列缺失（旧库首次升级）时才补列，并仅在「本次刚加列」时对历史
+    junction 行做一次回填；列已存在则直接返回，绝不重算已有行——否则会把用户手动保存的
+    man_days=1.0 误判为历史默认值，每次启动都按当天人天覆盖（如多项目中某项目填 1.0 会被
+    重写成当天总人天）。"""
     try:
         insp = inspect(engine)
         cols = [c["name"] for c in insp.get_columns("checkin_projects")]
-        if "man_days" not in cols:
-            with engine.connect() as conn:
-                conn.execute(text("ALTER TABLE checkin_projects ADD COLUMN man_days REAL NOT NULL DEFAULT 1.0"))
-                conn.commit()
-            print("[migrate] checkin_projects.man_days 列已添加", flush=True)
+        if "man_days" in cols:
+            # 列早已存在：用户数据是权威，禁止任何回填/重算
+            return
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE checkin_projects ADD COLUMN man_days REAL NOT NULL DEFAULT 1.0"))
+            conn.commit()
+        print("[migrate] checkin_projects.man_days 列已添加", flush=True)
 
-        # 回填：仅处理仍等于默认 1.0 的历史行（新写入的行已由应用代码赋正确值）
+        # 一次性回填：仅当次（列刚新增，尚无用户手动分配值）把仍为默认 1.0 的历史行
+        # 按「当天人天 / 关联项目数」均摊（旧版多项目签到曾重复计算，需收敛为合计=当天人天）。
         with engine.connect() as conn:
             rows = conn.execute(text(
                 "SELECT cp.checkin_id, cp.project_id, c.man_days "
@@ -1271,7 +1275,7 @@ def _ensure_checkin_project_mandays_column():
                         "WHERE checkin_id = :cid AND project_id = :pid"
                     ), {"md": md, "cid": cid, "pid": pid})
             conn.commit()
-        print("[migrate] checkin_projects.man_days 回填完成", flush=True)
+        print("[migrate] checkin_projects.man_days 历史回填完成（仅列新增当次执行）", flush=True)
     except Exception as e:
         print(f"[migrate] 检查/添加 checkin_projects.man_days 列失败: {e}", flush=True)
 
