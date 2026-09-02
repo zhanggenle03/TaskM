@@ -2253,11 +2253,11 @@ const submitBatch = async () => {
 .calc-section-title-warn::before { background: #e6a23c; }
 .calc-section-title-warn .el-icon { color: #e6a23c; }
 
-/* 表格（圆角边框容器 + 轻表头 + hover 行） */
-.calc-tbl { border: 1px solid #eef0f5; border-radius: 10px; overflow: hidden; }
-.calc-month-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* 表格（圆角边框容器 + 轻表头 + hover 行，超高在块内滚动、表头吸附） */
+.calc-tbl { border: 1px solid #eef0f5; border-radius: 10px; overflow: auto; max-height: 340px; }
+.calc-month-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
 .calc-month-table th, .calc-month-table td { padding: 8px 8px; text-align: center; border-bottom: 1px solid #f2f2f5; font-variant-numeric: tabular-nums; }
-.calc-month-table th { background: #fafafc; color: #909399; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.calc-month-table th { background: #fafafc; color: #909399; font-weight: 600; font-size: 12px; white-space: nowrap; position: sticky; top: 0; z-index: 1; }
 .calc-month-table tbody tr:last-child td { border-bottom: none; }
 .calc-month-table tbody tr:hover td { background: #f8f8fc; }
 .calc-month-th-name { text-align: center; }
@@ -2338,14 +2338,30 @@ const submitBatch = async () => {
 .pmd-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ebeef5; font-size: 13px; color: #666; }
 .pmd-sum-num { color: #0f6e56; font-size: 15px; }
 
-/* 两栏布局：左侧主表 + 右侧小卡片栏（右栏限高独立滚动、吸附顶部） */
+/* 两栏布局：左主列 + 右栏（右栏内容较长时其内各块独立滚动） */
 .calc-2col { display: flex; gap: 22px; align-items: flex-start; }
 .calc-2col-main { flex: 1 1 auto; min-width: 0; }
-.calc-2col-side { flex: 0 0 380px; width: 380px; position: sticky; top: 0; max-height: 480px; overflow-y: auto; padding-right: 4px; box-sizing: border-box; }
-.calc-2col-side::-webkit-scrollbar { width: 8px; }
-.calc-2col-side::-webkit-scrollbar-thumb { background: #d8d8e0; border-radius: 4px; }
+.calc-2col-side { flex: 0 0 380px; width: 380px; display: flex; flex-direction: column; gap: 18px; }
 .calc-2col-side .calc-proj-grid { grid-template-columns: 1fr; }
 .calc-2col-side .calc-warn-item { min-height: 48px; }
+
+/* 每个数据块：超高时块内滚动，标题常驻 */
+.calc-2col .calc-section { margin-top: 0; }
+.calc-2col-main .calc-section + .calc-section { margin-top: 18px; }
+.calc-2col .calc-proj-days-scroll { max-height: 400px; }
+.calc-2col .calc-proj-grid { max-height: 280px; overflow-y: auto; padding-right: 2px; }
+.calc-2col .calc-warn-grid { max-height: 300px; overflow-y: auto; padding-right: 2px; }
+.calc-2col .calc-proj-cross-list { max-height: 300px; overflow-y: auto; padding-right: 2px; }
+.calc-2col .calc-proj-cross-list::-webkit-scrollbar,
+.calc-2col .calc-proj-grid::-webkit-scrollbar,
+.calc-2col .calc-warn-grid::-webkit-scrollbar,
+.calc-tbl::-webkit-scrollbar,
+.calc-proj-days-scroll::-webkit-scrollbar { width: 6px; }
+.calc-2col .calc-proj-cross-list::-webkit-scrollbar-thumb,
+.calc-2col .calc-proj-grid::-webkit-scrollbar-thumb,
+.calc-2col .calc-warn-grid::-webkit-scrollbar-thumb,
+.calc-tbl::-webkit-scrollbar-thumb,
+.calc-proj-days-scroll::-webkit-scrollbar-thumb { background: #d8d8e0; border-radius: 3px; }
 
 /* 计算器弹窗：整体不超出屏幕，超高内容在弹窗内部滚动 */
 :global(.calc-dlg) { display: flex; flex-direction: column; max-height: 88vh; max-width: calc(100vw - 32px); }
