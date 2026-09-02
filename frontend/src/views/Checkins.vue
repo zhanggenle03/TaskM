@@ -188,12 +188,14 @@
         <!-- 工具 -->
         <div class="cal-tools-card">
           <div class="cal-tools-title">工具</div>
-          <el-button text class="cal-tools-btn" @click="showCalcDlg = true">
-            <el-icon><DataAnalysis /></el-icon> 出勤计算器
-          </el-button>
-          <el-button text class="cal-tools-btn" @click="openProjectCalc">
-            <el-icon><TrendCharts /></el-icon> 项目计算器
-          </el-button>
+          <div class="cal-tools-btns">
+            <el-button text class="cal-tools-btn" @click="showCalcDlg = true">
+              <el-icon><DataAnalysis /></el-icon> 出勤计算器
+            </el-button>
+            <el-button text class="cal-tools-btn" @click="openProjectCalc">
+              <el-icon><TrendCharts /></el-icon> 项目计算器
+            </el-button>
+          </div>
         </div>
     </div>
 
@@ -2057,7 +2059,7 @@ const submitBatch = async () => {
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 
-.calendar-layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); grid-template-rows: auto auto auto; grid-template-areas: "cal detail" "stats detail" "tool detail"; gap: 16px 24px; align-items: stretch; }
+.calendar-layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); grid-template-areas: "cal detail" "stats tool"; gap: 16px 24px; align-items: stretch; }
 
 .cal-panel { grid-area: cal; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 18px; position: relative; }
 .cal-panel.batch-mode { border-color: #e6a23c; }
@@ -2159,7 +2161,8 @@ const submitBatch = async () => {
 .dot-gray { background: #d9d9d9; }
 
 /* 工具卡片 */
-.cal-tools-card { grid-area: tool; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.cal-tools-card { grid-area: tool; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; }
+.cal-tools-btns { display: flex; align-items: center; gap: 8px; }
 .cal-tools-title { font-size: 12px; color: #888; margin-bottom: 10px; }
 .cal-tools-btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; background: #f5f4fe; color: #534ab7; }
 .cal-tools-btn:hover { background: #eeedfe; }
