@@ -349,7 +349,7 @@
     </el-dialog>
 
     <!-- 出勤计算器 -->
-    <el-dialog v-model="showCalcDlg" custom-class="calc-dlg" title="出勤计算器" width="920px" top="5vh">
+    <el-dialog v-model="showCalcDlg" custom-class="calc-dlg" title="出勤计算器" width="1120px" top="5vh">
       <div class="calc-toolbar">
         <span class="calc-tool-label">统计范围</span>
         <el-date-picker
@@ -499,7 +499,7 @@
     </el-dialog>
 
     <!-- 项目计算器 -->
-    <el-dialog v-model="showProjCalcDlg" custom-class="calc-dlg" title="项目计算器" width="920px" top="5vh">
+    <el-dialog v-model="showProjCalcDlg" custom-class="calc-dlg" title="项目计算器" width="1120px" top="5vh">
       <div class="calc-toolbar">
         <span class="calc-tool-label">项目</span>
         <el-select v-model="projCalcProjectId" placeholder="选择项目" style="width:180px" clearable filterable @change="onProjCalcChange">
@@ -2295,7 +2295,7 @@ const submitBatch = async () => {
 .calc-cross-alloc-me { background: #e6f4ea; color: #1e7e34; font-weight: 600; border: 1px solid #b7e1c3; }
 .calc-proj-days-scroll { max-height: 300px; overflow: auto; border: 1px solid #eef0f5; border-radius: 10px; }
 .calc-month-table th.calc-proj-day-content { text-align: left; }
-.calc-month-table td.calc-proj-day-content { text-align: left; white-space: pre-wrap; min-width: 150px; color: #555; line-height: 1.5; }
+.calc-month-table td.calc-proj-day-content { text-align: left; white-space: pre-wrap; min-width: 220px; color: #555; line-height: 1.5; }
 .calc-month-table td.calc-proj-day-projs { font-size: 12px; color: #888; }
 
 /* 日历设置 */
@@ -2339,16 +2339,16 @@ const submitBatch = async () => {
 .pmd-sum-num { color: #0f6e56; font-size: 15px; }
 
 /* 两栏布局：左侧主表 + 右侧小卡片栏（右栏限高独立滚动、吸附顶部） */
-.calc-2col { display: flex; gap: 18px; align-items: flex-start; }
+.calc-2col { display: flex; gap: 22px; align-items: flex-start; }
 .calc-2col-main { flex: 1 1 auto; min-width: 0; }
-.calc-2col-side { flex: 0 0 320px; width: 320px; position: sticky; top: 0; max-height: 480px; overflow-y: auto; padding-right: 4px; box-sizing: border-box; }
+.calc-2col-side { flex: 0 0 380px; width: 380px; position: sticky; top: 0; max-height: 480px; overflow-y: auto; padding-right: 4px; box-sizing: border-box; }
 .calc-2col-side::-webkit-scrollbar { width: 8px; }
 .calc-2col-side::-webkit-scrollbar-thumb { background: #d8d8e0; border-radius: 4px; }
 .calc-2col-side .calc-proj-grid { grid-template-columns: 1fr; }
 .calc-2col-side .calc-warn-item { min-height: 48px; }
 
 /* 计算器弹窗：整体不超出屏幕，超高内容在弹窗内部滚动 */
-:global(.calc-dlg) { display: flex; flex-direction: column; max-height: 88vh; }
+:global(.calc-dlg) { display: flex; flex-direction: column; max-height: 88vh; max-width: calc(100vw - 32px); }
 :global(.calc-dlg .el-dialog__header) { flex: 0 0 auto; padding-bottom: 6px; }
 :global(.calc-dlg .el-dialog__body) { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 22px 16px; }
 :global(.calc-dlg .el-dialog__body::-webkit-scrollbar) { width: 8px; }
