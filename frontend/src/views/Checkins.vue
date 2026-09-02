@@ -349,7 +349,7 @@
     </el-dialog>
 
     <!-- 出勤计算器 -->
-    <el-dialog v-model="showCalcDlg" custom-class="calc-dlg" title="出勤计算器" width="760px" top="5vh">
+    <el-dialog v-model="showCalcDlg" custom-class="calc-dlg" title="出勤计算器" width="920px" top="5vh">
       <div class="calc-toolbar">
         <span class="calc-tool-label">统计范围</span>
         <el-date-picker
@@ -417,9 +417,12 @@
           其中 <strong>{{ calcResult.total.estimatedDays }}</strong> 天为未来日期默认预估
         </div>
 
-        <!-- 按月详情 -->
-        <div v-if="calcResult.monthly.length" class="calc-section">
-          <div class="calc-section-title">按月统计</div>
+        <!-- 两栏：左侧主表 + 右侧小卡 -->
+        <div class="calc-2col">
+          <div class="calc-2col-main">
+            <!-- 按月详情 -->
+            <div v-if="calcResult.monthly.length" class="calc-section">
+              <div class="calc-section-title">按月统计</div>
           <div class="calc-tbl">
           <table class="calc-month-table">
             <thead>
@@ -454,35 +457,40 @@
           </table>
           </div>
         </div>
+          </div><!-- /.calc-2col-main -->
 
-        <!-- 按项目统计 -->
-        <div v-if="calcResult.byProject.length" class="calc-section">
-          <div class="calc-section-title">按项目统计</div>
-          <div class="calc-proj-grid">
-            <div v-for="p in calcResult.byProject" :key="p.projectId" class="calc-proj-card">
-              <span class="calc-proj-name">{{ p.projectName }}</span>
-              <span class="calc-proj-days"><strong>{{ p.days }}</strong> 天 · <strong style="color:#0f6e56">{{ p.manDays }}</strong> 人天</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- 多项目签到提醒 -->
-        <div v-if="calcResult.multiProjectDays?.length" class="calc-section">
-          <div class="calc-section-title calc-section-title-warn">
-            <el-icon style="margin-right:4px"><WarningFilled /></el-icon> 多项目签到提醒
-          </div>
-          <div class="calc-warn-grid">
-            <div v-for="item in calcResult.multiProjectDays" :key="item.date" class="calc-warn-item">
-              <div class="calc-warn-top">
-                <span class="calc-warn-date">{{ item.dateLabel }}</span>
-                <span class="calc-warn-weekday">周{{ item.weekday }}</span>
-              </div>
-              <div class="calc-warn-projs">
-                <span v-for="(name, idx) in item.projectNames" :key="idx" class="calc-warn-proj">{{ name }}</span>
+          <!-- 右侧小卡 -->
+          <div class="calc-2col-side">
+            <!-- 按项目统计 -->
+            <div v-if="calcResult.byProject.length" class="calc-section">
+              <div class="calc-section-title">按项目统计</div>
+              <div class="calc-proj-grid">
+                <div v-for="p in calcResult.byProject" :key="p.projectId" class="calc-proj-card">
+                  <span class="calc-proj-name">{{ p.projectName }}</span>
+                  <span class="calc-proj-days"><strong>{{ p.days }}</strong> 天 · <strong style="color:#0f6e56">{{ p.manDays }}</strong> 人天</span>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+
+            <!-- 多项目签到提醒 -->
+            <div v-if="calcResult.multiProjectDays?.length" class="calc-section">
+              <div class="calc-section-title calc-section-title-warn">
+                <el-icon style="margin-right:4px"><WarningFilled /></el-icon> 多项目签到提醒
+              </div>
+              <div class="calc-warn-grid">
+                <div v-for="item in calcResult.multiProjectDays" :key="item.date" class="calc-warn-item">
+                  <div class="calc-warn-top">
+                    <span class="calc-warn-date">{{ item.dateLabel }}</span>
+                    <span class="calc-warn-weekday">周{{ item.weekday }}</span>
+                  </div>
+                  <div class="calc-warn-projs">
+                    <span v-for="(name, idx) in item.projectNames" :key="idx" class="calc-warn-proj">{{ name }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div><!-- /.calc-2col-side -->
+        </div><!-- /.calc-2col -->
       </template>
 
       <template v-else>
@@ -491,7 +499,7 @@
     </el-dialog>
 
     <!-- 项目计算器 -->
-    <el-dialog v-model="showProjCalcDlg" custom-class="calc-dlg" title="项目计算器" width="760px" top="5vh">
+    <el-dialog v-model="showProjCalcDlg" custom-class="calc-dlg" title="项目计算器" width="920px" top="5vh">
       <div class="calc-toolbar">
         <span class="calc-tool-label">项目</span>
         <el-select v-model="projCalcProjectId" placeholder="选择项目" style="width:180px" clearable filterable @change="onProjCalcChange">
@@ -555,87 +563,95 @@
           </div>
         </div>
 
-        <!-- 按月统计 -->
-        <div v-if="projCalcResult.monthly.length" class="calc-section">
-          <div class="calc-section-title">按月统计</div>
-          <div class="calc-tbl">
-          <table class="calc-month-table">
-            <thead>
-              <tr>
-                <th class="calc-month-th-name">月份</th>
-                <th>参与天数</th>
-                <th>人天</th>
-                <th>天数</th>
-                <th>纯项目天</th>
-                <th>休息日加班</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="m in projCalcResult.monthly" :key="m.month">
-                <td class="calc-month-td-name">{{ m.month }}</td>
-                <td style="color:#534ab7;font-weight:600">{{ m.partDays }}</td>
-                <td style="color:#0f6e56;font-weight:600">{{ m.manDays }}</td>
-                <td style="color:#185fa5;font-weight:600">{{ m.days }}</td>
-                <td style="color:#3b6d11;font-weight:600">{{ m.pureDays }}</td>
-                <td style="color:#d48806;font-weight:600">{{ m.restDays }}</td>
-              </tr>
-            </tbody>
-          </table>
-          </div>
-        </div>
-
-        <!-- 多项目日对账 -->
-        <div v-if="projCalcResult.crossDays.length" class="calc-section">
-          <div class="calc-section-title calc-section-title-warn">
-            <el-icon style="margin-right:4px"><WarningFilled /></el-icon> 跨项目日对账（当日各项目分配）
-          </div>
-          <div class="calc-proj-cross-list">
-            <div v-for="cd in projCalcResult.crossDays" :key="cd.date" class="calc-proj-cross-item">
-              <div class="calc-warn-top">
-                <span class="calc-warn-date">{{ cd.dateLabel }}</span>
-                <span class="calc-warn-weekday">周{{ cd.weekday }}</span>
-              </div>
-              <div class="calc-cross-allocs">
-                <span v-for="(it, idx) in cd.items" :key="idx" class="calc-cross-alloc" :class="{ 'calc-cross-alloc-me': it.isMe }">
-                  {{ it.name }}：{{ it.days }}天 / {{ it.manDays }}人天
-                </span>
+        <!-- 两栏：左侧主表 + 右侧小卡 -->
+        <div class="calc-2col">
+          <div class="calc-2col-main">
+            <!-- 按月统计 -->
+            <div v-if="projCalcResult.monthly.length" class="calc-section">
+              <div class="calc-section-title">按月统计</div>
+              <div class="calc-tbl">
+              <table class="calc-month-table">
+                <thead>
+                  <tr>
+                    <th class="calc-month-th-name">月份</th>
+                    <th>参与天数</th>
+                    <th>人天</th>
+                    <th>天数</th>
+                    <th>纯项目天</th>
+                    <th>休息日加班</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="m in projCalcResult.monthly" :key="m.month">
+                    <td class="calc-month-td-name">{{ m.month }}</td>
+                    <td style="color:#534ab7;font-weight:600">{{ m.partDays }}</td>
+                    <td style="color:#0f6e56;font-weight:600">{{ m.manDays }}</td>
+                    <td style="color:#185fa5;font-weight:600">{{ m.days }}</td>
+                    <td style="color:#3b6d11;font-weight:600">{{ m.pureDays }}</td>
+                    <td style="color:#d48806;font-weight:600">{{ m.restDays }}</td>
+                  </tr>
+                </tbody>
+              </table>
               </div>
             </div>
-          </div>
-        </div>
 
-        <!-- 逐日明细 -->
-        <div v-if="projCalcResult.days.length" class="calc-section">
-          <div class="calc-section-title">逐日明细（{{ projCalcResult.project.name }}）</div>
-          <div class="calc-proj-days-scroll">
-            <table class="calc-month-table">
-              <thead>
-                <tr>
-                  <th class="calc-month-th-name">日期</th>
-                  <th>星期</th>
-                  <th>类型</th>
-                  <th>涉及项目</th>
-                  <th>本项目人天</th>
-                  <th>天数</th>
-                  <th class="calc-proj-day-content">工作记录</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="d in projCalcResult.days" :key="d.date">
-                  <td class="calc-month-td-name">{{ d.dateLabel }}</td>
-                  <td>周{{ d.weekday }}</td>
-                  <td>
-                    <span :style="d.rest ? 'color:#d48806;font-weight:600' : 'color:#534ab7;font-weight:600'">{{ d.type }}</span>
-                  </td>
-                  <td class="calc-proj-day-projs">{{ d.projectNames.join(' / ') || '-' }}</td>
-                  <td style="color:#0f6e56;font-weight:600">{{ d.manDays }}</td>
-                  <td style="color:#185fa5;font-weight:600">{{ d.days }}</td>
-                  <td class="calc-proj-day-content">{{ d.content || '-' }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+            <!-- 逐日明细 -->
+            <div v-if="projCalcResult.days.length" class="calc-section">
+              <div class="calc-section-title">逐日明细（{{ projCalcResult.project.name }}）</div>
+              <div class="calc-proj-days-scroll">
+                <table class="calc-month-table">
+                  <thead>
+                    <tr>
+                      <th class="calc-month-th-name">日期</th>
+                      <th>星期</th>
+                      <th>类型</th>
+                      <th>涉及项目</th>
+                      <th>本项目人天</th>
+                      <th>天数</th>
+                      <th class="calc-proj-day-content">工作记录</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="d in projCalcResult.days" :key="d.date">
+                      <td class="calc-month-td-name">{{ d.dateLabel }}</td>
+                      <td>周{{ d.weekday }}</td>
+                      <td>
+                        <span :style="d.rest ? 'color:#d48806;font-weight:600' : 'color:#534ab7;font-weight:600'">{{ d.type }}</span>
+                      </td>
+                      <td class="calc-proj-day-projs">{{ d.projectNames.join(' / ') || '-' }}</td>
+                      <td style="color:#0f6e56;font-weight:600">{{ d.manDays }}</td>
+                      <td style="color:#185fa5;font-weight:600">{{ d.days }}</td>
+                      <td class="calc-proj-day-content">{{ d.content || '-' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div><!-- /.calc-2col-main -->
+
+          <!-- 右侧小卡 -->
+          <div class="calc-2col-side">
+            <!-- 多项目日对账 -->
+            <div v-if="projCalcResult.crossDays.length" class="calc-section">
+              <div class="calc-section-title calc-section-title-warn">
+                <el-icon style="margin-right:4px"><WarningFilled /></el-icon> 跨项目日对账（当日各项目分配）
+              </div>
+              <div class="calc-proj-cross-list">
+                <div v-for="cd in projCalcResult.crossDays" :key="cd.date" class="calc-proj-cross-item">
+                  <div class="calc-warn-top">
+                    <span class="calc-warn-date">{{ cd.dateLabel }}</span>
+                    <span class="calc-warn-weekday">周{{ cd.weekday }}</span>
+                  </div>
+                  <div class="calc-cross-allocs">
+                    <span v-for="(it, idx) in cd.items" :key="idx" class="calc-cross-alloc" :class="{ 'calc-cross-alloc-me': it.isMe }">
+                      {{ it.name }}：{{ it.days }}天 / {{ it.manDays }}人天
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div><!-- /.calc-2col-side -->
+        </div><!-- /.calc-2col -->
       </template>
 
       <template v-else>
@@ -2272,14 +2288,14 @@ const submitBatch = async () => {
 .calc-proj-picked { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 9px 12px; font-size: 13px; color: #333; background: #eef4ff; border: 1px solid #d6e4ff; border-radius: 10px; }
 .calc-proj-picked strong { color: #2f54eb; font-size: 14px; }
 .calc-proj-picked-tip { font-size: 12px; color: #7a94cf; }
-.calc-proj-cross-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow: auto; }
+.calc-proj-cross-list { display: flex; flex-direction: column; gap: 6px; }
 .calc-proj-cross-item { background: #fffaf0; border: 1px solid #ffefc2; border-radius: 8px; padding: 8px 10px; }
 .calc-cross-allocs { display: flex; flex-wrap: wrap; gap: 4px; }
 .calc-cross-alloc { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: #f4f4f7; color: #555; }
 .calc-cross-alloc-me { background: #e6f4ea; color: #1e7e34; font-weight: 600; border: 1px solid #b7e1c3; }
 .calc-proj-days-scroll { max-height: 300px; overflow: auto; border: 1px solid #eef0f5; border-radius: 10px; }
 .calc-month-table th.calc-proj-day-content { text-align: left; }
-.calc-month-table td.calc-proj-day-content { text-align: left; white-space: pre-wrap; min-width: 220px; color: #555; line-height: 1.5; }
+.calc-month-table td.calc-proj-day-content { text-align: left; white-space: pre-wrap; min-width: 150px; color: #555; line-height: 1.5; }
 .calc-month-table td.calc-proj-day-projs { font-size: 12px; color: #888; }
 
 /* 日历设置 */
@@ -2322,15 +2338,20 @@ const submitBatch = async () => {
 .pmd-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 6px; border-top: 1px dashed #ebeef5; font-size: 13px; color: #666; }
 .pmd-sum-num { color: #0f6e56; font-size: 15px; }
 
+/* 两栏布局：左侧主表 + 右侧小卡片栏（右栏限高独立滚动、吸附顶部） */
+.calc-2col { display: flex; gap: 18px; align-items: flex-start; }
+.calc-2col-main { flex: 1 1 auto; min-width: 0; }
+.calc-2col-side { flex: 0 0 320px; width: 320px; position: sticky; top: 0; max-height: 480px; overflow-y: auto; padding-right: 4px; box-sizing: border-box; }
+.calc-2col-side::-webkit-scrollbar { width: 8px; }
+.calc-2col-side::-webkit-scrollbar-thumb { background: #d8d8e0; border-radius: 4px; }
+.calc-2col-side .calc-proj-grid { grid-template-columns: 1fr; }
+.calc-2col-side .calc-warn-item { min-height: 48px; }
+
 /* 计算器弹窗：整体不超出屏幕，超高内容在弹窗内部滚动 */
 :global(.calc-dlg) { display: flex; flex-direction: column; max-height: 88vh; }
 :global(.calc-dlg .el-dialog__header) { flex: 0 0 auto; padding-bottom: 6px; }
 :global(.calc-dlg .el-dialog__body) { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 2px 22px 16px; }
 :global(.calc-dlg .el-dialog__body::-webkit-scrollbar) { width: 8px; }
 :global(.calc-dlg .el-dialog__body::-webkit-scrollbar-thumb) { background: #d8d8e0; border-radius: 4px; }
-
-/* 多项目提醒/跨项目对账等长卡片列表：自身限高滚动，不再把弹窗撑高 */
-.calc-warn-grid { max-height: 180px; overflow-y: auto; padding-right: 2px; }
-.calc-proj-cross-list { max-height: 180px; }
 
 </style>
