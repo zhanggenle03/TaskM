@@ -1038,6 +1038,24 @@ const runCalc = async () => {
     if (dayLeaveReasons.length) parts.push(...dayLeaveReasons.map(r => `请假: ${r}`))
     const dayContent = parts.length ? parts.join('\n') : (dayLeaves.length ? '' : '已签到')
     const dayManDayReason = dayReasons.join('\n')
+    // 每日按项目分配（跨项目日各项目各自的人天/天数），供导出"项目分配"列
+    const dayAlloc = {}
+    for (const chk of dayCheckins) {
+      const a = allocOfCheckin(chk)
+      for (const [pid, v] of Object.entries(a)) {
+        if (!dayAlloc[pid]) dayAlloc[pid] = { manDays: 0, days: 0 }
+        dayAlloc[pid].manDays += v.manDays
+        dayAlloc[pid].days += v.days
+      }
+    }
+    const projectAlloc = Object.entries(dayAlloc).map(([pidStr, v]) => {
+      const raw = projectNameById(Number(pidStr))
+      return {
+        name: raw && raw.startsWith('#') ? '已删除项目' : raw,
+        days: Math.round(v.days * 100) / 100,
+        manDays: Math.round(v.manDays * 100) / 100,
+      }
+    })
     days.push({
       date: dateStr,
       weekday: ['日', '一', '二', '三', '四', '五', '六'][weekday],
@@ -1047,6 +1065,7 @@ const runCalc = async () => {
       manDayReason: dayManDayReason,
       content: dayContent,
       estimated: dayType === '预估上班',
+      projectAlloc,
     })
   }
 
@@ -1116,6 +1135,31 @@ const effectiveIsRest = (dateStr, extra) => {
   if (extra.badgeType === 'holiday') return true
   const w = dayjs(dateStr).day()
   return w === 0 || w === 6
+}
+// 单条签到按项目分配人天/天数（pmd 优先；无分配明细按可见项目均分兜底）
+// 返回 { pid: { manDays, days } }
+const allocOfCheckin = (chk) => {
+  const pmd = chk.project_man_days || {}
+  const pdays = chk.project_days || {}
+  const totalMD = chk.man_days == null ? 1 : chk.man_days
+  const keys = Object.keys(pmd)
+  const out = {}
+  const add = (pid, md, dy) => {
+    if (!out[pid]) out[pid] = { manDays: 0, days: 0 }
+    out[pid].manDays += md
+    out[pid].days += dy
+  }
+  if (keys.length) {
+    for (const k of keys) {
+      const md = pmd[k]
+      add(Number(k), md, pdays[k] != null ? pdays[k] : (totalMD > 0 ? md / totalMD : 1 / keys.length))
+    }
+  } else if ((chk.projects || []).length) {
+    const n = chk.projects.length
+    const share = totalMD / n
+    for (const p of chk.projects) add(p.id, share, totalMD > 0 ? share / totalMD : 1 / n)
+  }
+  return out
 }
 
 const runProjCalc = async () => {

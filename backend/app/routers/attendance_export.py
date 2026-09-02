@@ -62,7 +62,7 @@ async def export_attendance_excel(payload: Dict[str, Any]):
         # 1) 出勤明细
         ws = wb.active
         ws.title = "出勤明细"
-        headers = ["日期", "星期", "类型", "涉及项目", "人天", "人天说明", "工作记录", "是否预估"]
+        headers = ["日期", "星期", "类型", "涉及项目", "项目分配", "人天", "人天说明", "工作记录", "是否预估"]
         ws.append(headers)
         first_monday = None
         for i, d in enumerate(days):
@@ -78,23 +78,29 @@ async def export_attendance_excel(payload: Dict[str, Any]):
             ws.cell(row=rn, column=2, value="周" + WEEKDAY_CN[dt.weekday()])
             ws.cell(row=rn, column=3, value=d.get("type", ""))
             ws.cell(row=rn, column=4, value=("/".join(d.get("projectNames") or [])) or "-")
-            ws.cell(row=rn, column=5, value=d.get("manDays", 0))
+            # 项目分配：当日各项目 天数/人天 明细（多项目日可核对，口径与项目导出一致）
+            allocs = d.get("projectAlloc") or []
+            c_alloc = ws.cell(row=rn, column=5,
+                              value="；".join(f"{a.get('name', '?')} {a.get('days', 0)}天/{a.get('manDays', 0)}人天" for a in allocs) or "-")
+            c_alloc.alignment = _WRAP
+            ws.cell(row=rn, column=6, value=d.get("manDays", 0))
             reason = d.get("manDayReason", "") or ""
             content = d.get("content", "") or ""
-            c_reason = ws.cell(row=rn, column=6, value=reason)
+            c_reason = ws.cell(row=rn, column=7, value=reason)
             c_reason.alignment = _WRAP
-            c_content = ws.cell(row=rn, column=7, value=content)
+            c_content = ws.cell(row=rn, column=8, value=content)
             c_content.alignment = _WRAP
-            ws.cell(row=rn, column=8, value="是" if d.get("estimated") else "否")
+            ws.cell(row=rn, column=9, value="是" if d.get("estimated") else "否")
             # 多行内容时按需加高行高
-            lines = max(reason.count("\n") + 1, content.count("\n") + 1, 1)
+            alloc_lines = len(allocs)
+            lines = max(reason.count("\n") + 1, content.count("\n") + 1, alloc_lines, 1)
             if lines > 1:
                 ws.row_dimensions[rn].height = min(lines * 15 + 4, 120)
             if week_idx % 2 == 1:  # 按自然周(周一对齐)交替浅蓝底色
                 for c in range(1, len(headers) + 1):
                     ws.cell(row=rn, column=c).fill = _BLUE
         _header_style(ws, len(headers), len(days))
-        for c, w in enumerate([12, 8, 10, 24, 8, 24, 44, 10], start=1):
+        for c, w in enumerate([12, 8, 10, 22, 32, 8, 22, 44, 10], start=1):
             ws.column_dimensions[get_column_letter(c)].width = w
 
         # 2) 总统计
