@@ -497,7 +497,7 @@
         <el-date-picker
           v-model="projCalcStart"
           type="date"
-          placeholder="开始日期"
+          placeholder="开始日期（可留空）"
           value-format="YYYY-MM-DD"
           style="width:150px"
           :disabled-date="disabledCalcStart"
@@ -507,7 +507,7 @@
         <el-date-picker
           v-model="projCalcEnd"
           type="date"
-          placeholder="结束日期"
+          placeholder="结束日期（可留空）"
           value-format="YYYY-MM-DD"
           style="width:150px"
           :disabled-date="disabledCalcEnd"
@@ -517,6 +517,7 @@
         <el-button size="small" type="success" plain style="margin-left:8px" :disabled="!projCalcResult" @click="exportProjectXLSX">
           <el-icon><Download /></el-icon> 导出明细
         </el-button>
+        <span style="font-size:11px;color:#999;margin-left:8px">日期留空=该项目全部历史数据</span>
       </div>
 
       <template v-if="projCalcResult">
@@ -1118,17 +1119,28 @@ const effectiveIsRest = (dateStr, extra) => {
 const runProjCalc = async () => {
   const pid = projCalcProjectId.value
   if (pid == null) { ElMessage.warning('请选择项目'); return }
-  if (!projCalcStart.value || !projCalcEnd.value) { ElMessage.warning('请选择开始和结束日期'); return }
   const startStr = projCalcStart.value
   const endStr = projCalcEnd.value
-  const start = dayjs(startStr)
-  const end = dayjs(endStr)
-  if (end.isBefore(start)) { ElMessage.warning('结束日期不能早于开始日期'); return }
+  if ((startStr && !endStr) || (!startStr && endStr)) {
+    ElMessage.warning('日期范围请同时填或同时留空')
+    return
+  }
+  let start = null, end = null
+  if (startStr && endStr) {
+    start = dayjs(startStr)
+    end = dayjs(endStr)
+    if (end.isBefore(start)) { ElMessage.warning('结束日期不能早于开始日期'); return }
+  }
   const proj = projects.value.find((p) => p.id === pid)
   if (!proj) return
 
-  // 拉取整个日期范围的签到数据（含 project_man_days / project_days 分配明细）
-  const rangeCheckins = await getAllCheckins({ start_date: startStr, end_date: endStr })
+  // 拉取签到数据：留空日期时后端不过滤，返回该项目所有历史签到
+  const params = {}
+  if (startStr && endStr) {
+    params.start_date = startStr
+    params.end_date = endStr
+  }
+  const rangeCheckins = await getAllCheckins(params)
 
   // 逐日归集：算清该日期内每个项目的分配（pmd 优先；pmd 缺失按可见项目均分兜底，
   // 与出勤计算器"按项目统计"口径一致）
@@ -1255,9 +1267,11 @@ const runProjCalc = async () => {
 const exportProjectXLSX = async () => {
   if (!projCalcResult.value) { ElMessage.warning('请先计算'); return }
   try {
+    const startStr = projCalcStart.value || ''
+    const endStr = projCalcEnd.value || ''
     const res = await exportProjectExcel({
-      start: projCalcStart.value,
-      end: projCalcEnd.value,
+      start: startStr,
+      end: endStr,
       project: projCalcResult.value.project,
       result: projCalcResult.value,
     })
@@ -1266,7 +1280,8 @@ const exportProjectXLSX = async () => {
     const a = document.createElement('a')
     a.href = url
     const projName = projCalcResult.value.project.name
-    a.download = `${projName}_项目统计_${projCalcStart.value}_${projCalcEnd.value}.xlsx`
+    const rangeStr = startStr && endStr ? `${startStr}_${endStr}` : '全部数据'
+    a.download = `${projName}_项目统计_${rangeStr}.xlsx`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -2042,7 +2057,7 @@ const submitBatch = async () => {
 .page-title { font-size: 20px; font-weight: 600; }
 .page-sub { font-size: 13px; color: #888; margin-top: 4px; }
 
-.calendar-layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); grid-template-areas: "cal detail" "stats tool"; gap: 16px 24px; align-items: stretch; }
+.calendar-layout { display: grid; grid-template-columns: 420px minmax(0, 1fr); grid-template-rows: auto auto auto; grid-template-areas: "cal detail" "stats detail" "tool detail"; gap: 16px 24px; align-items: stretch; }
 
 .cal-panel { grid-area: cal; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 18px; position: relative; }
 .cal-panel.batch-mode { border-color: #e6a23c; }
@@ -2144,7 +2159,7 @@ const submitBatch = async () => {
 .dot-gray { background: #d9d9d9; }
 
 /* 工具卡片 */
-.cal-tools-card { grid-area: tool; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; }
+.cal-tools-card { grid-area: tool; background: #fff; border-radius: 10px; border: 1px solid #e8e8e4; padding: 14px 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .cal-tools-title { font-size: 12px; color: #888; margin-bottom: 10px; }
 .cal-tools-btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; background: #f5f4fe; color: #534ab7; }
 .cal-tools-btn:hover { background: #eeedfe; }
