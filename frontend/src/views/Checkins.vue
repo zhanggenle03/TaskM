@@ -349,30 +349,30 @@
     </el-dialog>
 
     <!-- 出勤计算器 -->
-    <el-dialog v-model="showCalcDlg" title="出勤计算器" width="680px" top="5vh">
-      <div class="calc-range">
-        <span style="font-size:13px;color:#888;margin-right:8px">统计范围</span>
+    <el-dialog v-model="showCalcDlg" title="出勤计算器" width="760px" top="5vh">
+      <div class="calc-toolbar">
+        <span class="calc-tool-label">统计范围</span>
         <el-date-picker
           v-model="calcStart"
           type="date"
           placeholder="开始日期"
           value-format="YYYY-MM-DD"
-          style="width:150px"
+          style="width:140px"
           :disabled-date="disabledCalcStart"
           @change="onCalcDateChange"
         />
-        <span style="margin:0 8px;color:#888">至</span>
+        <span class="calc-tool-sep">至</span>
         <el-date-picker
           v-model="calcEnd"
           type="date"
           placeholder="结束日期"
           value-format="YYYY-MM-DD"
-          style="width:150px"
+          style="width:140px"
           :disabled-date="disabledCalcEnd"
           @change="onCalcDateChange"
         />
-        <el-button size="small" type="primary" style="margin-left:8px" @click="runCalc">计算</el-button>
-        <el-button size="small" type="success" plain style="margin-left:8px" :disabled="!calcResult" @click="exportDetailXLSX">
+        <el-button size="small" type="primary" @click="runCalc">计算</el-button>
+        <el-button size="small" type="success" plain :disabled="!calcResult" @click="exportDetailXLSX">
           <el-icon><Download /></el-icon> 导出明细
         </el-button>
       </div>
@@ -420,6 +420,7 @@
         <!-- 按月详情 -->
         <div v-if="calcResult.monthly.length" class="calc-section">
           <div class="calc-section-title">按月统计</div>
+          <div class="calc-tbl">
           <table class="calc-month-table">
             <thead>
               <tr>
@@ -451,6 +452,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         <!-- 按项目统计 -->
@@ -490,12 +492,12 @@
 
     <!-- 项目计算器 -->
     <el-dialog v-model="showProjCalcDlg" title="项目计算器" width="760px" top="5vh">
-      <div class="calc-range">
-        <span style="font-size:13px;color:#888;margin-right:8px">项目</span>
-        <el-select v-model="projCalcProjectId" placeholder="选择项目" style="width:170px" clearable filterable @change="onProjCalcChange">
+      <div class="calc-toolbar">
+        <span class="calc-tool-label">项目</span>
+        <el-select v-model="projCalcProjectId" placeholder="选择项目" style="width:180px" clearable filterable @change="onProjCalcChange">
           <el-option v-for="p in projects" :key="p.id" :value="p.id" :label="p.name" />
         </el-select>
-        <span style="font-size:13px;color:#888;margin:0 6px 0 14px">统计范围</span>
+        <span class="calc-tool-label">统计范围</span>
         <el-date-picker
           v-model="projCalcStart"
           type="date"
@@ -505,7 +507,7 @@
           :disabled-date="disabledCalcStart"
           @change="onProjCalcChange"
         />
-        <span style="margin:0 8px;color:#888">至</span>
+        <span class="calc-tool-sep">至</span>
         <el-date-picker
           v-model="projCalcEnd"
           type="date"
@@ -515,11 +517,11 @@
           :disabled-date="disabledCalcEnd"
           @change="onProjCalcChange"
         />
-        <el-button size="small" type="primary" style="margin-left:8px" @click="runProjCalc">计算</el-button>
-        <el-button size="small" type="success" plain style="margin-left:8px" :disabled="!projCalcResult" @click="exportProjectXLSX">
+        <el-button size="small" type="primary" @click="runProjCalc">计算</el-button>
+        <el-button size="small" type="success" plain :disabled="!projCalcResult" @click="exportProjectXLSX">
           <el-icon><Download /></el-icon> 导出明细
         </el-button>
-        <span style="font-size:11px;color:#999;margin-left:8px">日期留空=该项目全部历史数据</span>
+        <span class="calc-tool-tip">日期留空=该项目全部历史数据</span>
       </div>
 
       <template v-if="projCalcResult">
@@ -556,6 +558,7 @@
         <!-- 按月统计 -->
         <div v-if="projCalcResult.monthly.length" class="calc-section">
           <div class="calc-section-title">按月统计</div>
+          <div class="calc-tbl">
           <table class="calc-month-table">
             <thead>
               <tr>
@@ -578,6 +581,7 @@
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         <!-- 多项目日对账 -->
@@ -2211,31 +2215,53 @@ const submitBatch = async () => {
 .cal-tools-btn { padding: 6px 12px; font-size: 13px; border-radius: 6px; background: #f5f4fe; color: #534ab7; }
 .cal-tools-btn:hover { background: #eeedfe; }
 
-/* 出勤计算器 */
-.calc-range { display: flex; align-items: center; margin-bottom: 20px; }
-.calc-summary { display: flex; justify-content: space-around; padding: 16px 0; background: #f9f9fb; border-radius: 10px; margin-bottom: 20px; }
-.calc-summary-item { text-align: center; }
-.calc-summary-num { display: block; font-size: 28px; font-weight: 700; line-height: 1.2; }
-.calc-summary-label { font-size: 13px; color: #888; margin-top: 2px; display: block; }
-.calc-section { margin-top: 16px; }
-.calc-section-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #333; }
+/* 出勤计算器 & 项目计算器 */
+/* 顶部筛选/操作工具栏（浅底卡片，控件自动换行对齐） */
+.calc-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 12px; margin-bottom: 16px; background: #fafafd; border: 1px solid #ececf5; border-radius: 10px; }
+.calc-tool-label { font-size: 13px; color: #606266; font-weight: 500; white-space: nowrap; }
+.calc-tool-sep { color: #bfc1cc; font-size: 13px; white-space: nowrap; }
+.calc-tool-tip { font-size: 11px; color: #9aa0b0; white-space: nowrap; }
+
+/* 汇总指标卡 */
+.calc-summary { display: flex; align-items: stretch; background: #fff; border: 1px solid #ececf5; border-radius: 12px; padding: 6px 0; margin-bottom: 16px; overflow: hidden; }
+.calc-summary-item { flex: 1 1 0; min-width: 0; text-align: center; padding: 10px 2px 8px; position: relative; }
+.calc-summary-item + .calc-summary-item::before { content: ""; position: absolute; left: 0; top: 16%; bottom: 16%; width: 1px; background: #ececf5; }
+.calc-summary-num { display: block; font-size: 24px; font-weight: 700; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.calc-summary-label { font-size: 12px; color: #909399; margin-top: 4px; display: block; }
+
+/* 区块 */
+.calc-section { margin-top: 18px; }
+.calc-section-title { display: flex; align-items: center; font-size: 14px; font-weight: 600; margin-bottom: 12px; color: #333; }
+.calc-section-title::before { content: ""; width: 3px; height: 14px; border-radius: 2px; background: #534ab7; margin-right: 8px; flex: 0 0 auto; }
+.calc-section-title-warn { color: #d48806; }
+.calc-section-title-warn::before { background: #e6a23c; }
+.calc-section-title-warn .el-icon { color: #e6a23c; }
+
+/* 表格（圆角边框容器 + 轻表头 + hover 行） */
+.calc-tbl { border: 1px solid #eef0f5; border-radius: 10px; overflow: hidden; }
 .calc-month-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.calc-month-table th, .calc-month-table td { padding: 7px 6px; text-align: center; border-bottom: 1px solid #eee; }
-.calc-month-table th { background: #f9f9fb; color: #888; font-weight: 600; }
+.calc-month-table th, .calc-month-table td { padding: 8px 8px; text-align: center; border-bottom: 1px solid #f2f2f5; font-variant-numeric: tabular-nums; }
+.calc-month-table th { background: #fafafc; color: #909399; font-weight: 600; font-size: 12px; white-space: nowrap; }
+.calc-month-table tbody tr:last-child td { border-bottom: none; }
+.calc-month-table tbody tr:hover td { background: #f8f8fc; }
 .calc-month-th-name { text-align: center; }
 .calc-month-table td.calc-month-td-name { text-align: center; color: #534ab7; font-weight: 600; }
-.calc-month-table tr:last-child td { border-bottom: none; }
-.calc-proj-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.calc-proj-card { display: flex; align-items: center; gap: 8px; background: #f0f0f5; border-radius: 8px; padding: 8px 14px; }
-.calc-proj-name { font-size: 13px; color: #333; }
-.calc-proj-days { font-size: 13px; color: #534ab7; }
+.calc-month-table td.calc-month-td-name .calc-estimated-tag { margin-left: 2px; }
+
+/* 按项目统计（项目徽卡） */
+.calc-proj-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+.calc-proj-card { display: flex; align-items: center; justify-content: space-between; gap: 8px; background: #fafafd; border: 1px solid #eef0f5; border-radius: 10px; padding: 10px 14px; }
+.calc-proj-name { font-size: 13px; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.calc-proj-days { font-size: 13px; color: #534ab7; white-space: nowrap; }
 .calc-proj-days strong { font-size: 16px; }
-.calc-estimated-note { text-align: center; font-size: 12px; color: #999; margin-top: -12px; margin-bottom: 8px; }
+
+.calc-estimated-note { text-align: center; font-size: 12px; color: #999; margin-top: -10px; margin-bottom: 8px; }
 .calc-estimated-note strong { color: #534ab7; }
-.calc-estimated-tag { display: inline-block; font-size: 10px; font-weight: 400; color: #fff; background: #534ab7; border-radius: 3px; padding: 0 5px; margin-left: 4px; vertical-align: middle; }
-.calc-section-title-warn { display: flex; align-items: center; color: #e67e22; }
-.calc-warn-grid { display: flex; flex-wrap: wrap; gap: 6px; }
-.calc-warn-item { background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 6px; padding: 8px 10px; font-size: 12px; min-width: 140px; }
+.calc-estimated-tag { display: inline-block; font-size: 10px; font-weight: 400; color: #fff; background: #534ab7; border-radius: 3px; padding: 0 5px; vertical-align: middle; }
+
+/* 多项目提醒 / 跨项目对账（小卡片） */
+.calc-warn-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.calc-warn-item { background: #fffaf0; border: 1px solid #ffefc2; border-radius: 8px; padding: 8px 10px; font-size: 12px; }
 .calc-warn-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .calc-warn-date { font-weight: 600; color: #d48806; }
 .calc-warn-weekday { color: #999; font-size: 11px; }
@@ -2243,15 +2269,15 @@ const submitBatch = async () => {
 .calc-warn-proj { font-size: 11px; padding: 1px 6px; border-radius: 3px; background: #eeedfe; color: #534ab7; }
 
 /* 项目计算器 */
-.calc-proj-picked { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 14px; color: #333; }
-.calc-proj-picked strong { color: #534ab7; font-size: 15px; }
-.calc-proj-picked-tip { font-size: 12px; color: #999; }
+.calc-proj-picked { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 9px 12px; font-size: 13px; color: #333; background: #eef4ff; border: 1px solid #d6e4ff; border-radius: 10px; }
+.calc-proj-picked strong { color: #2f54eb; font-size: 14px; }
+.calc-proj-picked-tip { font-size: 12px; color: #7a94cf; }
 .calc-proj-cross-list { display: flex; flex-direction: column; gap: 6px; max-height: 200px; overflow: auto; }
-.calc-proj-cross-item { background: #fff7e6; border: 1px solid #ffe0a3; border-radius: 6px; padding: 8px 10px; }
+.calc-proj-cross-item { background: #fffaf0; border: 1px solid #ffefc2; border-radius: 8px; padding: 8px 10px; }
 .calc-cross-allocs { display: flex; flex-wrap: wrap; gap: 4px; }
-.calc-cross-alloc { font-size: 12px; padding: 1px 8px; border-radius: 3px; background: #f0f0f0; color: #555; }
+.calc-cross-alloc { font-size: 12px; padding: 1px 8px; border-radius: 4px; background: #f4f4f7; color: #555; }
 .calc-cross-alloc-me { background: #e6f4ea; color: #1e7e34; font-weight: 600; border: 1px solid #b7e1c3; }
-.calc-proj-days-scroll { max-height: 300px; overflow: auto; }
+.calc-proj-days-scroll { max-height: 300px; overflow: auto; border: 1px solid #eef0f5; border-radius: 10px; }
 .calc-month-table th.calc-proj-day-content { text-align: left; }
 .calc-month-table td.calc-proj-day-content { text-align: left; white-space: pre-wrap; min-width: 220px; color: #555; line-height: 1.5; }
 .calc-month-table td.calc-proj-day-projs { font-size: 12px; color: #888; }
