@@ -48,7 +48,7 @@
           <el-icon><ChatDotRound /></el-icon> 沟通时间线
           <el-button size="small" type="primary" text @click="showAddComm = true">+ 添加记录</el-button>
           <div class="timeline-actions" v-if="task?.communications?.length">
-            <el-input v-model="commSearch" placeholder="搜索内容 / 对接人 / 类型" size="small" clearable style="width:200px" />
+            <el-input v-model="commSearch" placeholder="搜索主题/内容/对接人/类型" size="small" clearable style="width:220px" />
             <el-select v-model="commTypeFilter" placeholder="全部类型" size="small" clearable style="width:130px">
               <el-option v-for="ct in commTypes.filter(ct => ct.is_active || ct.name === commTypeFilter)" :key="ct.name" :label="ct.name" :value="ct.name" />
             </el-select>
@@ -727,7 +727,7 @@ const openPreview = (a, list) => {
 const timelineAsc = ref(false)  // 时间线排序：false=最新的在前面，true=最早的在前
 
 // ---- 时间线搜索 / 筛选 / 分页（#5） ----
-const commSearch = ref('')
+const commSearch = ref(String(route.query.comm_search || ''))
 const commTypeFilter = ref('')
 const COMM_PAGE_SIZE = 20
 const commVisibleCount = ref(COMM_PAGE_SIZE)
@@ -739,10 +739,11 @@ const filteredComms = computed(() => {
   const q = (commSearch.value || '').trim().toLowerCase()
   if (q) {
     list = list.filter(c => {
+      const subject = (c.subject || '').toLowerCase()
       const content = (c.content || '').toLowerCase()
       const names = (c.contacts || []).map(cn => cn.name).join('、').toLowerCase()
       const type = (c.comm_type || '').toLowerCase()
-      return content.includes(q) || names.includes(q) || type.includes(q)
+      return subject.includes(q) || content.includes(q) || names.includes(q) || type.includes(q)
     })
   }
   list.sort((a, b) => {
@@ -757,6 +758,12 @@ const hasMoreComms = computed(() => commVisibleCount.value < filteredComms.value
 
 // 筛选/排序变化时重置分页
 watch([commSearch, commTypeFilter, timelineAsc], () => { commVisibleCount.value = COMM_PAGE_SIZE })
+
+// 从任务列表综合搜索跳转（命中沟通等非任务信息）时，把关键词同步进沟通搜索框
+watch(() => route.query.comm_search, (v) => {
+  const val = String(v || '').trim()
+  if (val !== commSearch.value) commSearch.value = val
+})
 
 // ---- 沟通内容渲染（#1 隐藏重复状态文本；#4 富文本 sanitize 后渲染） ----
 const isAutoStatusContent = (c) => {

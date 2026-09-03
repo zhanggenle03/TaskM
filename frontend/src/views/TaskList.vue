@@ -91,7 +91,7 @@
       <div
         v-for="t in tasks" :key="t.id"
         class="task-row"
-        @click="goTask(t.display_id)"
+        @click="goTask(t)"
       >
         <div class="task-status-dot" :style="{ background: statusColor(t.status_id) }"></div>
           <div class="task-info">
@@ -372,10 +372,18 @@ const saveSortConfig = async () => {
 
 const formatTime = (dt) => dayjs(dt).format('YYYY-MM-DD HH:mm')
 
-const goTask = (taskId) => {
+const goTask = (t) => {
+  const query = { ...route.query }
+  // 搜索命中的是非任务信息（沟通记录）时，把关键词同步带到详情页沟通搜索，便于定位对应沟通
+  const kw = searchKeyword.value.trim()
+  if (kw && t.search_hits?.comms?.length) {
+    query.comm_search = kw
+  } else {
+    delete query.comm_search
+  }
   router.push({
-    path: `/projects/${projectId}/tasks/${taskId}`,
-    query: route.query
+    path: `/projects/${projectId}/tasks/${t.display_id}`,
+    query
   })
 }
 
