@@ -1271,6 +1271,9 @@ const runProjCalc = async () => {
     // 当日工作记录：文本无法按项目拆分，保留该日签到全文
     const contents = rec.checkins.map((c) => (c.content && c.content.trim()) ? c.content.trim() : '已签到')
     const content = contents.filter(Boolean).join('\n')
+    // 人天说明：文本无法按项目拆分，保留该日签到全文（多签到记录用换行拼接）
+    const dayReasons = rec.checkins.map((c) => (c.man_day_reason && c.man_day_reason.trim()) ? c.man_day_reason.trim() : '').filter(Boolean)
+    const manDayReason = dayReasons.join('\n')
     const projNames = []
     for (const k of Object.keys(rec.alloc)) {
       if (rec.alloc[k].manDays <= 1e-9) continue
@@ -1287,6 +1290,7 @@ const runProjCalc = async () => {
       manDays: Math.round(me.manDays * 100) / 100,
       days: Math.round(me.days * 100) / 100,
       content,
+      manDayReason,
     })
 
     // 跨项目日对账：列出当天各项目分配，便于核对"只计本项目"

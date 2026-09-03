@@ -246,7 +246,7 @@ async def export_project_excel(payload: Dict[str, Any]):
         # 1) 项目明细（逐日）
         ws = wb.active
         ws.title = "项目明细"
-        headers = ["日期", "星期", "类型", "涉及项目", "人天(本项目)", "天数(本项目)", "工作记录"]
+        headers = ["日期", "星期", "类型", "涉及项目", "人天(本项目)", "人天说明", "天数(本项目)", "工作记录"]
         ws.append(headers)
         first_monday = None
         for i, d in enumerate(days):
@@ -263,17 +263,20 @@ async def export_project_excel(payload: Dict[str, Any]):
             ws.cell(row=rn, column=3, value=d.get("type", ""))
             ws.cell(row=rn, column=4, value=("/".join(d.get("projectNames") or [])) or "-")
             ws.cell(row=rn, column=5, value=d.get("manDays", 0))
-            ws.cell(row=rn, column=6, value=d.get("days", 0))
-            c_content = ws.cell(row=rn, column=7, value=(d.get("content", "") or ""))
+            reason = d.get("manDayReason", "") or ""
+            c_reason = ws.cell(row=rn, column=6, value=reason)
+            c_reason.alignment = _WRAP
+            ws.cell(row=rn, column=7, value=d.get("days", 0))
+            c_content = ws.cell(row=rn, column=8, value=(d.get("content", "") or ""))
             c_content.alignment = _WRAP
-            lines = ((d.get("content") or "").count("\n") + 1)
+            lines = max(reason.count("\n") + 1, (d.get("content") or "").count("\n") + 1, 1)
             if lines > 1:
                 ws.row_dimensions[rn].height = min(lines * 15 + 4, 120)
             if week_idx % 2 == 1:
                 for c in range(1, len(headers) + 1):
                     ws.cell(row=rn, column=c).fill = _BLUE
         _header_style(ws, len(headers), len(days))
-        for c, w in enumerate([12, 8, 10, 26, 12, 12, 44], start=1):
+        for c, w in enumerate([12, 8, 10, 26, 12, 22, 12, 44], start=1):
             ws.column_dimensions[get_column_letter(c)].width = w
 
         # 2) 项目汇总
