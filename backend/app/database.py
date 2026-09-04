@@ -522,6 +522,9 @@ class Attachment(Base):
     file_size = Column(Integer, default=0)
     mime_type = Column(String(100), default="")
     uploaded_at = Column(DateTime, default=datetime.utcnow)
+    # 副本编辑锁：JSON{locked_at,copy_path,display_name,original_ext,original_mtime} 或 NULL
+    edit_lock = Column(Text, nullable=True)
+
     communication = relationship("Communication", back_populates="attachments")
     task = relationship("Task", back_populates="attachments")
     folder = relationship("FileFolder", back_populates="attachments")
@@ -1078,6 +1081,25 @@ def ensure_salary_config_template_table(engine):
     if "salary_config_templates" not in inspector.get_table_names():
         SalaryConfigTemplate.__table__.create(engine)
         print("[migrate] salary_config_templates 表已创建", flush=True)
+
+
+def ensure_file_edit_lock_columns(engine):
+    """幂等迁移：attachments / requirement_files 增加 edit_lock 列（副本编辑锁）。
+
+    全新库由 Base.metadata.create_all 直接带出该列；此处仅兜底已存在的旧库。
+    仅加列、不写任何业务值（符合启动迁移只改结构的约定）。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    for tbl in ("attachments", "requirement_files"):
+        if tbl not in inspector.get_table_names():
+            continue
+        cols = [c["name"] for c in inspector.get_columns(tbl)]
+        if "edit_lock" not in cols:
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE {tbl} ADD COLUMN edit_lock TEXT"))
+                conn.commit()
+            print(f"[migrate] {tbl} 已增加 edit_lock 列", flush=True)
 
 
 def migrate_salary_config_from_settings():

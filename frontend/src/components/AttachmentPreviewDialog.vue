@@ -1,61 +1,77 @@
 <template>
-  <el-dialog v-model="visible" width="80%" top="5vh" destroy-on-close append-to-body :show-close="false">
+  <el-dialog v-model="visible" width="80%" top="5vh" destroy-on-close append-to-body
+    :close-on-click-modal="false" :close-on-press-escape="false" :show-close="false">
     <template #header>
       <div class="apd-header">
         <span class="apd-title">{{ title }}</span>
         <span v-if="list.length > 1" class="apd-counter">{{ index + 1 }} / {{ list.length }}</span>
         <span class="apd-header-actions">
-          <!-- 编辑：用系统默认程序打开原始文件（附件 / 上传目录文件均可） -->
-          <el-button v-if="canOpenInApp" size="small" @click="openInApp">
-            <el-icon><Edit /></el-icon> 编辑
-          </el-button>
+          <template v-if="!editSession">
+            <!-- 编辑：复制出带原文件名的副本打开，编辑期间锁死原件 -->
+            <el-button v-if="canOpenInApp" size="small" @click="startEdit">
+              <el-icon><Edit /></el-icon> 编辑
+            </el-button>
+          </template>
+          <template v-else>
+            <el-button size="small" @click="discardEdit">放弃修改</el-button>
+            <el-button size="small" type="primary" @click="commitEdit">保存回系统</el-button>
+          </template>
         </span>
       </div>
     </template>
 
-    <!-- 图片预览（滚轮缩放 + 拖拽） -->
-    <div v-if="isImage" v-loading="loading" element-loading-text="加载中…" class="apd-img-wrap" @wheel.prevent="onImgWheel">
-      <div class="apd-img-container">
-        <img :src="src" class="apd-img" draggable="false"
+    <template v-if="!editSession">
+      <!-- 图片预览（滚轮缩放 + 拖拽） -->
+      <div v-if="isImage" v-loading="loading" element-loading-text="加载中…" class="apd-img-wrap" @wheel.prevent="onImgWheel">
+        <div class="apd-img-container">
+          <img :src="src" class="apd-img" draggable="false"
+            :style="{
+              transform: `translate(${imgState.x}px, ${imgState.y}px) scale(${imgState.scale})`,
+              transformOrigin: '0 0',
+              cursor: isDragging ? 'grabbing' : imgState.scale !== 1 ? 'grab' : 'default'
+            }"
+            @load="onLoaded"
+            @error="onLoaded"
+            @mousedown="onImgMouseDown"
+            @mousemove="onImgMouseMove"
+            @mouseup="onImgMouseUp"
+            @mouseleave="onImgMouseUp"
+          />
+        </div>
+      </div>
+
+      <!-- 非图片预览（iframe，Office 转换期间显示加载遮罩） -->
+      <div v-else v-loading="loading" element-loading-text="加载中…" class="apd-other-wrap" @wheel.prevent="onOtherWheel">
+        <iframe :src="src" class="apd-iframe"
           :style="{
-            transform: `translate(${imgState.x}px, ${imgState.y}px) scale(${imgState.scale})`,
-            transformOrigin: '0 0',
-            cursor: isDragging ? 'grabbing' : imgState.scale !== 1 ? 'grab' : 'default'
+            width: `${100 * imgState.scale}%`,
+            height: `${70 * imgState.scale}vh`,
           }"
           @load="onLoaded"
-          @error="onLoaded"
-          @mousedown="onImgMouseDown"
-          @mousemove="onImgMouseMove"
-          @mouseup="onImgMouseUp"
-          @mouseleave="onImgMouseUp"
         />
       </div>
-    </div>
 
-    <!-- 非图片预览（iframe，Office 转换期间显示加载遮罩） -->
-    <div v-else v-loading="loading" element-loading-text="加载中…" class="apd-other-wrap" @wheel.prevent="onOtherWheel">
-      <iframe :src="src" class="apd-iframe"
-        :style="{
-          width: `${100 * imgState.scale}%`,
-          height: `${70 * imgState.scale}vh`,
-        }"
-        @load="onLoaded"
-      />
-    </div>
+      <!-- 工具栏：左右切换 + 重置 -->
+      <div v-if="list.length > 1 || imgState.scale !== 1" class="apd-toolbar">
+        <template v-if="list.length > 1">
+          <el-button size="small" :disabled="index <= 0" @click="prev"><el-icon><ArrowLeft /></el-icon></el-button>
+          <span class="apd-counter">{{ index + 1 }} / {{ list.length }}</span>
+          <el-button size="small" :disabled="index >= list.length - 1" @click="next"><el-icon><ArrowRight /></el-icon></el-button>
+        </template>
+        <span v-if="list.length > 1 && imgState.scale !== 1" class="apd-sep"></span>
+        <el-button v-if="imgState.scale !== 1" size="small" text @click="resetZoom">重置</el-button>
+      </div>
+    </template>
 
-    <!-- 工具栏：左右切换 + 重置 -->
-    <div v-if="list.length > 1 || imgState.scale !== 1" class="apd-toolbar">
-      <template v-if="list.length > 1">
-        <el-button size="small" :disabled="index <= 0" @click="prev"><el-icon><ArrowLeft /></el-icon></el-button>
-        <span class="apd-counter">{{ index + 1 }} / {{ list.length }}</span>
-        <el-button size="small" :disabled="index >= list.length - 1" @click="next"><el-icon><ArrowRight /></el-icon></el-button>
-      </template>
-      <span v-if="list.length > 1 && imgState.scale !== 1" class="apd-sep"></span>
-      <el-button v-if="imgState.scale !== 1" size="small" text @click="resetZoom">重置</el-button>
+    <!-- 编辑会话视图：副本已打开，原件锁定，等待用户保存/放弃 -->
+    <div v-else class="apd-edit-panel">
+      <el-icon :size="40"><Edit /></el-icon>
+      <p class="apd-edit-title">已用系统程序打开副本：<b>{{ editSession.displayName }}</b></p>
+      <p class="apd-hint">原件已锁定，编辑期间不可被删除或移动。改完后点「保存回系统」覆盖原件，或「放弃修改」。</p>
     </div>
 
     <template #footer>
-      <el-button @click="visible = false">关闭</el-button>
+      <el-button @click="requestClose">关闭</el-button>
       <el-button @click="openInNewTab">新窗口打开</el-button>
       <el-button type="primary" @click="download">下载</el-button>
     </template>
@@ -64,7 +80,7 @@
 
 <script setup>
 import { ref, computed } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, ArrowRight, Edit } from '@element-plus/icons-vue'
 import { openUploadFile } from '../api'
 import http from '../api'
@@ -79,6 +95,8 @@ const title = ref('')
 const attId = ref(null)
 const isImage = ref(false)
 const loading = ref(false)
+// 编辑会话：{ copyPath, displayName } 或 null。非空表示副本已打开、原件锁定
+const editSession = ref(null)
 
 const imgState = ref({ x: 0, y: 0, scale: 1 })
 const isDragging = ref(false)
@@ -88,10 +106,10 @@ const dragImgState = { x: 0, y: 0 }
 // item.id 的 API 基址：需求正文文件带 item.apiBase（/projects/.../requirements/.../files），
 // 任务附件缺省走 /attachments —— 预览/下载/本地打开与任务附件共用同一套端点行为。
 // 注意两条通道对前缀要求不同，不可混用：
-//   apiPath —— 供 axios（baseURL 已是 /api），如 openInApp 的 POST
+//   apiPath —— 供 axios（baseURL 已是 /api），如 startEdit 的 POST
 //   apiUrl  —— 供 iframe/window.open 直开的完整地址（/api + apiPath）
 // 曾踩坑：apiUrl 漏 /api 时请求被 SPA fallback 接管渲染出整个系统页面；
-//         openInApp 误用 apiUrl 时 axios 又叠加 baseURL 造成 /api/api 双前缀 404。
+//         startEdit 误用 apiUrl 时 axios 又叠加 baseURL 造成 /api/api 双前缀 404。
 const apiPath = (item, suffix) => `${item.apiBase || '/attachments'}/${item.id}/${suffix}`
 const apiUrl = (item, suffix) => `/api${apiPath(item, suffix)}`
 
@@ -104,7 +122,8 @@ const applyPreview = (item) => {
   title.value = item.title || item.original_filename || ''
   loading.value = true
   if (item.id) {
-    src.value = apiUrl(item, 'preview')
+    // 加 t 时间戳：回写后重挂预览可强制浏览器/Office 缓存刷新
+    src.value = apiUrl(item, 'preview') + '?t=' + Date.now()
     const ext = (item.original_filename || item.title || '').split('.').pop() || ''
     isImage.value = IMAGE_EXTS.includes('.' + ext.toLowerCase())
   } else {
@@ -120,6 +139,7 @@ const open = (items, startIndex) => {
   index.value = Math.max(0, startIndex ?? 0)
   if (!list.value.length) return
   if (index.value >= list.value.length) index.value = list.value.length - 1
+  editSession.value = null
   applyPreview(list.value[index.value])
   visible.value = true
 }
@@ -206,22 +226,87 @@ const canOpenInApp = computed(() => {
   return !!(url && url.startsWith('/uploads/'))
 })
 
-// 用系统默认程序打开原始文件（等价于双击文件，触发 Word/Excel 等本地应用）
-const openInApp = async () => {
+// 开始副本编辑：复制出带原文件名的副本并打开，原件加逻辑锁（编辑期间不可删/移/再编辑）
+const startEdit = async () => {
   const item = list.value[index.value]
-  const url = item?.downloadUrl || (item?.src?.startsWith('/uploads/') ? item.src : '')
-  try {
-    if (attId.value) {
-      await http.post(apiPath(item, 'open'))
-    } else if (url && url.startsWith('/uploads/')) {
-      await openUploadFile(url)
+  if (!item) return
+  if (!item.id) {
+    // 无 id 项（沟通/需求正文内联图片等）：直接打开原件
+    const url = item.downloadUrl || (item.src?.startsWith('/uploads/') ? item.src : '')
+    if (url && url.startsWith('/uploads/')) {
+      try { await openUploadFile(url); ElMessage.success('已用系统默认程序打开') }
+      catch (e) { ElMessage.error(e.response?.data?.detail || '打开失败') }
     } else {
       ElMessage.warning('该文件不支持用系统程序打开')
+    }
+    return
+  }
+  try {
+    const displayName = item.title || item.original_filename || ''
+    const res = await http.post(apiPath(item, 'open-copy'), { display_name: displayName })
+    editSession.value = { copyPath: res.copy_path, displayName: res.display_name }
+    if (res.warn) ElMessage.warning(res.warn)
+  } catch (e) {
+    const status = e.response?.status
+    const detail = e.response?.data?.detail || '打开编辑失败'
+    if (status === 423) ElMessage.warning(detail)
+    else ElMessage.error(detail)
+  }
+}
+
+// 保存回系统：副本内容原子覆盖原件，刷新预览（cache-bust）
+const commitEdit = async () => {
+  const item = list.value[index.value]
+  if (!item || !editSession.value) return
+  try {
+    await http.post(apiPath(item, 'commit-edit'), { copy_path: editSession.value.copyPath })
+  } catch (e) {
+    const status = e.response?.status
+    const detail = e.response?.data?.detail || '保存失败'
+    if (status === 409) {
+      // 原件被外部修改 / 会话失效：二次确认后强制覆盖
+      try {
+        await ElMessageBox.confirm(detail + ' 仍要覆盖保存吗？', '原件已被外部修改', { type: 'warning' })
+        await http.post(apiPath(item, 'commit-edit'), { copy_path: editSession.value.copyPath, force: true })
+      } catch (ce) {
+        if (ce !== 'cancel' && ce?.message !== 'cancel') ElMessage.error('保存失败')
+        return
+      }
+    } else {
+      ElMessage.error(detail)
       return
     }
-    ElMessage.success('已用系统默认程序打开')
-  } catch (e) {
-    ElMessage.error(e.response?.data?.detail || '打开失败')
+  }
+  editSession.value = null
+  applyPreview(item)
+  ElMessage.success('已保存回系统')
+}
+
+// 放弃修改：删除副本、清锁、恢复预览
+const discardEdit = async () => {
+  const item = list.value[index.value]
+  if (!item || !editSession.value) return
+  await doDiscard(item)
+  applyPreview(item)
+  ElMessage.info('已放弃修改')
+}
+
+// 静默放弃（关闭对话框时调用，不提示）
+const doDiscard = async (item) => {
+  if (item && editSession.value) {
+    try { await http.post(apiPath(item, 'discard-edit'), { copy_path: editSession.value.copyPath }) } catch { /* 忽略 */ }
+  }
+  editSession.value = null
+}
+
+// 关闭对话框：编辑会话未结束则先确认放弃，避免锁残留
+const requestClose = () => {
+  if (editSession.value) {
+    ElMessageBox.confirm('有未保存的编辑，关闭将放弃修改。确定关闭？', '提示', { type: 'warning' })
+      .then(async () => { await doDiscard(list.value[index.value]); visible.value = false })
+      .catch(() => {})
+  } else {
+    visible.value = false
   }
 }
 
@@ -296,4 +381,8 @@ defineExpose({ open, close })
 .apd-iframe { border: none; border-radius: 4px; background: #fff; transform-origin: top left; display: block; }
 .apd-toolbar { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; }
 .apd-toolbar .apd-sep { display: inline-block; width: 1px; height: 18px; background: #e0e0e0; flex-shrink: 0; }
+.apd-edit-panel { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; height: 50vh; color: #409eff; background: #f5f9ff; border-radius: 6px; }
+.apd-edit-title { font-size: 15px; color: #333; }
+.apd-edit-title b { color: #409eff; }
+.apd-hint { font-size: 13px; color: #888; max-width: 80%; text-align: center; line-height: 1.6; }
 </style>

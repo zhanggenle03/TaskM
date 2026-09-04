@@ -24,6 +24,7 @@ from ..schemas import (
 )
 from ..settings_manager import get_max_file_size
 from ..office_convert import remove_attachment_files
+from ..file_edit import raise_if_locked
 
 router = APIRouter(prefix="/projects/{project_id}/tasks/{task_id}/files", tags=["file_manager"])
 comm_router = APIRouter(prefix="/projects/{project_id}/tasks/{task_id}/communications/{comm_id}", tags=["file_manager"])
@@ -314,6 +315,7 @@ def move_attachment(project_id: str, task_id: str, attachment_id: int, data: Att
     ).first()
     if not att:
         raise HTTPException(404, "文件不存在")
+    raise_if_locked(att, "文件")
     if data.folder_id is not None:
         folder = db.query(FileFolder).filter(
             FileFolder.id == data.folder_id, FileFolder.task_id == task.id

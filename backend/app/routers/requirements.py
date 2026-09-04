@@ -27,6 +27,7 @@ from ..schemas import (
     TaskBrief, RequirementFileOut,
 )
 from ..office_convert import remove_attachment_files
+from ..file_edit import open_edit, commit_edit, discard_edit, raise_if_locked
 
 router = APIRouter(prefix="/projects/{project_id}/requirements", tags=["requirements"])
 
@@ -1668,6 +1669,58 @@ def open_requirement_file_by_id(
     return {"ok": True}
 
 
+# ── 副本编辑：复制出带原文件名的副本打开，编辑期间锁死原件 ──
+@router.post("/{requirement_id}/files/{file_id:int}/open-copy")
+def open_requirement_file_copy(project_id: str, requirement_id: str, file_id: int,
+                               payload: dict = None, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    rec = _get_req_file_or_404(db, req, file_id)
+    if not os.path.isfile(rec.file_path):
+        raise HTTPException(404, "文件不存在或已被删除")
+    display_name = (payload or {}).get("display_name") or rec.original_filename
+    copy_path, name = open_edit(rec, rec.file_path, display_name)
+    db.commit()
+    warn = None
+    try:
+        os.startfile(copy_path)
+    except OSError as e:
+        warn = f"无法自动用系统程序打开副本：{e}（副本已生成，请手动打开：{copy_path}）"
+    return {"copy_path": copy_path, "display_name": name, "warn": warn}
+
+
+@router.post("/{requirement_id}/files/{file_id:int}/commit-edit")
+def commit_requirement_file_edit(project_id: str, requirement_id: str, file_id: int,
+                                 payload: dict, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    rec = _get_req_file_or_404(db, req, file_id)
+    copy_path = (payload or {}).get("copy_path")
+    try:
+        commit_edit(rec, rec.file_path, copy_path, force=bool((payload or {}).get("force")))
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    touch_project(db, proj.id)
+    return {"ok": True}
+
+
+@router.post("/{requirement_id}/files/{file_id:int}/discard-edit")
+def discard_requirement_file_edit(project_id: str, requirement_id: str, file_id: int,
+                                  payload: dict, db: Session = Depends(get_db)):
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    rec = _get_req_file_or_404(db, req, file_id)
+    try:
+        discard_edit(rec, (payload or {}).get("copy_path"))
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    return {"ok": True}
+
+
 @router.delete("/{requirement_id}/files/{filename}")
 def delete_requirement_file(
     project_id: str,
@@ -1687,6 +1740,7 @@ def delete_requirement_file(
         RequirementFile.filename == filename,
     ).first()
     if rec:
+        raise_if_locked(rec, "需求文件")
         db.delete(rec)
         db.commit()
 

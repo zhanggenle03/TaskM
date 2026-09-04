@@ -9,6 +9,7 @@ import aiofiles
 from ..database import get_db, Attachment, Communication, Task, Project, UPLOAD_DIR, touch_project, resolve_project, CommunicationFile
 from ..schemas import AttachmentOut, AttachmentUpdate
 from ..office_convert import is_office_file, convert_to_pdf, remove_attachment_files
+from ..file_edit import open_edit, commit_edit, discard_edit, raise_if_locked
 
 router = APIRouter(tags=["attachments"])
 
@@ -182,6 +183,58 @@ def open_attachment(attachment_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
+# ── 副本编辑：复制出带原文件名的副本打开，编辑期间锁死原件 ──
+@router.post("/attachments/{attachment_id}/open-copy")
+def open_attachment_copy(attachment_id: int, payload: dict = None, db: Session = Depends(get_db)):
+    att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    if not att or not os.path.exists(att.file_path):
+        raise HTTPException(404, "文件不存在")
+    display_name = (payload or {}).get("display_name") or att.original_filename
+    copy_path, name = open_edit(att, att.file_path, display_name)
+    db.commit()
+    warn = None
+    try:
+        os.startfile(copy_path)
+    except OSError as e:
+        warn = f"无法自动用系统程序打开副本：{e}（副本已生成，请手动打开：{copy_path}）"
+    return {"copy_path": copy_path, "display_name": name, "warn": warn}
+
+
+@router.post("/attachments/{attachment_id}/commit-edit")
+def commit_attachment_edit(attachment_id: int, payload: dict, db: Session = Depends(get_db)):
+    att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    if not att:
+        raise HTTPException(404, "附件不存在")
+    copy_path = (payload or {}).get("copy_path")
+    try:
+        commit_edit(att, att.file_path, copy_path, force=bool((payload or {}).get("force")))
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    # 文件内容变更，更新项目时间
+    comm = db.query(Communication).filter(Communication.id == att.comm_id).first()
+    if comm:
+        task = db.query(Task).filter(Task.id == comm.task_id).first()
+        if task:
+            touch_project(db, task.project_id)
+    return {"ok": True}
+
+
+@router.post("/attachments/{attachment_id}/discard-edit")
+def discard_attachment_edit(attachment_id: int, payload: dict, db: Session = Depends(get_db)):
+    att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+    if not att:
+        raise HTTPException(404, "附件不存在")
+    try:
+        discard_edit(att, (payload or {}).get("copy_path"))
+    except HTTPException:
+        db.rollback()
+        raise
+    db.commit()
+    return {"ok": True}
+
+
 # 用系统默认程序打开上传目录内的文件（按 URL 定位磁盘路径，覆盖沟通内联图/需求正文图片与文件等无附件 id 场景）
 @router.post("/open-file")
 def open_upload_file(payload: dict, db: Session = Depends(get_db)):
@@ -207,6 +260,7 @@ def rename_attachment(attachment_id: int, data: AttachmentUpdate, db: Session = 
     att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
     if not att:
         raise HTTPException(404, "附件不存在")
+    raise_if_locked(att, "附件")
     att.original_filename = data.original_filename
     db.commit()
     db.refresh(att)
@@ -225,6 +279,7 @@ def delete_attachment(attachment_id: int, db: Session = Depends(get_db)):
     att = db.query(Attachment).filter(Attachment.id == attachment_id).first()
     if not att:
         raise HTTPException(404, "附件不存在")
+    raise_if_locked(att, "附件")
     # 清理沟通记录引用（文件管理独立文件被引用时，删文件同步解除引用）
     db.query(CommunicationFile).filter(CommunicationFile.attachment_id == att.id).delete()
     remove_attachment_files(att.file_path)
