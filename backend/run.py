@@ -179,7 +179,10 @@ def bind_server_socket(host, port):
 # ═══════════════════════════════════════════════
 
 # ── 日志重定向（pythonw 无控制台） ──
-log_path = os.path.join(BACKEND_DIR, "uvicorn.log")
+# 日志统一落 backend/logs/，避免与 taskm.db、备份文件混在 backend 根目录
+_log_dir = os.path.join(BACKEND_DIR, "logs")
+os.makedirs(_log_dir, exist_ok=True)
+log_path = os.path.join(_log_dir, "uvicorn.log")
 sys.stderr = open(log_path, "w", encoding="utf-8")
 sys.stdout = sys.stderr
 

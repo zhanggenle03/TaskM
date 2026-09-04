@@ -182,7 +182,10 @@ def _hide_console():
     """断开进程与控制台的连接，CMD 窗口立即关闭"""
     try:
         import ctypes
-        log_path = os.path.join(BASE_DIR, "taskm.log")
+        # 日志统一落 backend/logs/，避免与 taskm.db、备份文件混在 backend 根目录
+        _log_dir = os.path.join(BASE_DIR, "logs")
+        os.makedirs(_log_dir, exist_ok=True)
+        log_path = os.path.join(_log_dir, "taskm.log")
         fh = open(log_path, "w", encoding="utf-8", buffering=1)
         sys.stdout = fh
         sys.stderr = fh
