@@ -262,6 +262,7 @@ import {
   getRequirement, updateRequirement, deleteRequirement, deleteRequirementImage,
   getReqCustomFields, getReqStatusPools, getReqPriorityPools,
   exportRequirementDoc, uploadRequirementImage, uploadRequirementFile, deleteRequirementFile,
+  listRequirementFiles,
 } from '../api/index.js'
 import { registerLinkMenus, ensureProtocol as _ensureProtocol } from '../utils/linkMenus'
 import AttachmentPreviewDialog from '../components/AttachmentPreviewDialog.vue'
@@ -448,6 +449,7 @@ class ReqFileMenu {
       try {
         const result = await uploadRequirementFile(projectId.value, req.value.id, selectedFile)
         if (result.url) {
+          await refreshReqFiles()
           const linkText = textInput.value.trim() || result.original_filename || selectedFile.name
           editor.restoreSelection()
           editor.insertNode({
@@ -492,6 +494,22 @@ const origImgFilenames = new Set()  // 原始描述中的图片文件名
 const origReqFiles = new Set()       // 原始描述中的附件文件
 const saveStatus = ref('')  // '' | 'saving' | 'saved' | 'error'
 
+// 需求正文文件实体映射：物理文件名 → { id, original_filename, ... }（GET /files，含历史补录）。
+// 正文点击/悬浮预览据此把 item 变成「有 id」的对话框项，走与任务附件一致的预览/下载/本地打开。
+const reqFileMap = ref({})
+const reqFilesApiBase = computed(() =>
+  req.value?.id ? `/projects/${projectId.value}/requirements/${req.value.id}/files` : ''
+)
+const refreshReqFiles = async () => {
+  if (!req.value?.id) return
+  try {
+    const rows = (await listRequirementFiles(projectId.value, req.value.id)) || []
+    const m = {}
+    for (const r of rows) if (r.exists !== false) m[r.filename] = r
+    reqFileMap.value = m
+  } catch { /* 列表加载失败不阻塞详情；点击预览退化为按物理名路径 */ }
+}
+
 // ── 状态/优先级 英文↔中文 映射（与 RequirementList.vue 保持一致） ──
 const statusEnToZh = { todo: '待处理', in_progress: '进行中', done: '已完成', cancelled: '已取消' }
 const statusZhToEn = Object.fromEntries(Object.entries(statusEnToZh).map(([k, v]) => [v, k]))
@@ -522,6 +540,7 @@ registerLinkMenus('req', {
   uploadFile: async (file) => {
     if (!req.value?.id) return null
     const result = await uploadRequirementFile(projectId.value, req.value.id, file)
+    if (result?.url) await refreshReqFiles()
     return result ? { url: result.url, filename: result.original_filename || file.name } : null
   },
   onViewFileLink: (editor, href) => {
@@ -1155,6 +1174,9 @@ const load = async (id) => {
       status: statusEnToZh[reqRes.status] || reqRes.status,
       priority: priorityEnToZh[reqRes.priority] || reqRes.priority,
     }
+    // 加载正文文件实体映射（含历史补录），供统一预览 id 化；失败不影响详情渲染
+    reqFileMap.value = {}
+    refreshReqFiles()
     // 用新需求的 HTML 重建引用块颜色 store 并同步到编辑器 DOM
     // （Slate 反序列化会剥离 data-bq-color，需在内容渲染后重新注入）
     setTimeout(() => {
@@ -1388,6 +1410,8 @@ const doSaveDesc = async () => {
     }
     origReqFiles.clear()
     for (const fn of newReqFiles) origReqFiles.add(fn)
+    // 正文引用变化后同步文件实体映射（删除的行由后端 DELETE 同步清理）
+    refreshReqFiles()
 
     saveStatus.value = 'saved'
     setTimeout(() => { if (saveStatus.value === 'saved') saveStatus.value = '' }, 1500)
@@ -1567,9 +1591,16 @@ const buildUnifiedPreviewList = (container) => {
       const ext = urlFilename.includes('.') ? urlFilename.slice(urlFilename.lastIndexOf('.')) : ''
       // 如果链接文字已包含相同后缀，不再重复添加
       const finalExt = linkText.toLowerCase().endsWith(ext.toLowerCase()) ? '' : ext
-      const previewUrl = `/api/projects/${projectId.value}/requirements/${req.value?.id}/files/${encodeURIComponent(urlFilename)}/preview`
+      const prefixApi = reqFilesApiBase.value
+      const rec = reqFileMap.value[urlFilename]
+      const fid = rec?.id || null
+      // 有实体（requirement_files）→ 带 id + apiBase，预览/下载/本地打开与任务附件对齐；
+      // 无实体（上传后尚未刷新/接口失败）→ 退化为按物理名的 filename preview 路径
       items.push({
-        type: 'file', src: previewUrl, downloadUrl: href, title: linkText, ext: finalExt,
+        type: 'file',
+        ...(fid ? { id: fid, apiBase: prefixApi, original_filename: rec.original_filename } : {}),
+        src: fid ? `${prefixApi}/${fid}/preview` : `/api/projects/${projectId.value}/requirements/${req.value?.id}/files/${encodeURIComponent(urlFilename)}/preview`,
+        downloadUrl: href, title: linkText, ext: finalExt,
         downloadName: `${prefix}_${linkText}${finalExt}`,
       })
     }

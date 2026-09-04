@@ -163,6 +163,22 @@ class AttachmentOut(BaseModel):
         from_attributes = True
 
 
+class RequirementFileOut(BaseModel):
+    """需求正文超链接文件（对齐任务附件；url 为 /uploads 静态直链，供正文 href 复用）"""
+    id: int
+    requirement_id: int
+    filename: str                        # 磁盘物理名 uuid.ext
+    original_filename: str
+    file_size: int
+    mime_type: str
+    uploaded_at: datetime
+    url: str                             # /uploads/{...}/files/{filename}
+    exists: bool = True                  # 磁盘上是否仍存在
+    class Config:
+        from_attributes = True
+
+
+
 # ---- 任务文件管理 ----
 class FileFolderCreate(BaseModel):
     name: str

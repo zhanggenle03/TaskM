@@ -232,6 +232,8 @@ export const uploadRequirementFile = (projectId, reqId, file) => {
   return http.post(`/projects/${projectId}/requirements/${reqId}/files`, fd)
 }
 export const deleteRequirementFile = (projectId, reqId, filename) => http.delete(`/projects/${projectId}/requirements/${reqId}/files/${encodeURIComponent(filename)}`)
+export const listRequirementFiles = (projectId, reqId) => http.get(`/projects/${projectId}/requirements/${reqId}/files`)
+export const openRequirementFile = (projectId, reqId, fileId) => http.post(`/projects/${projectId}/requirements/${reqId}/files/${fileId}/open`)
 
 // --- Requirement Custom Fields ---
 export const getReqCustomFields = (projectId, params) => http.get(`/projects/${projectId}/requirements/fields`, { params })

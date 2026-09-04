@@ -293,6 +293,29 @@ class Requirement(Base):
 
     project = relationship("Project", back_populates="requirements")
     custom_values = relationship("RequirementCustomValue", back_populates="requirement", cascade="all, delete-orphan")
+    files = relationship("RequirementFile", back_populates="requirement", cascade="all, delete-orphan")
+
+
+class RequirementFile(Base):
+    """需求正文超链接文件（需求侧附件实体，与任务附件对齐）
+
+    上传时落库（id/original_filename/file_size 与 Attachment 对齐），正文 <a href>
+    仍指向 /uploads 物理路径不变；预览/下载/本地打开按 id 走统一接口。
+    删除需求正文链接时由 DELETE /files/{filename} 同步删行。
+    """
+    __tablename__ = "requirement_files"
+    id = Column(Integer, primary_key=True, index=True)
+    requirement_id = Column(Integer, ForeignKey("requirements.id"), nullable=False)
+    filename = Column(String(300), nullable=False)              # 磁盘物理名 uuid.ext
+    original_filename = Column(String(300), nullable=False)     # 上传时的原始文件名
+    file_path = Column(String(500), nullable=False)
+    file_size = Column(Integer, default=0)
+    mime_type = Column(String(100), default="")
+    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    # 副本编辑锁：JSON{locked_at,copy_path,display_name,original_ext,original_mtime} 或 NULL
+    edit_lock = Column(Text, nullable=True)
+
+    requirement = relationship("Requirement", back_populates="files")
 
 
 class RequirementCustomField(Base):
@@ -499,7 +522,6 @@ class Attachment(Base):
     file_size = Column(Integer, default=0)
     mime_type = Column(String(100), default="")
     uploaded_at = Column(DateTime, default=datetime.utcnow)
-
     communication = relationship("Communication", back_populates="attachments")
     task = relationship("Task", back_populates="attachments")
     folder = relationship("FileFolder", back_populates="attachments")

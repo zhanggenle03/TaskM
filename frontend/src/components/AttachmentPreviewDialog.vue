@@ -66,7 +66,8 @@
 import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowRight, Edit } from '@element-plus/icons-vue'
-import { openAttachment, openUploadFile } from '../api'
+import { openUploadFile } from '../api'
+import http from '../api'
 
 const IMAGE_EXTS = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico']
 
@@ -84,8 +85,15 @@ const isDragging = ref(false)
 const dragStart = { x: 0, y: 0 }
 const dragImgState = { x: 0, y: 0 }
 
-const previewUrl = (id) => `/api/attachments/${id}/preview`
-const downloadUrl = (id) => `/api/attachments/${id}/download`
+// item.id 的 API 基址：需求正文文件带 item.apiBase（/projects/.../requirements/.../files），
+// 任务附件缺省走 /attachments —— 预览/下载/本地打开与任务附件共用同一套端点行为。
+// 注意两条通道对前缀要求不同，不可混用：
+//   apiPath —— 供 axios（baseURL 已是 /api），如 openInApp 的 POST
+//   apiUrl  —— 供 iframe/window.open 直开的完整地址（/api + apiPath）
+// 曾踩坑：apiUrl 漏 /api 时请求被 SPA fallback 接管渲染出整个系统页面；
+//         openInApp 误用 apiUrl 时 axios 又叠加 baseURL 造成 /api/api 双前缀 404。
+const apiPath = (item, suffix) => `${item.apiBase || '/attachments'}/${item.id}/${suffix}`
+const apiUrl = (item, suffix) => `/api${apiPath(item, suffix)}`
 
 // 预览项统一结构：{ id?, src, title, downloadUrl?, downloadName?, type?, _isComImage? }
 // - 有 id：附件（走附件预览/下载接口）
@@ -96,7 +104,7 @@ const applyPreview = (item) => {
   title.value = item.title || item.original_filename || ''
   loading.value = true
   if (item.id) {
-    src.value = previewUrl(item.id)
+    src.value = apiUrl(item, 'preview')
     const ext = (item.original_filename || item.title || '').split('.').pop() || ''
     isImage.value = IMAGE_EXTS.includes('.' + ext.toLowerCase())
   } else {
@@ -150,7 +158,7 @@ const download = async () => {
     }
     return
   }
-  if (attId.value) window.open(downloadUrl(attId.value), '_blank')
+  if (item.id) window.open(apiUrl(item, 'download'), '_blank')
   else if (item.downloadUrl) window.open(item.downloadUrl, '_blank')
   else if (src.value) window.open(src.value, '_blank')
 }
@@ -161,8 +169,11 @@ const download = async () => {
 // 3) 其余（沟通内联图片 / 需求正文图片）→ 前端注入 title 包装兜底
 const openInNewTab = () => {
   if (!src.value) return
-  if (attId.value) {
-    window.open(`${previewUrl(attId.value)}?as_page=1`, '_blank', 'noopener')
+  const item = list.value[index.value]
+  if (item.id) {
+    // 需求文件包装页标题沿用链接文字（后端优先 original_filename），否则后端自带文件名
+    const titleParam = item.apiBase && title.value ? `&title=${encodeURIComponent(title.value)}` : ''
+    window.open(`${apiUrl(item, 'preview')}?as_page=1${titleParam}`, '_blank', 'noopener')
     return
   }
   if (!isImage.value && /\/preview(\?|$)/.test(src.value)) {
@@ -201,7 +212,7 @@ const openInApp = async () => {
   const url = item?.downloadUrl || (item?.src?.startsWith('/uploads/') ? item.src : '')
   try {
     if (attId.value) {
-      await openAttachment(attId.value)
+      await http.post(apiPath(item, 'open'))
     } else if (url && url.startsWith('/uploads/')) {
       await openUploadFile(url)
     } else {

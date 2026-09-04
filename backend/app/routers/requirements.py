@@ -5,7 +5,7 @@ from sqlalchemy import func, case, select, or_
 from typing import List, Optional, Dict
 from collections import defaultdict
 from datetime import datetime, date, timedelta
-import json, os, uuid, io, urllib.parse, re, ast
+import json, os, uuid, io, urllib.parse, re, ast, shutil
 from docx import Document
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -14,7 +14,7 @@ from ..database import (
     get_db, Project, Requirement, RequirementCustomField, RequirementCustomValue,
     RequirementStatusPool, RequirementPriorityPool,
     Task, TaskRequirement, StatusPool, touch_project, resolve_project, resolve_requirement,
-    generate_requirement_display_id, UPLOAD_DIR, CONFIG_DIR,
+    generate_requirement_display_id, UPLOAD_DIR, CONFIG_DIR, RequirementFile,
 )
 from ..schemas import (
     RequirementCreate, RequirementUpdate, RequirementOut,
@@ -24,7 +24,7 @@ from ..schemas import (
     RequirementPriorityPoolCreate, RequirementPriorityPoolUpdate, RequirementPriorityPoolOut,
     StatusDistribution, PriorityDistribution, TrendPoint,
     ProjectProgress, DashboardData, DistributionItem,
-    TaskBrief,
+    TaskBrief, RequirementFileOut,
 )
 from ..office_convert import remove_attachment_files
 
@@ -1392,19 +1392,117 @@ def delete_requirement_image(
 
 # ---- 需求文件上传（超链接插入文件） ----
 
-@router.post("/{requirement_id}/files")
+def _req_files_root(proj, req):
+    """需求 uploads 根目录：{UPLOAD_DIR}/{proj.display_id}/requirements/{req_display_id}"""
+    req_display_id = req.display_id or f"req_{req.id}"
+    return os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id)
+
+
+def _req_upload_url(proj, req, kind: str, filename: str) -> str:
+    """需求上传文件的静态 URL：/uploads/{proj}/{req}/files|images/{filename}"""
+    req_display_id = req.display_id or f"req_{req.id}"
+    return f"/uploads/{proj.display_id}/requirements/{req_display_id}/{kind}/{filename}"
+
+
+# 从正文 HTML 提取引用的文件物理名（与前端 extractReqFilenames 同构）
+_REQ_FILE_HREF_RE = re.compile(r'/uploads/[^/]+/requirements/[^/]+/files/([^"\s)]+)')
+
+
+def _extract_req_file_names(html: str) -> list:
+    if not html:
+        return []
+    return list(dict.fromkeys(m for m in _REQ_FILE_HREF_RE.findall(html)))
+
+
+def _serve_req_file_preview(file_path: str, display_name: str, preview_url: str,
+                            as_page: bool = False, page_title: str = ""):
+    """需求文件预览（附件与按 id 端点共用）：
+    as_page=1 返回带 <title> 的 HTML 包装页；Office 转 PDF；文本渲染 HTML；其余 inline。"""
+    from fastapi.responses import FileResponse as FR, HTMLResponse
+    from urllib.parse import quote
+    import html as html_mod
+    from ..office_convert import is_office_file, convert_to_pdf
+
+    safe_title = html_mod.escape(page_title or display_name or "预览")
+    if as_page:
+        ext = os.path.splitext(file_path)[1].lower()
+        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'}
+        if ext in image_exts:
+            body = ('<div style="height:100vh;display:flex;align-items:center;'
+                    f'justify-content:center;background:#f5f5f5"><img src="{preview_url}" '
+                    'style="max-width:100%;max-height:100vh;object-fit:contain"></div>')
+        else:
+            body = (f'<iframe src="{preview_url}" '
+                    'style="width:100%;height:100vh;border:0;display:block"></iframe>')
+        return HTMLResponse(
+            content=f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{safe_title}</title>
+<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:#f5f5f5}}</style></head>
+<body>{body}</body></html>'''
+        )
+
+    # Office 文档 → 转换为 PDF 后预览
+    if is_office_file(file_path):
+        pdf_path = convert_to_pdf(file_path, os.path.dirname(file_path))
+        if pdf_path:
+            return FR(
+                pdf_path, media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f"inline; filename*=UTF-8''{quote(display_name, safe='')}",
+                    "Cache-Control": "no-cache",
+                }
+            )
+        # 转换失败回退为下载
+        return FR(
+            file_path,
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(display_name, safe='')}"}
+        )
+
+    ext = os.path.splitext(file_path)[1].lower()
+    text_exts = {'.txt', '.log', '.md', '.sql', '.py', '.js', '.ts', '.html', '.css',
+                 '.json', '.xml', '.yaml', '.yml', '.ini', '.cfg', '.conf',
+                 '.sh', '.bat', '.ps1', '.csv', '.env', '.gitignore', '.dockerfile',
+                 '.vue', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.rb', '.php'}
+    if ext in text_exts:
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+        html_content = f'''<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>{html_mod.escape(display_name)}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{background:#f8f8f8;padding:16px;font-family:'Cascadia Code','Consolas',monospace;font-size:14px;line-height:1.7}}
+pre{{background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:16px;white-space:pre-wrap;word-break:break-all;color:#333}}
+</style></head>
+<body><pre>{html_mod.escape(content)}</pre></body></html>'''
+        return HTMLResponse(
+            content=html_content,
+            headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(display_name, safe='')}"}
+        )
+
+    return FR(
+        file_path,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(display_name, safe='')}",
+            "Cache-Control": "no-cache",
+        }
+    )
+
+
+@router.post("/{requirement_id}/files", response_model=RequirementFileOut)
 def upload_requirement_file(
     project_id: str,
     requirement_id: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    """上传文件作为超链接，返回可访问的 URL"""
+    """上传文件作为超链接，落库（requirement_files）后返回可访问的 URL 与 id"""
     proj = resolve_project(db, project_id)
     req = resolve_requirement(db, proj.id, requirement_id)
 
-    req_display_id = req.display_id or f"req_{req.id}"
-    file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
+    file_dir = os.path.join(_req_files_root(proj, req), "files")
     os.makedirs(file_dir, exist_ok=True)
 
     # 保留原始扩展名
@@ -1425,12 +1523,149 @@ def upload_requirement_file(
             f.write(content)
             content = file.file.read(1024 * 64)
 
-    url = f"/uploads/{proj.display_id}/requirements/{req_display_id}/files/{unique_name}"
+    record = RequirementFile(
+        requirement_id=req.id,
+        filename=unique_name,
+        original_filename=file.filename or unique_name,
+        file_path=filepath,
+        file_size=size,
+        mime_type=file.content_type or "",
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    touch_project(db, proj.id)
     return {
-        "url": url,
-        "filename": unique_name,
-        "original_filename": file.filename,
+        "id": record.id,
+        "requirement_id": req.id,
+        "filename": record.filename,
+        "original_filename": record.original_filename,
+        "file_size": record.file_size,
+        "mime_type": record.mime_type,
+        "uploaded_at": record.uploaded_at,
+        "url": _req_upload_url(proj, req, "files", record.filename),
+        "exists": True,
     }
+
+
+@router.get("/{requirement_id}/files", response_model=List[RequirementFileOut])
+def list_requirement_files(
+    project_id: str,
+    requirement_id: str,
+    db: Session = Depends(get_db),
+):
+    """列出需求全部正文文件（requirement_files）。
+
+    历史存量幂等同步：正文 HTML 中引用、磁盘存在但库中缺失的文件补录为记录
+    （旧文件原始名不可还原，original_filename 暂用物理名占位）；只补缺，绝不删除。
+    """
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    files_dir = os.path.join(_req_files_root(proj, req), "files")
+
+    rows = db.query(RequirementFile).filter(RequirementFile.requirement_id == req.id).all()
+    by_name = {r.filename: r for r in rows}
+
+    changed = False
+    for name in _extract_req_file_names(req.description or ""):
+        if name in by_name:
+            continue
+        fp = os.path.join(files_dir, name)
+        if os.path.isfile(fp):
+            nr = RequirementFile(
+                requirement_id=req.id, filename=name, original_filename=name,
+                file_path=fp, file_size=os.path.getsize(fp), mime_type="",
+            )
+            db.add(nr)
+            by_name[name] = nr
+            changed = True
+    if changed:
+        db.commit()
+
+    records = sorted(by_name.values(), key=lambda r: (r.uploaded_at or r.id, r.id))
+    return [
+        {
+            "id": r.id, "requirement_id": req.id, "filename": r.filename,
+            "original_filename": r.original_filename, "file_size": r.file_size,
+            "mime_type": r.mime_type, "uploaded_at": r.uploaded_at,
+            "url": _req_upload_url(proj, req, "files", r.filename),
+            "exists": os.path.isfile(r.file_path),
+        }
+        for r in records
+    ]
+
+
+def _get_req_file_or_404(db, req, file_id: int) -> RequirementFile:
+    rec = db.query(RequirementFile).filter(
+        RequirementFile.id == file_id, RequirementFile.requirement_id == req.id
+    ).first()
+    if not rec:
+        raise HTTPException(404, "文件不存在")
+    return rec
+
+
+# ── 按 id 预览 / 下载 / 本地打开（与任务附件行为对齐；注册在 filename 端点之前） ──
+
+@router.get("/{requirement_id}/files/{file_id:int}/preview")
+def preview_requirement_file_by_id(
+    project_id: str,
+    requirement_id: str,
+    file_id: int,
+    as_page: bool = False,
+    title: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    rec = _get_req_file_or_404(db, req, file_id)
+    if not os.path.isfile(rec.file_path):
+        raise HTTPException(404, "文件不存在或已被删除")
+    preview_url = f"/api/projects/{project_id}/requirements/{requirement_id}/files/{file_id}/preview"
+    return _serve_req_file_preview(
+        rec.file_path, rec.original_filename, preview_url, as_page, page_title=title or ""
+    )
+
+
+@router.get("/{requirement_id}/files/{file_id:int}/download")
+def download_requirement_file_by_id(
+    project_id: str,
+    requirement_id: str,
+    file_id: int,
+    db: Session = Depends(get_db),
+):
+    from fastapi.responses import FileResponse as FR
+    from urllib.parse import quote
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    rec = _get_req_file_or_404(db, req, file_id)
+    if not os.path.isfile(rec.file_path):
+        raise HTTPException(404, "文件不存在或已被删除")
+    encoded = quote(rec.original_filename, safe='')
+    return FR(
+        rec.file_path,
+        media_type=rec.mime_type or "application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"}
+    )
+
+
+@router.post("/{requirement_id}/files/{file_id:int}/open")
+def open_requirement_file_by_id(
+    project_id: str,
+    requirement_id: str,
+    file_id: int,
+    db: Session = Depends(get_db),
+):
+    """用系统默认程序打开原件（等价于双击本地文件，触发 Word/Excel 等）"""
+    proj = resolve_project(db, project_id)
+    req = resolve_requirement(db, proj.id, requirement_id)
+    rec = _get_req_file_or_404(db, req, file_id)
+    if not os.path.isfile(rec.file_path):
+        raise HTTPException(404, "文件不存在或已被删除")
+    try:
+        os.startfile(rec.file_path)
+    except OSError as e:
+        raise HTTPException(500, f"无法用系统程序打开：{e}")
+    return {"ok": True}
 
 
 @router.delete("/{requirement_id}/files/{filename}")
@@ -1440,13 +1675,20 @@ def delete_requirement_file(
     filename: str,
     db: Session = Depends(get_db),
 ):
-    """删除需求超链接关联的文件"""
+    """删除需求超链接关联的文件（同步删除 requirement_files 记录与磁盘/转换缓存）"""
     proj = resolve_project(db, project_id)
     req = resolve_requirement(db, proj.id, requirement_id)
 
-    req_display_id = req.display_id or f"req_{req.id}"
-    file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
+    file_dir = os.path.join(_req_files_root(proj, req), "files")
     filepath = os.path.join(file_dir, filename)
+
+    rec = db.query(RequirementFile).filter(
+        RequirementFile.requirement_id == req.id,
+        RequirementFile.filename == filename,
+    ).first()
+    if rec:
+        db.delete(rec)
+        db.commit()
 
     remove_attachment_files(filepath)
 
@@ -1462,92 +1704,20 @@ def preview_requirement_file(
     title: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """预览需求附件：Office 转 PDF、文本渲染为 HTML，其他 inline 展示。as_page=1 返回带 <title> 的包装页。"""
-    from fastapi.responses import FileResponse as FR, HTMLResponse
-    from urllib.parse import quote
-    import html as html_mod
-    from ..office_convert import is_office_file, convert_to_pdf
-
+    """按物理文件名预览（兼容存量正文链接/编辑器 href 直访）。"""
     proj = resolve_project(db, project_id)
     req = resolve_requirement(db, proj.id, requirement_id)
 
     req_display_id = req.display_id or f"req_{req.id}"
-    file_dir = os.path.join(UPLOAD_DIR, proj.display_id, "requirements", req_display_id, "files")
-    file_path = os.path.join(file_dir, filename)
+    file_path = os.path.join(_req_files_root(proj, req), "files", filename)
 
     if not os.path.isfile(file_path):
         raise HTTPException(404, "文件不存在")
 
-    # as_page=1：返回带 <title> 的 HTML 包装页，新窗口打开时浏览器标签显示文件名
-    # （物理文件名为 uuid 乱码，title 参数由前端传入链接显示文字，缺省回退 filename）
-    if as_page:
-        preview_url = (f"/api/projects/{project_id}/requirements/{requirement_id}/files/"
-                       f"{quote(filename, safe='')}/preview")
-        ext = os.path.splitext(file_path)[1].lower()
-        image_exts = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'}
-        safe_title = html_mod.escape(title or filename)
-        if ext in image_exts:
-            body = ('<div style="height:100vh;display:flex;align-items:center;'
-                    f'justify-content:center;background:#f5f5f5"><img src="{preview_url}" '
-                    'style="max-width:100%;max-height:100vh;object-fit:contain"></div>')
-        else:
-            body = (f'<iframe src="{preview_url}" '
-                    'style="width:100%;height:100vh;border:0;display:block"></iframe>')
-        return HTMLResponse(
-            content=f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><title>{safe_title}</title>
-<style>*{{margin:0;padding:0;box-sizing:border-box}}body{{background:#f5f5f5}}</style></head>
-<body>{body}</body></html>'''
-        )
+    preview_url = (f"/api/projects/{project_id}/requirements/{requirement_id}/files/"
+                   f"{urllib.parse.quote(filename, safe='')}/preview")
+    return _serve_req_file_preview(file_path, filename, preview_url, as_page, page_title=title or "")
 
-    # Office 文档 → 转换为 PDF 后预览
-    if is_office_file(file_path):
-        pdf_path = convert_to_pdf(file_path, file_dir)
-        if pdf_path:
-            return FR(
-                pdf_path, media_type="application/pdf",
-                headers={
-                    "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}",
-                    "Cache-Control": "no-cache",
-                }
-            )
-        else:
-            return FR(
-                file_path,
-                media_type="application/octet-stream",
-                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename, safe='')}"}
-            )
-
-    ext = os.path.splitext(file_path)[1].lower()
-    text_exts = {'.txt', '.log', '.md', '.sql', '.py', '.js', '.ts', '.html', '.css',
-                 '.json', '.xml', '.yaml', '.yml', '.ini', '.cfg', '.conf',
-                 '.sh', '.bat', '.ps1', '.csv', '.env', '.gitignore', '.dockerfile',
-                 '.vue', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.rb', '.php'}
-    if ext in text_exts:
-        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read()
-        html_content = f'''<!DOCTYPE html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><title>{html_mod.escape(filename)}</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{background:#f8f8f8;padding:16px;font-family:'Cascadia Code','Consolas',monospace;font-size:14px;line-height:1.7}}
-pre{{background:#fff;border:1px solid #e0e0e0;border-radius:6px;padding:16px;white-space:pre-wrap;word-break:break-all;color:#333}}
-</style></head>
-<body><pre>{html_mod.escape(content)}</pre></body></html>'''
-        return HTMLResponse(
-            content=html_content,
-            headers={"Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}"}
-        )
-
-    return FR(
-        file_path,
-        headers={
-            "Content-Disposition": f"inline; filename*=UTF-8''{quote(filename, safe='')}",
-            "Cache-Control": "no-cache",
-        }
-    )
 
 
 @router.get("/{requirement_id}", response_model=RequirementOut)
@@ -1631,6 +1801,10 @@ def delete_requirement(
 ):
     proj = resolve_project(db, project_id)
     req = resolve_requirement(db, proj.id, requirement_id)
+    # 清理需求磁盘目录（正文文件/图片），requirement_files 行由 relationship cascade 一并删除
+    req_root = _req_files_root(proj, req)
+    if os.path.isdir(req_root):
+        shutil.rmtree(req_root, ignore_errors=True)
     db.delete(req)
     db.commit()
     touch_project(db, proj.id)
