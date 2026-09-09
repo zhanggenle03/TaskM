@@ -65,6 +65,7 @@ function getOverrides() {
 function saveOverrides(overrides) {
   localStorage.setItem(OVERRIDE_KEY, JSON.stringify(overrides))
   _parsedOverrides = null // 清空解析缓存
+  invalidateDayExtra()     // 覆盖变化会改变日历徽标，同时清空农历/节日缓存
 }
 
 /**
@@ -249,6 +250,15 @@ function persistHoliday(year, data) {
 }
 
 /**
+ * 写入某年法定节假日数据并同步失效农历/节日缓存。
+ * 首次渲染往往早于数据异步到达，若不失效缓存，同一天的徽标不会随新数据更新。
+ */
+function storeYearData(year, data) {
+  cache[year] = data
+  invalidateDayExtra()
+}
+
+/**
  * 加载指定年份的法定节假日数据
  * 取数顺序：内存缓存 → 服务端缓存（应用启动即预取）→ localStorage → 直连 timor.tech（带超时兜底）
  * 任何外部请求都设置了超时，绝不永久卡住 UI。
@@ -260,7 +270,7 @@ export async function loadHolidayData(year) {
   try {
     const fromServer = await loadHolidayFromServer(year)
     if (fromServer) {
-      cache[year] = fromServer
+      storeYearData(year, fromServer)
       persistHoliday(year, fromServer)
       return fromServer
     }
@@ -274,7 +284,7 @@ export async function loadHolidayData(year) {
     try {
       const parsed = JSON.parse(stored)
       if (Date.now() - parsed.ts < CACHE_TTL) {
-        cache[year] = parsed.data
+        storeYearData(year, parsed.data)
         return parsed.data
       }
     } catch { /* ignore */ }
@@ -288,7 +298,7 @@ export async function loadHolidayData(year) {
     clearTimeout(timer)
     const json = await res.json()
     if (json.code === 0 && json.holiday) {
-      cache[year] = json.holiday
+      storeYearData(year, json.holiday)
       persistHoliday(year, json.holiday)
       return json.holiday
     }
@@ -327,8 +337,17 @@ function getHolidayInfo(dateStr) {
 /**
  * 获取指定日期完整的农历+节日信息
  */
-// 农历/节日计算记忆化：同一天只算一次（避免切月首次访问某月时同步重算导致卡顿）
-const _dayExtraCache = {}
+// 农历/节日计算记忆化：同一天只算一次（避免切月首次访问某月时同步重算导致卡顿）。
+// 注意：法定节假日数据（loadHolidayData）与手动覆盖都是异步到达的，
+// 写入后必须失效本缓存，否则首次渲染（数据未到）时算出的
+// "周末/农历节日"结果会被永久记住，导致该月法定假徽标（如中秋节）不更新。
+let _dayExtraCache = {}
+
+/** 使农历/节日记忆化缓存失效：法定节假日数据或手动覆盖发生变更后调用 */
+function invalidateDayExtra() {
+  _dayExtraCache = {}
+}
+
 export function getDayExtraInfo(dateStr) {
   if (_dayExtraCache[dateStr]) return _dayExtraCache[dateStr]
   const [y, m, d] = dateStr.split('-').map(Number)
