@@ -148,6 +148,8 @@ export const updateUserSettings = (data) => http.put('/process/settings/user', d
 export const getSalaryRecords = (params) => http.get('/salary/records', { params })
 export const getSalaryYears = () => http.get('/salary/years')
 export const getSalaryRecord = (id) => http.get(`/salary/records/${id}`)
+// 同月同类型已有记录查询：取消「每月一条」后用于重复录入确认提示
+export const getSalaryDuplicates = (params) => http.get('/salary/records/duplicates', { params })
 export const createSalaryRecord = (data) => http.post('/salary/records', data)
 export const updateSalaryRecord = (id, data) => http.put(`/salary/records/${id}`, data)
 export const deleteSalaryRecord = (id) => http.delete(`/salary/records/${id}`)

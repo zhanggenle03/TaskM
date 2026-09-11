@@ -49,7 +49,7 @@
       <div ref="cardListEl" class="sum-row">
         <div v-for="key in cardOrder" v-show="!isCardHidden(key)" :key="key" class="sum-card" :class="cardMeta(key).cls" :data-key="key">
           <div class="sum-card-head">
-            <span class="sum-label">{{ cardMeta(key).label }}</span>
+            <span class="sum-label">{{ cardMeta(key).label }}<span v-if="hasBonus" class="nb-chip">不含奖金</span></span>
             <el-icon class="drag-handle" title="拖动调整顺序"><Rank /></el-icon>
           </div>
           <template v-if="key === 'gross'">
@@ -61,7 +61,7 @@
           </template>
           <template v-else-if="key === 'net'">
             <div class="sum-value">{{ fmt(summary.total_net) }}</div>
-            <div class="sum-sub">共 {{ summary.record_count || 0 }} 期 · 月均 {{ fmt(summary.avg_net) }}</div>
+            <div class="sum-sub">共 {{ summary.month_count || 0 }} 个月 / {{ summary.record_count || 0 }} 条 · 月均 {{ fmt(summary.avg_net) }}</div>
           </template>
           <template v-else-if="key === 'credited'">
             <div class="sum-value">{{ fmt(summary.total_credited) }}</div>
@@ -162,7 +162,7 @@
         </el-table-column>
         <el-table-column label="应扣（含税）" width="152" align="center">
           <template #default="{ row }">
-            <span v-if="row.record_type === 'bonus'" class="amt amt-muted">—</span>
+            <span v-if="!row.personal_deduction" class="amt amt-muted">—</span>
             <span v-else class="amt amt-deduct">{{ fmt(row.personal_deduction) }}<small class="amt-tax-part">({{ taxOf(row) }})</small></span>
           </template>
         </el-table-column>
@@ -174,13 +174,13 @@
         </el-table-column>
         <el-table-column label="实际个税" width="96" align="center">
           <template #default="{ row }">
-            <span v-if="row.record_type === 'bonus'" class="amt amt-muted">—</span>
+            <span v-if="row.actual_tax == null" class="amt amt-muted">—</span>
             <span v-else class="amt amt-tax">{{ fmt(row.actual_tax) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="公司承担" width="96" align="center">
           <template #default="{ row }">
-            <span v-if="row.record_type === 'bonus'" class="amt amt-muted">—</span>
+            <span v-if="!row.company_cost" class="amt amt-muted">—</span>
             <span v-else class="amt amt-company">{{ fmt(row.company_cost) }}</span>
           </template>
         </el-table-column>
@@ -320,8 +320,8 @@
       </template>
     </el-dialog>
 
-    <!-- 奖金记录弹窗（独立简洁表单，与薪资录入分离） -->
-    <el-dialog v-model="bonusDialogVisible" :title="bonusForm.id ? '编辑奖金' : '新增奖金'" width="560px" top="10vh" @closed="resetBonusForm">
+    <!-- 奖金记录弹窗（字段与列表列一一对应：应发 / 应扣（含税）/ 实发 / 到账 / 实际个税 / 公司承担） -->
+    <el-dialog v-model="bonusDialogVisible" :title="bonusForm.id ? '编辑奖金' : '新增奖金'" width="780px" top="7vh" @closed="resetBonusForm">
       <el-form :model="bonusForm" label-width="96px">
         <div class="bonus-form-row">
           <el-form-item label="奖金月份" required>
@@ -331,30 +331,62 @@
             <el-date-picker v-model="bonusForm.pay_date" type="date" value-format="YYYY-MM-DD" placeholder="发放日" style="width:100%" />
           </el-form-item>
         </div>
-        <el-form-item label="单位">
-          <el-input v-model="bonusForm.employer" placeholder="公司名（可选）" />
-        </el-form-item>
         <div class="bonus-form-row">
+          <el-form-item label="单位">
+            <el-input v-model="bonusForm.employer" placeholder="公司名（可选）" />
+          </el-form-item>
           <el-form-item label="奖金名称" required>
             <el-input v-model="bonusForm.name" placeholder="如：年终奖（2025年度）" />
           </el-form-item>
-          <el-form-item label="奖金金额" required>
-            <el-input-number v-model="bonusForm.amount" :min="0" :precision="2" :step="1000" controls-position="right" placeholder="应发金额" style="width:100%" />
+        </div>
+
+        <div class="sec-head">金额</div>
+        <div class="bonus-form-row">
+          <el-form-item label="应发" required>
+            <el-input-number v-model="bonusForm.amount" :min="0" :precision="2" :step="1000" controls-position="right" placeholder="奖金应发金额" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="公司承担">
+            <el-input-number v-model="bonusForm.company_cost" :min="0" :precision="2" :step="1000" controls-position="right" placeholder="留空按 0 计" style="width:100%" />
           </el-form-item>
         </div>
         <div class="bonus-form-row">
-          <el-form-item label="扣款">
-            <el-input-number v-model="bonusForm.deduction" :min="0" :precision="2" :step="100" controls-position="right" placeholder="如：个税等（可选）" style="width:100%" />
+          <el-form-item label="个税">
+            <el-input-number v-model="bonusForm.tax" :min="0" :precision="2" :step="100" controls-position="right" placeholder="奖金个税" style="width:100%" />
           </el-form-item>
-          <el-form-item label="实际到账">
-            <el-input-number v-model="bonusForm.credited_amount" :min="0" :precision="2" controls-position="right" placeholder="默认等于实发" style="width:100%" />
+          <el-form-item label="实际个税">
+            <el-input-number v-model="bonusForm.actual_tax" :min="0" :precision="2" controls-position="right" :placeholder="`留空默认 ${fmt(bonusForm.tax || 0)}`" style="width:100%" />
           </el-form-item>
         </div>
-        <div class="bonus-net-hint">实发 = 金额 − 扣款 = <b>{{ fmt(bonusNet) }}</b>，保存后与到账保持一致</div>
+
+        <div class="bonus-sub-head">
+          <span>其他扣款<em v-if="bonusForm.other_deductions.length" class="bd-count">{{ bonusForm.other_deductions.length }} 项</em></span>
+          <el-button size="small" text type="primary" @click="addBonusDeduction"><el-icon><Plus /></el-icon>加一项</el-button>
+        </div>
+        <div v-if="bonusForm.other_deductions.length" class="bonus-ded-list">
+          <div v-for="(d, i) in bonusForm.other_deductions" :key="i" class="bonus-ded-row">
+            <el-input v-model="d.name" size="small" placeholder="扣款名称（如：餐费、罚款）" class="bd-name" />
+            <el-input-number v-model="d.amount" :min="0" :precision="2" :step="100" size="small" controls-position="right" placeholder="金额" class="bd-amt" />
+            <el-button size="small" text type="danger" class="bd-del" @click="removeBonusDeduction(i)"><el-icon><Delete /></el-icon></el-button>
+          </div>
+        </div>
+        <div v-else class="bonus-ded-empty">暂未添加其他扣款，点右上「加一项」可添加多条（各自填名称与金额）</div>
+
+        <div class="bonus-sum-bar">
+          <span>应扣（含税）<b>{{ fmt(bonusDeductionTotal) }}</b></span>
+          <span class="bsb-sep">|</span>
+          <span>实发 <b class="c-net">{{ fmt(bonusNet) }}</b></span>
+          <span class="bsb-formula">实发 = 应发 −（个税 + 其他扣款）</span>
+        </div>
+
+        <div class="bonus-form-row">
+          <el-form-item label="到账">
+            <el-input-number v-model="bonusForm.credited_amount" :min="0" :precision="2" controls-position="right" :placeholder="`留空默认 ${fmt(bonusNet)}`" style="width:100%" />
+          </el-form-item>
+        </div>
         <el-form-item label="备注">
           <el-input v-model="bonusForm.remark" type="textarea" :rows="2" placeholder="可选备注" />
         </el-form-item>
-        <div class="bonus-record-hint">奖金仅作记录，不参与指标卡统计与个税计算；计税测算请到「个税汇算」页查看</div>
+        <div class="bonus-record-hint">上表字段对应列表的「应发 / 应扣（含税）/ 实发 / 到账 / 实际个税 / 公司承担」列。公司承担留空按 0 计，到账留空默认 = 实发，实际个税留空默认 = 个税。奖金不并入工资的个税累计，单独计税测算请到「个税汇算」页查看。</div>
       </el-form>
       <template #footer>
         <el-button @click="bonusDialogVisible = false">取消</el-button>
@@ -502,7 +534,7 @@ import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Sortable from 'sortablejs'
 import {
-  getSalaryRecords, getSalaryRecord,
+  getSalaryRecords, getSalaryRecord, getSalaryDuplicates,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
   getSalaryConfig, updateSalaryConfig, calcSalaryTax,
   getSalaryConfigTemplates, createSalaryConfigTemplate, updateSalaryConfigTemplate,
@@ -619,6 +651,9 @@ const creditedDiffText = computed(() => {
   return d > 0 ? `到账多 ${fmt(d)}` : `未到账 ${fmt(-d)}`
 })
 
+// 指标卡只统计薪资记录（/summary 硬过滤 bonus），当前范围内有奖金时需提示口径
+const hasBonus = computed(() => records.value.some(r => (r.record_type || 'salary') === 'bonus'))
+
 // ── 指标卡布局（顺序 + 隐藏，持久化到 settings.json） ──
 const cardOrder = ref([...DEFAULT_CARD_ORDER])
 const cardHidden = ref([])
@@ -687,21 +722,21 @@ const periodRange = ref([`${now.getFullYear()}-01`, `${now.getFullYear()}-12`])
 
 const dialogVisible = ref(false)
 
-// ── 奖金记录弹窗（纯记录：不参与指标卡统计与个税计算，测算在汇算页） ──
+// ── 奖金记录弹窗 ──
+// 字段与列表列一一对应：应发(gross) / 个税+其他扣款(应扣含税) / 实发(net) / 到账 / 实际个税 / 公司承担
+// 明细映射：income(非计税) + tax(个税) + deduction(其他扣款) + company_cost(公司承担)
 const bonusDialogVisible = ref(false)
 const savingBonus = ref(false)
-const bonusForm = reactive({
+const emptyBonusForm = () => ({
   id: null, period: '', pay_date: '', employer: '',
-  name: '年终奖', amount: null, deduction: null,
-  credited_amount: null, remark: '',
+  name: '年终奖', amount: null,
+  tax: null,
+  other_deductions: [],      // 多条：{ name, amount }
+  company_cost: null,        // 留空按 0 计
+  credited_amount: null, actual_tax: null, remark: '',
 })
-const resetBonusForm = () => {
-  Object.assign(bonusForm, {
-    id: null, period: '', pay_date: '', employer: '',
-    name: '年终奖', amount: null, deduction: null,
-    credited_amount: null, remark: '',
-  })
-}
+const bonusForm = reactive(emptyBonusForm())
+const resetBonusForm = () => { Object.assign(bonusForm, emptyBonusForm()) }
 function openBonusCreate() {
   resetBonusForm()
   // 默认带出当前激活薪资模板的单位
@@ -709,17 +744,29 @@ function openBonusCreate() {
   if (cfg) bonusForm.employer = cfg.employer || ''
   bonusDialogVisible.value = true
 }
-// 实发 = 金额 − 扣款（应发保持名义金额，不与到账绑定）
-const bonusNet = computed(() => Math.max(0, (bonusForm.amount || 0) - (bonusForm.deduction || 0)))
+// 其他扣款可多条，逐条合计
+const bonusOtherDeductionTotal = computed(() =>
+  round2((bonusForm.other_deductions || []).reduce((s, d) => s + (Number(d.amount) || 0), 0)))
+// 应扣（含税）= 个税 + 其他扣款；实发 = 应发 − 应扣
+const bonusDeductionTotal = computed(() => round2((Number(bonusForm.tax) || 0) + bonusOtherDeductionTotal.value))
+const bonusNet = computed(() => round2(Math.max(0, (Number(bonusForm.amount) || 0) - bonusDeductionTotal.value)))
+const addBonusDeduction = () => { bonusForm.other_deductions.push({ name: '', amount: null }) }
+const removeBonusDeduction = (i) => { bonusForm.other_deductions.splice(i, 1) }
 function handleAddCommand(cmd) {
   if (cmd === 'bonus') openBonusCreate()
   else openCreate()
 }
 function openBonusEdit(detail) {
-  const income = (detail.items || []).find(it => it.category === 'income')
-  // 扣款兼容：旧记录为 deduction-扣款，新记录为 tax-个税
-  const deduction = (detail.items || []).find(it => it.category === 'tax')
-    || (detail.items || []).find(it => it.category === 'deduction' && it.name === '扣款')
+  const items = detail.items || []
+  const sumBy = (pred) => round2(items.filter(pred).reduce((s, it) => s + (Number(it.amount) || 0), 0))
+  const income = items.find(it => it.category === 'income')
+  // 兼容历史：早期奖金的扣款存在 deduction/扣款 行，语义等同个税（列表展示层同样归一）
+  const tax = sumBy(it => it.category === 'tax' || (it.category === 'deduction' && it.name === '扣款'))
+  // 其他扣款：逐条还原（保持库内顺序）
+  const otherDeductions = items
+    .filter(it => it.category === 'deduction' && it.name !== '扣款')
+    .map(it => ({ name: it.name || '', amount: it.amount ?? null }))
+  const companyCost = sumBy(it => it.category === 'company_cost')
   Object.assign(bonusForm, {
     id: detail.id,
     period: detail.period,
@@ -727,26 +774,84 @@ function openBonusEdit(detail) {
     employer: detail.employer || '',
     name: income?.name || '年终奖',
     amount: income?.amount ?? null,
-    deduction: deduction?.amount ?? null,
+    tax: tax || null,
+    other_deductions: otherDeductions,
+    company_cost: companyCost || null,
     credited_amount: detail.credited_amount ?? null,
+    actual_tax: detail.actual_tax ?? null,
     remark: detail.remark || '',
   })
   bonusDialogVisible.value = true
 }
+// ── 同月重复录入确认 ──
+// 同月已允许存在多条工资/奖金记录（不再硬拒绝），重复时先查后端给出提示，用户确认后再保存。
+async function confirmSameMonthDuplicates(period, recordType, excludeId) {
+  if (!period) return true
+  let info = null
+  try {
+    const res = await getSalaryDuplicates({
+      period,
+      record_type: recordType,
+      exclude_id: excludeId || undefined,
+    })
+    info = res?.data ?? res
+  } catch {
+    // 查询失败不阻断保存（后端仍有明细校验兜底）
+    return true
+  }
+  const dup = info?.records || []
+  if (!dup.length) return true
+  const kind = recordType === 'bonus' ? '奖金' : '薪资'
+  const detail = dup.map((r) => {
+    const name = r.first_income_name ? `${r.first_income_name} ` : ''
+    return `${r.pay_date || '未填发放日'} ${name}实发 ${fmt(r.net)}`
+  }).join('；')
+  try {
+    await ElMessageBox.confirm(
+      `${period} 已有 ${dup.length} 条${kind}记录：${detail}。继续保存将新增第 ${dup.length + 1} 条${kind}记录。`,
+      `该月份已有${kind}记录`,
+      { type: 'warning', confirmButtonText: '继续保存', cancelButtonText: '取消' }
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function saveBonus() {
   if (!bonusForm.period) { ElMessage.warning('请选择奖金月份'); return }
   if (!(bonusForm.amount > 0)) { ElMessage.warning('请填写奖金金额'); return }
-  const deduction = bonusForm.deduction > 0 ? Number(bonusForm.deduction) : 0
-  const net = Math.max(0, Number(bonusForm.amount) - deduction)
-  // 到账未填时默认等于实发（金额 − 扣款）
-  const credited = bonusForm.credited_amount != null && bonusForm.credited_amount !== '' ? Number(bonusForm.credited_amount) : net
-  // 仅记录：income 行恒非计税（taxable=false），不生成 tax 行，不记录实际个税
+  // 同月可多条，重复时先确认（编辑模式排除自身）
+  if (!(await confirmSameMonthDuplicates(bonusForm.period, 'bonus', bonusForm.id))) return
+  const gross = round2(Number(bonusForm.amount) || 0)
+  const tax = Math.max(0, round2(Number(bonusForm.tax) || 0))
+  // 其他扣款：整行空白（名称与金额都没填）直接忽略；填了名称却没金额则拦下提示
+  const rawDeds = (bonusForm.other_deductions || []).filter(d => (d.name || '').trim() || Number(d.amount) > 0)
+  const invalid = rawDeds.find(d => !(Number(d.amount) > 0))
+  if (invalid) { ElMessage.warning(`其他扣款「${(invalid.name || '').trim() || '未命名'}」请填写金额`); return }
+  const otherDeductions = rawDeds.map(d => ({ name: (d.name || '').trim() || '其他扣款', amount: round2(Number(d.amount)) }))
+  const otherDeductionTotal = round2(otherDeductions.reduce((s, d) => s + d.amount, 0))
+  const deductionTotal = round2(tax + otherDeductionTotal)
+  if (deductionTotal > gross) { ElMessage.warning('应扣（个税 + 其他扣款）不能大于应发金额'); return }
+  const net = round2(gross - deductionTotal)
+  // 留空即取默认：到账 = 实发、实际个税 = 明细个税；公司承担留空按 0 计（不生成该项）
+  const credited = numOrNull(bonusForm.credited_amount) ?? net
+  const actualTax = numOrNull(bonusForm.actual_tax) ?? tax
+  const companyCost = Math.max(0, round2(Number(bonusForm.company_cost) || 0))
+  // 奖金收入行恒非计税（taxable=false）：不并入工资的个税累计，单独计税测算在汇算页
   const items = [{
-    category: 'income', name: bonusForm.name || '年终奖', amount: Number(bonusForm.amount),
+    category: 'income', name: bonusForm.name || '年终奖', amount: gross,
     base: null, rate: null, funded_by: '', tax_deductible: false, taxable: false, sort_order: 0,
   }]
-  if (deduction > 0) {
-    items.push({ category: 'tax', name: '个税', amount: deduction, base: null, rate: null, funded_by: 'personal', tax_deductible: false, taxable: false, sort_order: 1 })
+  let sortOrder = 1
+  if (tax > 0) {
+    items.push({ category: 'tax', name: '个税', amount: tax, base: null, rate: null, funded_by: 'personal', tax_deductible: false, taxable: false, sort_order: sortOrder++ })
+  }
+  for (const d of otherDeductions) {
+    items.push({ category: 'deduction', name: d.name, amount: d.amount, base: null, rate: null, funded_by: 'personal', tax_deductible: false, taxable: false, sort_order: sortOrder++ })
+  }
+  if (companyCost > 0) {
+    items.push({ category: 'company_cost', name: '公司承担', amount: companyCost, base: null, rate: null, funded_by: 'company', tax_deductible: false, taxable: false, sort_order: sortOrder++ })
   }
   const payload = {
     period: bonusForm.period,
@@ -754,7 +859,7 @@ async function saveBonus() {
     pay_date: bonusForm.pay_date || null,
     employer: bonusForm.employer || '',
     credited_amount: credited,
-    actual_tax: null,
+    actual_tax: actualTax,
     remark: bonusForm.remark || '',
     items,
   }
@@ -813,7 +918,10 @@ const form = reactive(emptyForm())
 const fmt = (n) => '¥' + Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const catLabel = (c) => (CATEGORY_OPTIONS.find(o => o.value === c) || {}).label || c
 // 从明细行中计算个税合计
-const taxOf = (row) => fmt((row.items || []).filter(i => i.category === 'tax').reduce((s, i) => s + (i.amount || 0), 0))
+// 明细个税合计；旧奖金记录的「个人扣款-扣款」在展示层同样归入个税（与 normItems 一致）
+const taxOf = (row) => fmt((row.items || []).filter(i =>
+  i.category === 'tax' || (row.record_type === 'bonus' && i.category === 'deduction' && i.name === '扣款')
+).reduce((s, i) => s + (i.amount || 0), 0))
 // 按类别分组（固定顺序：收入→个人扣款→个税→公司承担）
 const GROUP_ORDER = ['income', 'deduction', 'tax', 'company_cost']
 const grouped = (items) => {
@@ -1301,6 +1409,8 @@ async function openEdit(row) {
 
 async function save() {
   if (!form.period) { ElMessage.warning('请选择薪资月份'); return }
+  // 同月可多条，重复时先确认（编辑模式排除自身）
+  if (!(await confirmSameMonthDuplicates(form.period, form.record_type === 'bonus' ? 'bonus' : 'salary', form.id))) return
   const payload = {
     period: form.period,
     record_type: form.record_type === 'bonus' ? 'bonus' : 'salary',
@@ -1333,7 +1443,7 @@ async function save() {
     ElMessage.success('已保存')
     dialogVisible.value = false
     await loadData()
-  } catch { /* 拦截器已提示（如月份重复 409） */ }
+  } catch { /* 错误提示由拦截器处理 */ }
   finally { saving.value = false }
 }
 
@@ -1365,6 +1475,8 @@ async function remove(row) {
 .drag-handle:active { cursor: grabbing; }
 .cards-empty { text-align: center; font-size: 13px; color: #bbb; padding: 24px 0; border: 1px dashed #e8e8e4; border-radius: 10px; }
 .sum-label { font-size: 12px; color: #999; margin-bottom: 8px; }
+/* 「不含奖金」统一标注：与个税汇算页同款浅灰 chip，保持全站形态一致 */
+.nb-chip { display:inline-block; margin-left:5px; padding:1px 5px; border-radius:4px; background:#f2f3f5; color:#8a8f99; font-size:11px; font-weight:400; line-height:15px; vertical-align:middle; white-space:nowrap; }
 .sum-value { font-size: 18px; font-weight: 600; color: #2c2c2a; }
 .sum-sub { margin-top: 5px; font-size: 11px; color: #909399; white-space: nowrap; }
 .sum-sub-plus { color: #E6A23C; }
@@ -1450,8 +1562,37 @@ async function remove(row) {
 /* 奖金记录弹窗 */
 .bonus-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .bonus-form-row .el-form-item { margin-bottom: 16px; }
-.bonus-net-hint { font-size: 12px; color: #909399; margin: -8px 0 14px; }
-.bonus-net-hint b { color: #534ab7; }
+/* 其他扣款：可增删的多条列表（名称 + 金额） */
+.bonus-sub-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px; font-weight: 600; color: #2c2c2a;
+  padding: 0 0 8px; margin: 0 0 10px;
+  border-bottom: 1px solid #eef0f2;
+}
+.bonus-sub-head .bd-count { font-style: normal; font-weight: 400; font-size: 12px; color: #a8abb2; margin-left: 6px; }
+.bonus-ded-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.bonus-ded-row { display: flex; align-items: center; gap: 8px; }
+.bonus-ded-row .bd-name { flex: 1; min-width: 0; }
+.bonus-ded-row .bd-amt { flex: 0 0 180px; }
+.bonus-ded-row .bd-amt .el-input-number { width: 100%; }
+.bd-del { flex: 0 0 auto; }
+.bonus-ded-empty {
+  font-size: 12px; color: #a8abb2;
+  padding: 8px 12px; margin-bottom: 14px;
+  background: #fafbfc; border: 1px dashed #e6e8eb; border-radius: 8px;
+}
+
+/* 应扣 / 实发 汇总条：对应列表「应扣（含税）」「实发」列 */
+.bonus-sum-bar {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: #606266;
+  background: #f8f9fb; border: 1px solid #eef0f2; border-radius: 8px;
+  padding: 9px 12px; margin: -4px 0 16px;
+}
+.bonus-sum-bar b { font-size: 14px; color: #E6A23C; font-variant-numeric: tabular-nums; }
+.bonus-sum-bar b.c-net { color: #534AB7; }
+.bsb-sep { color: #dcdfe6; }
+.bsb-formula { margin-left: auto; color: #a8abb2; }
 .bonus-record-hint { font-size: 12px; color: #909399; line-height: 1.6; padding: 8px 12px; background: #f8f9fa; border: 1px solid #eef0f2; border-radius: 8px; }
 
 /* 分栏布局：左侧明细可滚动，右侧汇总固定 */
