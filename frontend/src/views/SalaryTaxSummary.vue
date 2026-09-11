@@ -7,7 +7,9 @@
         </el-button>
         <div>
           <h1 class="page-title">个税汇算</h1>
-          <p class="page-sub">综合所得年度汇算清缴</p>
+          <p class="page-sub">
+            综合所得年度汇算清缴<span v-if="hasBonus" class="nb-chip nb-chip-page">汇总不含奖金</span>
+          </p>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:12px">
@@ -32,7 +34,7 @@
       <!-- KPI 卡片 -->
       <div class="kpi-grid">
         <div class="kpi-card kpi-gross">
-          <div class="kpi-label">综合所得收入额</div>
+          <div class="kpi-label">综合所得收入额<span v-if="hasBonus" class="nb-chip">不含奖金</span></div>
           <div class="kpi-value">{{ fmt(ps.total_income) }}</div>
           <div class="kpi-sub">
             <span>薪资 {{ fmt(base.total_gross) }}</span>
@@ -41,7 +43,7 @@
           </div>
         </div>
         <div class="kpi-card kpi-nontax">
-          <div class="kpi-label">非计税收入</div>
+          <div class="kpi-label">非计税收入<span v-if="hasBonus" class="nb-chip">不含奖金</span></div>
           <div class="kpi-value">{{ fmt(ps.non_taxable_income) }}</div>
           <div class="kpi-sub">
             <span>合计收入 {{ fmt(ps.total_income_all) }}</span>
@@ -84,7 +86,7 @@
           </div>
         </div>
         <div class="detail-card">
-          <div class="detail-title">综合所得税额对比</div>
+          <div class="detail-title">综合所得税额对比<span v-if="hasBonus" class="nb-chip">不含奖金</span></div>
           <div class="detail-body">
             <div class="detail-row">
               <span class="detail-label">应交税额</span>
@@ -107,31 +109,81 @@
         </div>
       </div>
 
-      <!-- 全年一次性奖金计税对比（基于已录数据自动测算，单独一行） -->
+      <!-- 全年一次性奖金计税（支持多条：任选一条单独计税，其余并入综合所得） -->
       <div class="detail-card bonus-full-card">
-        <div class="detail-title">全年一次性奖金计税（单独计税 vs 并入综合所得）</div>
-        <div class="detail-body" v-if="base.bonus_single_amount > 0">
-          <div class="detail-row">
-            <span class="detail-label">奖金金额</span>
-            <span class="detail-value">{{ fmt(base.bonus_single_amount) }}</span>
+        <div class="detail-title">全年一次性奖金计税<span class="nb-chip nb-chip-standalone">独立测算 · 不计入上方汇总</span></div>
+
+        <template v-if="bonusRows.length">
+          <div class="bonus-head">
+            <span></span>
+            <span class="bt-pick">选择单独计税的记录</span>
+            <span class="bt-num">金额</span>
+            <span class="bt-num">单独计税</span>
+            <span class="bt-num">并入综合所得</span>
           </div>
-          <div class="detail-divider"></div>
-          <div class="detail-row">
-            <span class="detail-label">单独计税</span>
-            <span class="detail-value">{{ fmt(bonusSingleAuto) }}</span>
+
+          <label
+            v-for="o in bonusPickOptions"
+            :key="o.key"
+            class="bonus-line"
+            :class="{ 'is-picked': bonusChoice === o.key, 'is-best': bestBonusKey === o.key }"
+          >
+            <input type="radio" name="bonus-pick" v-model="bonusChoice" :value="o.key" />
+            <span class="bt-pick">
+              <span class="bt-name">
+                {{ o.row.name }}<span v-if="bestBonusKey === o.key" class="nb-chip">推荐</span>
+              </span>
+              <span class="bt-meta">
+                {{ o.row.period }}<template v-if="o.row.actual_tax > 0"> · 已缴 {{ fmt(o.row.actual_tax) }}</template>
+              </span>
+            </span>
+            <span class="bt-num bt-amount">{{ fmt(o.row.amount) }}</span>
+            <span class="bt-num">{{ fmt(o.single) }}</span>
+            <span class="bt-num bt-num-merge">+{{ fmt(o.ownMerge) }}</span>
+          </label>
+
+          <label
+            class="bonus-line bonus-line-none"
+            :class="{ 'is-picked': bonusChoice === 'none', 'is-best': bestBonusKey === 'none' }"
+          >
+            <input type="radio" name="bonus-pick" v-model="bonusChoice" value="none" />
+            <span class="bt-pick">
+              <span class="bt-name">
+                不使用单独计税<span v-if="bestBonusKey === 'none'" class="nb-chip">推荐</span>
+              </span>
+              <span class="bt-meta">全部奖金并入综合所得</span>
+            </span>
+            <span class="bt-num bt-amount">{{ fmt(bonusTotal) }}</span>
+            <span class="bt-num bt-muted">—</span>
+            <span class="bt-num bt-num-merge">+{{ fmt(noneBonusOption ? noneBonusOption.ownMerge : 0) }}</span>
+          </label>
+
+          <div class="bonus-result" v-if="selectedBonus">
+            <div class="br-note">
+              <template v-if="selectedBonus.row">
+                «{{ selectedBonus.row.name }}»（{{ selectedBonus.row.period }}）走单独计税，其余 {{ bonusRows.length - 1 }} 条奖金并入综合所得
+              </template>
+              <template v-else>
+                不使用单独计税，{{ bonusRows.length }} 条奖金全部并入综合所得（不占用当年唯一的单独计税资格）
+              </template>
+            </div>
+            <div class="br-calc">
+              <span class="br-piece" v-if="selectedBonus.row">单独计税 <b>{{ fmt(selectedBonus.single) }}</b></span>
+              <span class="br-op" v-if="selectedBonus.row">＋</span>
+              <span class="br-piece">{{ selectedBonus.row ? '其余并入新增' : '全部并入新增' }} <b>{{ fmt(selectedBonus.othersMerge) }}</b></span>
+              <span class="br-op">＝</span>
+              <span class="br-piece br-piece-total">税额共增加 <b>{{ fmt(selectedBonus.increase) }}</b></span>
+            </div>
+            <div class="br-final">
+              应交税额
+              <span class="br-from">{{ fmt(ps.tax_payable) }}</span>
+              <span class="br-arrow">→</span>
+              <span class="br-to">{{ fmt(bonusTaxAfter) }}</span>
+            </div>
           </div>
-          <div class="detail-divider"></div>
-          <div class="detail-row">
-            <span class="detail-label">并入综合所得新增</span>
-            <span class="detail-value" :class="bonusMergeClass">{{ fmt(bonusMergeAuto) }}</span>
-          </div>
-          <div class="detail-divider"></div>
-          <div class="detail-row">
-            <span class="detail-label">推荐</span>
-            <span class="detail-value bonus-rec-val">{{ bonusRecommendAuto }}</span>
-          </div>
-          <div class="detail-sub">单独计税：A÷12 查月度税率表（政策至 2027 底），不并入综合所得；并入：与工资合并按年度税率表计税。当前应纳税所得额 ¥{{ fmt(ps.taxable_income) }}，并入新增 = 奖金落在的边际税率 × 奖金（需超过 ¥29,000 才跨入更高档）</div>
-        </div>
+
+          <div class="detail-sub">单独计税：选中金额 A÷12 查月度税率表，税 = A×税率−速算扣除（政策至 2027 年底，一个纳税年度只能用一次）；其余奖金并入综合所得按年度税率表计税。当前应纳税所得额（不含奖金）¥{{ fmt(ps.taxable_income) }}，并入新增按边际档位递增。</div>
+        </template>
         <div v-else class="detail-empty">暂无奖金记录——在薪资记录中录入奖金后自动测算</div>
       </div>
 
@@ -333,7 +385,7 @@ const TAX_BRACKETS = [
   { upper: Infinity, rate: 45, qd: 181920 },
 ]
 
-// ── 全年一次性奖金计税测算（基于已录奖金金额自动算，与工资计算完全隔离） ──
+// ── 全年一次性奖金计税测算（支持多条：任选一条走单独计税，其余并入综合所得） ──
 // 单独计税：月度换算税率表（A÷12 查档，税 = A×rate − qd；政策有效期至 2027-12-31）
 const MONTHLY_TAX_BRACKETS = [
   { upper: 3000, rate: 3, qd: 0 },
@@ -360,31 +412,71 @@ function yearTax(x) {
   }
   return 0
 }
-// 并入综合所得新增税额 = f(原应纳税所得额 + 奖金) − f(原应纳税所得额)
-// 用 taxable_raw（可为负）：负值时并入后仍不用交税 → 新增 0，而不是按 0 算成奖金×3%
-const bonusMergeAuto = computed(() => {
-  const a = base.value.bonus_single_amount || 0
-  if (a <= 0) return 0
+// 并入综合所得的新增税额 = f(原应纳税所得额 + 并入额) − f(原应纳税所得额)
+// 用 taxable_raw（可为负）：负值时并入后仍不用交税 → 新增 0，
+// 而不是从 0 起算成「并入额 × 最低档税率」
+function mergeAdd(x, baseTax) {
+  return Math.max(0, Math.round((yearTax(x) - baseTax) * 100) / 100)
+}
+
+// 奖金候选记录（金额 > 0；顺序同后端，按发放月升序）
+const bonusRows = computed(() => (base.value.bonus_records || []).filter(b => (Number(b.amount) || 0) > 0))
+const bonusTotal = computed(() => Math.round(bonusRows.value.reduce((s, b) => s + (Number(b.amount) || 0), 0) * 100) / 100)
+
+// 每个方案的总税额增量 = 选中那条的单独计税税额 + 其余奖金并入综合所得的新增
+const bonusOptions = computed(() => {
+  const rows = bonusRows.value
+  if (!rows.length) return []
   const cur = ps.value.taxable_raw || 0
-  return Math.max(0, Math.round((yearTax(cur + a) - yearTax(cur)) * 100) / 100)
+  const baseTax = yearTax(cur)
+  const opts = rows.map(b => {
+    const amount = Number(b.amount) || 0
+    const others = Math.round((bonusTotal.value - amount) * 100) / 100
+    const single = autoSingleTax(amount)
+    const othersMerge = mergeAdd(cur + others, baseTax)
+    return {
+      key: `bonus-${b.id}`,
+      row: b,
+      single,
+      others,
+      othersMerge,
+      ownMerge: mergeAdd(cur + amount, baseTax),   // 该条单看并入时的新增（列表参考列）
+      increase: Math.round((single + othersMerge) * 100) / 100,
+    }
+  })
+  // 「不使用单独计税」：全部并入综合所得（不占用当年唯一的单独计税资格）
+  const allMerge = mergeAdd(cur + bonusTotal.value, baseTax)
+  opts.push({
+    key: 'none', row: null, single: 0, others: bonusTotal.value,
+    othersMerge: allMerge, ownMerge: allMerge, increase: allMerge,
+  })
+  return opts
 })
-const bonusSingleAuto = computed(() => autoSingleTax(base.value.bonus_single_amount || 0))
-const bonusRecommendAuto = computed(() => {
-  const a = base.value.bonus_single_amount || 0
-  if (a <= 0) return ''
-  const s = bonusSingleAuto.value
-  const m = bonusMergeAuto.value
-  if (Math.abs(s - m) < 0.01) return '两种方式税额相同'
-  return s < m
-    ? `单独计税（比并入少缴 ${fmt(m - s)}）`
-    : `并入综合所得（比单独计税少缴 ${fmt(s - m)}）`
+
+// 智能推荐：总税额增量最小的方案；增量并列时保持靠前选项（即优先用单独计税）
+const bestBonusKey = computed(() => {
+  const opts = bonusOptions.value
+  if (!opts.length) return ''
+  let best = opts[0]
+  for (const o of opts) {
+    if (o.increase < best.increase - 0.005) best = o
+  }
+  return best.key
 })
-const bonusMergeClass = computed(() => {
-  const s = bonusSingleAuto.value
-  const m = bonusMergeAuto.value
-  if (Math.abs(s - m) < 0.01) return 'tax-zero'
-  return m > s ? 'tax-high' : 'tax-low'
+
+const bonusChoice = ref('')
+
+const selectedBonus = computed(() => {
+  const opts = bonusOptions.value
+  if (!opts.length) return null
+  return opts.find(o => o.key === bonusChoice.value) || opts[0]
 })
+const bonusTaxAfter = computed(() => selectedBonus.value
+  ? Math.round((ps.value.tax_payable + selectedBonus.value.increase) * 100) / 100
+  : 0)
+// 列表渲染用：逐条候选 + 「不使用单独计税」兜底项
+const bonusPickOptions = computed(() => bonusOptions.value.filter(o => o.row))
+const noneBonusOption = computed(() => bonusOptions.value.find(o => o.key === 'none') || null)
 
 // ── 状态 ──
 const taxSummary = ref(null)
@@ -435,7 +527,10 @@ const defaultForm = () => ({
 const form = reactive(defaultForm())
 
 // ── 基础值 ──
-const base = computed(() => taxSummary.value || { total_gross: 0, non_taxable_income: 0, total_social_insurance: 0, actual_tax_paid: 0, deduction_fee: 0, month_count: 0, bonus_single_amount: 0 })
+const base = computed(() => taxSummary.value || { total_gross: 0, non_taxable_income: 0, total_social_insurance: 0, actual_tax_paid: 0, deduction_fee: 0, month_count: 0, bonus_single_amount: 0, bonus_records: [] })
+
+// 当年存在奖金记录时，所有薪资汇总处标注「不含奖金」（奖金与工资计算完全隔离，不进任何汇总）
+const hasBonus = computed(() => bonusTotal.value > 0)
 
 // 按当前年份过滤
 const currentRows = computed(() => rows.value.filter(r => r.year === taxYear.value))
@@ -745,6 +840,13 @@ function loadSummary() {
 function loadYears() { return getSalaryYears().then(years => { taxYears.value = years || [] }).catch(() => { taxYears.value = [] }) }
 function loadAll() { return Promise.all([loadSummary(), loadYears()]) }
 watch(taxYear, () => { loadSummary() })
+// 奖金方案选中项：必须放在 base / ps / bonusOptions 全部初始化之后，
+// immediate 会同步求值 bonusOptions → bonusRows → base，提前声明会踩 TDZ（整个组件白屏）
+watch(bonusOptions, (opts) => {
+  if (!opts.length) { bonusChoice.value = ''; return }
+  // 年份/数据变化导致原选项失效时，回落到智能推荐项
+  if (!opts.some(o => o.key === bonusChoice.value)) bonusChoice.value = bestBonusKey.value
+}, { immediate: true })
 onMounted(() => { loadAll() })
 </script>
 
@@ -752,6 +854,10 @@ onMounted(() => { loadAll() })
 .page-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:24px; }
 .page-title { font-size:22px; font-weight:600; color:#2c2c2a; margin:0; }
 .page-sub { margin:4px 0 0; font-size:13px; color:#999; }
+/* 「不含奖金」统一标注：单一浅灰形态，避免多彩标签割裂页面 */
+.nb-chip { display:inline-block; margin-left:6px; padding:1px 6px; border-radius:4px; background:#f2f3f5; color:#8a8f99; font-size:11px; font-weight:400; line-height:1.7; vertical-align:middle; white-space:nowrap; }
+.nb-chip-page { margin-left:10px; padding:2px 8px; font-size:12px; }
+.nb-chip-standalone { background:#eeeef2; color:#7d828c; }
 
 .kpi-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:20px; }
 
@@ -767,6 +873,36 @@ onMounted(() => { loadAll() })
 .detail-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:20px; }
 .detail-card { background:#fff; border:1px solid #e8e8e4; border-radius:12px; padding:20px 24px; }
 .bonus-full-card { width:100%; margin-bottom:20px; }
+
+/* 全年一次性奖金：多笔候选列表 + 单选 + 结果条 */
+.bonus-head,
+.bonus-line { display:grid; grid-template-columns:26px minmax(0,1fr) 120px 110px 132px; align-items:center; gap:8px; }
+.bonus-head { padding:0 10px 6px; font-size:12px; color:#909399; border-bottom:1px solid #eef0f2; }
+.bonus-head .bt-num { text-align:right; }
+.bonus-line { padding:9px 10px; border-radius:8px; cursor:pointer; transition:background .15s; }
+.bonus-line:hover { background:#f8f9fb; }
+.bonus-line.is-picked { background:#f5f4fd; box-shadow:inset 0 0 0 1px #dcd8f5; }
+.bonus-line-none { border-top:1px dashed #eef0f2; border-radius:0 0 8px 8px; }
+.bonus-line input[type="radio"] { width:15px; height:15px; margin:0; cursor:pointer; accent-color:#534ab7; }
+.bt-pick { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.bt-name { display:flex; align-items:center; font-size:13px; font-weight:600; color:#2c2c2a; }
+.bt-meta { font-size:11px; color:#a8abb2; }
+.bt-num { font-size:13px; color:#2c2c2a; text-align:right; font-variant-numeric:tabular-nums; }
+.bt-amount { font-weight:600; }
+.bt-num-merge { color:#8a8f99; }
+.bt-muted { color:#c0c4cc; }
+.bonus-line.is-picked .bt-amount { color:#534ab7; }
+
+.bonus-result { margin-top:12px; padding:12px 14px; border:1px solid #eef0f2; border-radius:10px; background:#f8f9fb; }
+.br-note { font-size:12px; color:#666; line-height:1.6; }
+.br-calc { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin-top:8px; font-size:12px; color:#909399; }
+.br-piece b { font-size:14px; color:#2c2c2a; font-variant-numeric:tabular-nums; }
+.br-piece-total b { color:#534ab7; }
+.br-op { color:#c0c4cc; }
+.br-final { display:flex; align-items:baseline; gap:8px; margin-top:10px; padding-top:10px; border-top:1px dashed #e4e7ed; font-size:13px; color:#666; }
+.br-from { color:#909399; font-variant-numeric:tabular-nums; }
+.br-arrow { color:#c0c4cc; }
+.br-to { font-size:18px; font-weight:700; color:#534ab7; font-variant-numeric:tabular-nums; }
 .detail-title { font-size:14px; font-weight:600; color:#2c2c2a; margin-bottom:8px; }
 .detail-body { display:flex; align-items:stretch; flex-wrap:wrap; }
 .detail-row { flex:1; display:flex; flex-direction:column; align-items:center; padding:16px 8px; text-align:center; min-width:120px; }
@@ -807,9 +943,6 @@ onMounted(() => { loadAll() })
 
 .adj-footer { display:flex; gap:24px; padding-top:14px; margin-top:8px; border-top:1px solid #eef0f2; font-size:13px; color:#666; }
 .adj-footer b { color:#534ab7; }
-
-/* 全年一次性奖金计税对比卡 */
-.bonus-rec-val { font-size:14px; color:#E6A23C; white-space:normal; }
 
 /* 对话框布局 */
 .dlg-row2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
