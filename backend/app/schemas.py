@@ -495,12 +495,13 @@ class SalaryRecordOut(BaseModel):
 class SalarySummaryOut(BaseModel):
     period_from: Optional[str] = None               # YYYY-MM
     period_to: Optional[str] = None                 # YYYY-MM
-    record_count: int
+    record_count: int                               # 记录条数（同月可多条，不等于月数）
+    month_count: int = 0                            # 已录入月份数（period 去重）
     total_gross: float = 0.0
     total_personal_deduction: float = 0.0
     total_net: float = 0.0
     total_company_cost: float = 0.0
-    avg_net: float = 0.0                            # 月均实发
+    avg_net: float = 0.0                            # 月均实发（total_net ÷ 去重月份数）
     total_credited: float = 0.0                     # 到账合计
     total_actual_tax: float = 0.0                   # 实际个税合计
     total_theoretical_tax: float = 0.0              # 理论税额合计（明细 tax 类目）
@@ -510,10 +511,22 @@ class SalaryCardOrderIn(BaseModel):
     order: Optional[List[str]] = None
     hidden: Optional[List[str]] = None
 
+class BonusRecordBrief(BaseModel):
+    """汇算页奖金候选记录：每条奖金都可被选为「全年一次性奖金」单独计税。
+
+    一个纳税年度只能占用一次单独计税资格（政策至 2027-12-31），
+    未被选中的奖金需并入综合所得，故前端需要逐条明细而非合计值。
+    """
+    id: int
+    period: str = ""                                # 发放月 YYYY-MM
+    name: str = ""                                  # 奖金名称（取 income 行名称）
+    amount: float = 0.0                             # 该条奖金金额（Σ income）
+    actual_tax: float = 0.0                         # 该条已缴个税（记录上的「实际个税」字段）
+
 class SalaryTaxSummaryOut(BaseModel):
     """个税年度汇算汇总（按年累计，含综合汇算调整）"""
     year: int
-    month_count: int = 0                             # 有记录月份数
+    month_count: int = 0                             # 有记录月份数（period 去重，同月多条只算一个月）
     data_month: int = 0                              # 薪资数据已有最新月份（折算截止月；0=无数据）
     total_gross: float = 0.0                         # 薪资年度累计应发（仅计税收入）
     non_taxable_income: float = 0.0                  # 薪资非计税收入合计（转账等，不计入汇算）
@@ -542,7 +555,8 @@ class SalaryTaxSummaryOut(BaseModel):
     tax_difference: float = 0.0                      # 差值（应交−实缴）
 
     # 全年一次性奖金（单独计税，不并入综合所得；仅统计金额供测算，与工资计算完全隔离）
-    bonus_single_amount: float = 0.0                 # 单独计税奖金金额合计
+    bonus_single_amount: float = 0.0                 # 奖金金额合计（= Σ bonus_records.amount）
+    bonus_records: List[BonusRecordBrief] = []       # 奖金明细列表（前端据此选择哪条单独计税）
 
     # 调整项列表（供前端编辑）
     adjustments: List['TaxAdjustmentOut'] = []

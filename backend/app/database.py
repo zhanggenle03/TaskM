@@ -866,6 +866,111 @@ def _ensure_salary_record_type_column():
     _fix_salary_child_foreign_keys(engine)
 
 
+def _salary_period_unique_index():
+    """返回 salary_records 上 (period, record_type) 唯一索引名；不存在则返回 None。
+
+    SQLite 的表级/列级 UNIQUE 以 sqlite_autoindex_{table}_{n} 形式存在，其 sql 为 NULL，
+    无法通过 sqlite_master.sql 判断，只能借 PRAGMA index_list 的 unique 标记 + index_info 的列名识别。
+    """
+    from sqlalchemy import text
+    with engine.connect() as conn:
+        for row in conn.execute(text("PRAGMA index_list(salary_records)")):
+            name = row[1]
+            is_unique = row[2]
+            if not is_unique:
+                continue
+            cols = [r[2] for r in conn.execute(text(f"PRAGMA index_info('{name}')"))]
+            if set(cols) == {"period", "record_type"}:
+                return name
+    return None
+
+
+def _backup_db_before_salary_migration():
+    """重建 salary_records 前把库文件复制一份到 backend/backups/ 兜底（尽力而为，失败不阻断迁移）。"""
+    import shutil
+    ts = datetime.now().strftime("%Y%m%d%H%M%S")
+    out_dir = os.path.join(BASE_DIR, "backups")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        dst = os.path.join(out_dir, f"taskm_before_salary_unique_drop_{ts}.db")
+        # 先 checkpoint，确保 WAL 中的近期数据合入主库后再复制
+        with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            try:
+                conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+            except Exception:
+                pass
+        shutil.copy2(DB_PATH, dst)
+        return dst
+    except Exception:
+        return None
+
+
+def _drop_salary_period_unique():
+    """幂等迁移：移除 salary_records 的 UNIQUE(period, record_type)，允许同月存在多条工资/奖金记录。
+
+    该约束限制「每月只能有一条工资 + 一条奖金」，「新增第二笔」会被拒绝。取消口径后：
+      · 数据库层不再拦截；
+      · 重复录入改由前端软提示（查询 /salary/records/duplicates 后弹确认框）。
+
+    SQLite 无法直接删除表级 UNIQUE（sqlite_autoindex），必须重建表：
+      旧表重命名 → 按原结构建新表（不含 UNIQUE）→ INSERT SELECT（id 原样保留）→ 删旧表。
+    子表 salary_items / salary_slips 的外键由 _fix_salary_child_foreign_keys 修复（RENAME 会把
+    外键引用改写成 salary_records_old）。全新库由 Base.metadata.create_all 建表本就不带该约束，
+    此函数自动跳过。
+    """
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    if "salary_records" not in inspector.get_table_names():
+        return
+    if _salary_period_unique_index() is None:
+        return
+
+    backup_path = _backup_db_before_salary_migration()
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("PRAGMA foreign_keys=OFF"))
+        conn.execute(text("BEGIN"))
+        try:
+            conn.execute(text("ALTER TABLE salary_records RENAME TO salary_records_old"))
+            conn.execute(text("""
+                CREATE TABLE salary_records (
+                    id INTEGER NOT NULL,
+                    period VARCHAR(20) NOT NULL,
+                    record_type VARCHAR(10) NOT NULL DEFAULT 'salary',
+                    pay_date DATE,
+                    employer VARCHAR(200) DEFAULT '',
+                    credited_amount FLOAT,
+                    actual_tax FLOAT,
+                    remark TEXT DEFAULT '',
+                    created_at DATETIME,
+                    updated_at DATETIME,
+                    PRIMARY KEY (id)
+                )
+            """))
+            conn.execute(text("""
+                INSERT INTO salary_records
+                    (id, period, record_type, pay_date, employer, credited_amount, actual_tax, remark, created_at, updated_at)
+                SELECT id, period, record_type, pay_date, employer, credited_amount, actual_tax, remark, created_at, updated_at
+                FROM salary_records_old
+            """))
+            conn.execute(text("DROP TABLE salary_records_old"))
+            conn.execute(text("COMMIT"))
+        except Exception:
+            conn.execute(text("ROLLBACK"))
+            raise
+        finally:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+
+    _fix_salary_child_foreign_keys(engine)
+    # 记录备份路径，便于排查（迁移只在约束存在时执行一次）
+    if backup_path:
+        try:
+            with open(os.path.join(BASE_DIR, "backups", "last_salary_unique_drop.txt"), "w", encoding="utf-8") as f:
+                f.write(backup_path)
+        except Exception:
+            pass
+
+
 def _fix_salary_child_foreign_keys(engine):
     """修复 ALTER TABLE RENAME 改写的外键引用（salary_items / salary_slips 的 REFERENCES salary_records_old → salary_records）。
 

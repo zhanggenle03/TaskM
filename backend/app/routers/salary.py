@@ -44,6 +44,7 @@ from ..schemas import (
     TaxAdjustmentCreate,
     TaxAdjustmentUpdate,
     TaxAdjustmentOut,
+    BonusRecordBrief,
 )
 from ..schemas import VALID_SALARY_CATEGORIES
 from ..settings_manager import get_max_file_size, get_salary_card_order, save_salary_card_order, get_salary_card_hidden, save_salary_card_hidden
@@ -103,6 +104,16 @@ def _parse_date(s: Optional[str]) -> Optional[date]:
         return datetime.strptime(s, "%Y-%m-%d").date()
     except Exception:
         return None
+
+
+def _distinct_month_count(records) -> int:
+    """已录入的月份数（按 period 去重）。
+
+    同月允许多条记录（工资/奖金各自可多条）后，记录条数 ≠ 月数。
+    个税累计减除费用（5000×月数）与各类「月均」统计都必须用去重月份数，
+    否则同月多一条记录就会多算一个月的减除费用，导致税额算少。
+    """
+    return len({r.period for r in records if r.period})
 
 
 def _compute_totals(record):
@@ -220,8 +231,50 @@ def list_salary_records(
         q = q.filter(SalaryRecord.period >= period_from)
     if period_to:
         q = q.filter(SalaryRecord.period <= period_to)
-    records = q.order_by(SalaryRecord.period.desc(), SalaryRecord.record_type.desc()).all()
+    # 同月可有多条（工资/奖金各自可多条），末尾以 id 兜底保证顺序稳定，避免刷新后行序跳动
+    records = q.order_by(
+        SalaryRecord.period.desc(),
+        SalaryRecord.record_type.desc(),
+        SalaryRecord.id.desc(),
+    ).all()
     return [_to_out(r) for r in records]
+
+
+@router.get("/records/duplicates")
+def check_salary_records_duplicates(
+    period: str = Query(..., description="月份 YYYY-MM"),
+    record_type: str = Query("salary", description="salary=工资 / bonus=奖金"),
+    exclude_id: Optional[int] = Query(None, description="编辑时排除自身记录 id"),
+    db: Session = Depends(get_db),
+):
+    """查询同月同类型的已有记录，供前端「重复录入」确认提示。
+
+    取消 UNIQUE(period, record_type) 后同月允许存在多条，重复由前端软提示而非硬拒绝。
+    注意：本路由必须声明在 /records/{record_id} 之前，否则 "duplicates" 会被当作 id 解析导致 422。
+    """
+    if not _PERIOD_RE.match(period or ""):
+        raise HTTPException(400, "period 格式应为 YYYY-MM")
+    q = db.query(SalaryRecord).filter(
+        SalaryRecord.period == period,
+        SalaryRecord.record_type == record_type,
+    )
+    if exclude_id is not None:
+        q = q.filter(SalaryRecord.id != exclude_id)
+    rows = q.order_by(SalaryRecord.id.asc()).all()
+    out = []
+    for r in rows:
+        gross, _pd, net, _cc, _pst = _compute_totals(r)
+        out.append({
+            "id": r.id,
+            "period": r.period,
+            "record_type": r.record_type or "salary",
+            "pay_date": r.pay_date.isoformat() if r.pay_date else None,
+            "employer": r.employer or "",
+            "gross": round(gross, 2),
+            "net": round(net, 2),
+            "first_income_name": next((i.name for i in r.items if i.category == "income"), ""),
+        })
+    return {"period": period, "record_type": record_type, "count": len(out), "records": out}
 
 
 @router.get("/years", response_model=List[int])
@@ -251,14 +304,7 @@ def create_salary_record(data: SalaryRecordCreate, db: Session = Depends(get_db)
     if data.record_type not in ("salary", "bonus"):
         raise HTTPException(400, "record_type 仅支持 salary（工资）或 bonus（奖金）")
     _validate_items(data.items)
-    dup = db.query(SalaryRecord).filter(
-        SalaryRecord.period == data.period,
-        SalaryRecord.record_type == data.record_type,
-    ).first()
-    if dup:
-        kind = "奖金" if data.record_type == "bonus" else "薪资"
-        raise HTTPException(409, f"已存在 {data.period} 的{kind}记录")
-
+    # 同月同类型允许多条：重复录入由前端查询 /records/duplicates 后弹确认框，不再硬拒绝
     rec = SalaryRecord(
         period=data.period,
         record_type=data.record_type,
@@ -286,14 +332,7 @@ def update_salary_record(record_id: int, data: SalaryRecordCreate, db: Session =
     if data.record_type not in ("salary", "bonus"):
         raise HTTPException(400, "record_type 仅支持 salary（工资）或 bonus（奖金）")
     _validate_items(data.items)
-    dup = db.query(SalaryRecord).filter(
-        SalaryRecord.period == data.period,
-        SalaryRecord.record_type == data.record_type,
-        SalaryRecord.id != record_id,
-    ).first()
-    if dup:
-        kind = "奖金" if data.record_type == "bonus" else "薪资"
-        raise HTTPException(409, f"已存在 {data.period} 的{kind}记录")
+    # 同月同类型允许多条，不再做重复校验（重复提示由前端负责）
 
     rec.period = data.period
     rec.record_type = data.record_type
@@ -478,11 +517,14 @@ def salary_summary(
         tact += r.actual_tax or 0.0
         ttax += sum(i.amount for i in r.items if i.category == "tax")
     count = len(salary_records)
-    avg = round(tn / count, 2) if count else 0.0
+    # 月均口径按「去重月份数」而非记录条数（同月可有多条工资记录）
+    month_count = _distinct_month_count(salary_records)
+    avg = round(tn / month_count, 2) if month_count else 0.0
     return SalarySummaryOut(
         period_from=period_from or "",
         period_to=period_to or "",
         record_count=count,
+        month_count=month_count,
         total_gross=round(tg, 2),
         total_personal_deduction=round(tp, 2),
         total_net=round(tn, 2),
@@ -570,11 +612,26 @@ def salary_tax_summary(
     # 奖金为纯记录，与工资计算完全隔离：不参与收入/社保/实缴，仅统计金额供汇算页测算
     salary_records = [r for r in records if (r.record_type or "salary") == "salary"]
     bonus_records = [r for r in records if (r.record_type or "salary") == "bonus"]
-    month_count = len(salary_records)
-    bonus_single_amount = round(sum(
-        i.amount for r in bonus_records
-        for i in r.items if i.category == "income" and i.taxable is False
-    ), 2)
+    # 月数按去重月份计：同月可有多条工资记录，条数不能当月数用
+    month_count = _distinct_month_count(salary_records)
+
+    # 奖金明细：一年可能有多笔（季度奖 / 年中补发 / 年终奖），而单独计税资格
+    # 一个纳税年度只能用一次，故逐条返回供前端选择拿哪一条走单独计税、其余并入综合所得
+    bonus_list: List[BonusRecordBrief] = []
+    for r in bonus_records:
+        income_items = [i for i in r.items if i.category == "income"]
+        amt = round(sum(i.amount for i in income_items), 2)
+        if amt <= 0:
+            continue
+        name = next((i.name for i in income_items if i.name), "") or "奖金"
+        bonus_list.append(BonusRecordBrief(
+            id=r.id,
+            period=r.period or "",
+            name=name,
+            amount=amt,
+            actual_tax=round(r.actual_tax or 0, 2),
+        ))
+    bonus_single_amount = round(sum(b.amount for b in bonus_list), 2)
 
     for r in salary_records:
         if r.actual_tax is not None:
@@ -588,8 +645,8 @@ def salary_tax_summary(
             elif i.category == "deduction" and i.tax_deductible:
                 total_social_insurance += i.amount
 
-    # 减除费用：过去年份按整年，当年按实际工资月数
-    deduction_months = 12 if year < datetime.now().year else (month_count or 1)
+    # 减除费用：过去年份按整年，当年按实际工资月数（去重月份，最多 12）
+    deduction_months = 12 if year < datetime.now().year else min(month_count or 1, 12)
     deduction_fee = MONTHLY_DEDUCTION * deduction_months
 
     # ── 2. 加载调整项（当年按月份折算） ──
@@ -722,6 +779,7 @@ def salary_tax_summary(
         tax_payable=tax_payable,
         tax_difference=tax_difference,
         bonus_single_amount=round(bonus_single_amount, 2),
+        bonus_records=bonus_list,
         adjustments=adjustments_out,
     )
 
@@ -819,8 +877,13 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
         return {"tax_amount": 0.0}
     year = int(year_str)
 
-    # 查询本年历史记录（编辑模式排除自身）
-    q = db.query(SalaryRecord).filter(SalaryRecord.period.like(f"{year}%"))
+    # 查询本年到「当月」的历史记录（编辑模式排除自身）。
+    # 必须限制 period <= 当前待计算月份：先录入的后续月份不能被提前计入累计，
+    # 否则减除费用与累计收入都会虚增，把当月个税算错（同月多条记录后影响更明显）。
+    q = db.query(SalaryRecord).filter(
+        SalaryRecord.period.like(f"{year}%"),
+        SalaryRecord.period <= body.period,
+    )
     if body.edit_id:
         q = q.filter(SalaryRecord.id != body.edit_id)
     prev_records = q.order_by(SalaryRecord.period.asc()).all()
@@ -832,7 +895,7 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
     prev_income = 0.0
     prev_social = 0.0
     prev_actual_tax = 0.0
-    prev_month_count = 0
+    prev_months = set()
 
     for r in prev_records:
         for i in r.items:
@@ -847,18 +910,17 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
             prev_actual_tax = round(prev_actual_tax + tax_from_items, 2)
         else:
             prev_actual_tax += r.actual_tax or 0.0
-        # 减除费用月份只计工资记录（奖金不计入工资月份）
-        if (r.record_type or "salary") == "salary":
-            prev_month_count += 1
+        # 减除费用月份只计工资记录，且按 period 去重（同月多条只算一个月）
+        prev_months.add(r.period)
     prev_income = round(prev_income, 2)
     prev_social = round(prev_social, 2)
 
     # 当月数据
     cur_income, cur_social = _cumulate_for_tax(body.items)
 
-    # 累计计算
+    # 累计计算：月份数 = 历史去重月份 ∪ 当月，同月多条记录不会重复计月
     cumulative_income = prev_income + cur_income
-    cumulative_months = prev_month_count + 1
+    cumulative_months = len(prev_months | {body.period})
     cumulative_deduction = prev_social + cur_social
     cumulative_taxable = round(
         cumulative_income - MONTHLY_DEDUCTION * cumulative_months - cumulative_deduction, 2
@@ -912,13 +974,15 @@ def export_salary(
             tcrd += r.credited_amount or 0.0
             tact += r.actual_tax or 0.0
         count = len(salary_records)
+        month_count = _distinct_month_count(salary_records)
         summary = {
             "record_count": count,
+            "month_count": month_count,
             "total_gross": round(tg, 2),
             "total_personal_deduction": round(tp, 2),
             "total_net": round(tn, 2),
             "total_company_cost": round(tc, 2),
-            "avg_net": round(tn / count, 2) if count else 0.0,
+            "avg_net": round(tn / month_count, 2) if month_count else 0.0,
             "total_credited": round(tcrd, 2),
             "total_actual_tax": round(tact, 2),
         }
@@ -940,8 +1004,10 @@ def export_salary(
                                 total_gross += i.amount
                         elif i.category == "deduction" and i.tax_deductible:
                             total_social += i.amount
-                # 展示用月份数只计工资记录（奖金不计入工资月份）
-                month_count = len([r for r in year_records if (r.record_type or "salary") == "salary"])
+                # 展示用月份数只计工资记录，且按月份去重（奖金不计入工资月份）
+                month_count = _distinct_month_count(
+                    [r for r in year_records if (r.record_type or "salary") == "salary"]
+                )
                 taxable = round(total_gross - 5000 * 12 - total_social, 2)
 
                 # 税率级距查找（TAX_BRACKETS 定义在本模块顶部）

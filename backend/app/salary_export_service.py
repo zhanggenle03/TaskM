@@ -148,7 +148,8 @@ def _build_summary_sheet(ws, summary: dict, tax_summary: Optional[dict],
     r += 1
 
     sum_rows = [
-        ('记录月份数', f'{summary.get("record_count", 0)} 个月'),
+        ('记录条数', f'{summary.get("record_count", 0)} 条'),
+        ('记录月份数', f'{summary.get("month_count", summary.get("record_count", 0))} 个月'),
         ('区间应发合计', summary.get('total_gross', 0)),
         ('应扣合计', summary.get('total_personal_deduction', 0)),
         ('区间实发合计', summary.get('total_net', 0)),
@@ -202,7 +203,7 @@ def _build_summary_sheet(ws, summary: dict, tax_summary: Optional[dict],
 
 
 def _build_detail_sheet(ws, records: List[SalaryRecord]):
-    """填充 Sheet 2：明细（宽表格式，每月份一行，各项目为独立列）"""
+    """填充 Sheet 2：明细（宽表格式，每条记录一行 —— 同月可有多条工资/奖金，故不按月份合并）"""
     sorted_records = sorted(records, key=lambda x: x.period)
 
     def _norm_item(it):
@@ -436,10 +437,26 @@ def _build_social_sheet(ws, records: List[SalaryRecord]):
     r = 3
 
     def _find(entries, period):
-        for e in entries:
-            if e['period'] == period:
-                return e
-        return None
+        """取某月的险种数据。同月可有多条薪资记录：金额累加，基数/比例取当月最后一条非空值。
+
+        单条记录时结果与直接取该条一致，保持原有展示语义不变。
+        """
+        matched = [e for e in entries if e['period'] == period]
+        if not matched:
+            return None
+        base = None
+        rate = None
+        for e in matched:
+            if e['base'] is not None:
+                base = e['base']
+            if e['rate'] is not None:
+                rate = e['rate']
+        return {
+            'period': period,
+            'base': base,
+            'rate': rate,
+            'amount': round(sum((e['amount'] or 0) for e in matched), 2),
+        }
 
     all_periods = sorted(set(e['period'] for entries in changes.values() for e in entries))
 

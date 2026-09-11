@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
 Base.metadata.create_all(bind=engine)
 
 # 幂等迁移：为已存在的 salary_items 表补充 base/rate 列（全新库由 create_all 直接带出）
-from .database import ensure_salary_item_columns, ensure_salary_record_columns, ensure_salary_item_tax_deductible, ensure_salary_item_taxable, ensure_tax_adjustment_table, ensure_communication_subject_column, ensure_communication_protected_fake_column, ensure_salary_slip_table, ensure_salary_slip_multi, ensure_salary_config_template_table, ensure_salary_config_template_drop_effective_from, migrate_salary_config_from_settings, _ensure_salary_record_type_column, _fix_salary_child_foreign_keys, ensure_file_edit_lock_columns
+from .database import ensure_salary_item_columns, ensure_salary_record_columns, ensure_salary_item_tax_deductible, ensure_salary_item_taxable, ensure_tax_adjustment_table, ensure_communication_subject_column, ensure_communication_protected_fake_column, ensure_salary_slip_table, ensure_salary_slip_multi, ensure_salary_config_template_table, ensure_salary_config_template_drop_effective_from, migrate_salary_config_from_settings, _ensure_salary_record_type_column, _drop_salary_period_unique, _fix_salary_child_foreign_keys, ensure_file_edit_lock_columns
 ensure_salary_item_columns(engine)
 ensure_salary_record_columns(engine)
 ensure_salary_item_tax_deductible(engine)
@@ -110,6 +110,8 @@ ensure_salary_config_template_table(engine)
 ensure_salary_config_template_drop_effective_from(engine)
 migrate_salary_config_from_settings()
 _ensure_salary_record_type_column()
+# 去掉 salary_records 的 UNIQUE(period, record_type)：允许同月多条工资/奖金记录
+_drop_salary_period_unique()
 _fix_salary_child_foreign_keys(engine)
 ensure_file_edit_lock_columns(engine)
 
