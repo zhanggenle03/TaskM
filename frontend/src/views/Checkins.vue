@@ -85,7 +85,7 @@
                     :class="'cal-cell-leave-' + lt"
                   >{{ leaveTypeShort(lt) }}</span>
                 </template>
-                <span v-if="mandayByDate[day.date] > 1 && !batchMode && !deleteBatchMode" class="cal-cell-manday">{{ mandayByDate[day.date] }}</span>
+                <span v-if="mandayBadgeByDate[day.date] != null && !batchMode && !deleteBatchMode" class="cal-cell-manday">{{ mandayBadgeByDate[day.date] }}</span>
                 <span v-if="batchMode && checkinsByDate[day.date]" class="cal-cell-checked">已签</span>
                 <span v-if="deleteBatchMode && (checkinsByDate[day.date] || (day.leaveTypes && day.leaveTypes.length))" class="cal-cell-has-data">有记录</span>
               </template>
@@ -1397,6 +1397,16 @@ const mandayByDate = computed(() => {
   for (const c of allCheckins.value) {
     const d = dayjs(c.date).format('YYYY-MM-DD')
     map[d] = (map[d] || 0) + (c.man_days || 1)
+  }
+  return map
+})
+
+// 左上角人天标识：当日有签到记录、且合计 ≠ 1 人天时才标注
+// （覆盖 0.5 等半天、0 人天、1.5/2 等多天场景；1 人天是常规值，不标注）
+const mandayBadgeByDate = computed(() => {
+  const map = {}
+  for (const [d, v] of Object.entries(mandayByDate.value)) {
+    if (Math.abs(v - 1) > 1e-9) map[d] = Math.round(v * 100) / 100
   }
   return map
 })
