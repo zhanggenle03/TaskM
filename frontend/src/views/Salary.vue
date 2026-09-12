@@ -6,6 +6,15 @@
         <p class="page-sub">按月记录薪资发放、明细与五险一金</p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
+        <el-select
+          v-model="employerFilter"
+          clearable
+          placeholder="全部单位"
+          style="width:160px"
+          @change="loadData"
+        >
+          <el-option v-for="e in employerOptions" :key="e" :label="e" :value="e" />
+        </el-select>
         <el-date-picker
           v-model="periodRange"
           type="monthrange"
@@ -96,7 +105,8 @@
 
     <!-- 记录表格 -->
     <div class="table-wrap">
-      <el-table :data="records" v-loading="loading" class="salary-table" empty-text="暂无薪资记录，点击右上角「新增薪资」开始记录">
+      <el-table :data="records" v-loading="loading" class="salary-table"
+        :empty-text="employerFilter ? `「${employerFilter}」在当前月份范围内没有记录` : '暂无薪资记录，点击右上角「新增薪资」开始记录'">
         <el-table-column type="expand" label="" width="44" fixed="left">
           <template #default="{ row }">
             <div class="detail-cards">
@@ -534,7 +544,7 @@ import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import Sortable from 'sortablejs'
 import {
-  getSalaryRecords, getSalaryRecord, getSalaryDuplicates,
+  getSalaryRecords, getSalaryRecord, getSalaryDuplicates, getSalaryEmployers,
   createSalaryRecord, updateSalaryRecord, deleteSalaryRecord, getSalarySummary,
   getSalaryConfig, updateSalaryConfig, calcSalaryTax,
   getSalaryConfigTemplates, createSalaryConfigTemplate, updateSalaryConfigTemplate,
@@ -719,6 +729,17 @@ function toggleCardHidden(key, show) {
 // 月份范围过滤，默认当前年
 const now = new Date()
 const periodRange = ref([`${now.getFullYear()}-01`, `${now.getFullYear()}-12`])
+
+// 单位筛选（空字符串 = 全部单位）。
+// 选项由后端去重列表提供，且不随筛选条件变化 —— 若用当前已筛选的记录推导选项，
+// 选中某个单位后选项会塌缩成它自己，就再也切不回其它单位了。
+const employerFilter = ref('')
+const employerOptions = ref([])
+function loadEmployers() {
+  return getSalaryEmployers()
+    .then(list => { employerOptions.value = list || [] })
+    .catch(() => { employerOptions.value = [] })
+}
 
 const dialogVisible = ref(false)
 
@@ -948,9 +969,12 @@ const normItems = (row) => {
 function loadData() {
   loading.value = true
   const [pf, pt] = periodRange.value || []
+  const emp = employerFilter.value || null
   return Promise.all([
-    getSalaryRecords({ period_from: pf || null, period_to: pt || null }),
-    getSalarySummary({ period_from: pf || null, period_to: pt || null }),
+    getSalaryRecords({ period_from: pf || null, period_to: pt || null, employer: emp }),
+    getSalarySummary({ period_from: pf || null, period_to: pt || null, employer: emp }),
+    // 顺带刷新单位选项：新增/编辑记录后可能多出新单位
+    loadEmployers(),
   ]).then(([recs, sum]) => {
     records.value = recs || []
     summary.value = sum
@@ -965,7 +989,7 @@ async function doExport() {
   exporting.value = true
   try {
     const [pf, pt] = periodRange.value || []
-    const res = await exportSalary({ period_from: pf || null, period_to: pt || null })
+    const res = await exportSalary({ period_from: pf || null, period_to: pt || null, employer: employerFilter.value || null })
     // 从响应头提取文件名
     const disposition = res.headers?.['content-disposition'] || ''
     const match = disposition.match(/filename\*?=UTF-8''(.+?)(?:;|$)/i) || disposition.match(/filename=(.+?)(?:;|$)/i)

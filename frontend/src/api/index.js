@@ -147,6 +147,8 @@ export const updateUserSettings = (data) => http.put('/process/settings/user', d
 // --- Salary（薪资记录） ---
 export const getSalaryRecords = (params) => http.get('/salary/records', { params })
 export const getSalaryYears = () => http.get('/salary/years')
+// 已录入的单位名去重列表（列表页单位筛选下拉）
+export const getSalaryEmployers = () => http.get('/salary/employers')
 export const getSalaryRecord = (id) => http.get(`/salary/records/${id}`)
 // 同月同类型已有记录查询：取消「每月一条」后用于重复录入确认提示
 export const getSalaryDuplicates = (params) => http.get('/salary/records/duplicates', { params })

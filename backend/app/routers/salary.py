@@ -224,6 +224,7 @@ def _sync_items(db: Session, record_id: int, items):
 def list_salary_records(
     period_from: Optional[str] = None,
     period_to: Optional[str] = None,
+    employer: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     q = db.query(SalaryRecord)
@@ -231,6 +232,8 @@ def list_salary_records(
         q = q.filter(SalaryRecord.period >= period_from)
     if period_to:
         q = q.filter(SalaryRecord.period <= period_to)
+    if employer:
+        q = q.filter(SalaryRecord.employer == employer)
     # 同月可有多条（工资/奖金各自可多条），末尾以 id 兜底保证顺序稳定，避免刷新后行序跳动
     records = q.order_by(
         SalaryRecord.period.desc(),
@@ -285,6 +288,19 @@ def list_salary_years(db: Session = Depends(get_db)):
     if not years:
         years = [datetime.now().year]
     return years
+
+
+@router.get("/employers", response_model=List[str])
+def list_salary_employers(db: Session = Depends(get_db)):
+    """全部已录入的单位名（去重、忽略空值），供列表页单位筛选下拉使用。
+
+    不按月份范围过滤：选项必须与筛选条件无关，否则选中某个单位后
+    选项集合会塌缩成它自己，用户无法再切换回其它单位。
+    """
+    rows = db.query(SalaryRecord.employer).distinct().all()
+    names = {(e or "").strip() for (e,) in rows}
+    names.discard("")
+    return sorted(names)
 
 
 # ──────────────────────────────────────────────── 详情 / 增删改 ────────────────────────────────────────────────
@@ -496,6 +512,7 @@ def update_salary_card_layout(data: SalaryCardOrderIn, db: Session = Depends(get
 def salary_summary(
     period_from: Optional[str] = None,
     period_to: Optional[str] = None,
+    employer: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     q = db.query(SalaryRecord)
@@ -503,6 +520,9 @@ def salary_summary(
         q = q.filter(SalaryRecord.period >= period_from)
     if period_to:
         q = q.filter(SalaryRecord.period <= period_to)
+    # 与列表同一个筛选口径：指标卡必须跟着单位筛选联动，否则卡片与下方明细对不上
+    if employer:
+        q = q.filter(SalaryRecord.employer == employer)
     records = q.all()
     # 指标卡只统计工资记录（奖金为纯记录，不参与应发/实发/到账/税等统计）
     salary_records = [r for r in records if (r.record_type or "salary") == "salary"]
@@ -948,16 +968,19 @@ def calc_tax(body: SalaryCalcTaxIn, db: Session = Depends(get_db)):
 def export_salary(
     period_from: Optional[str] = Query(None, description="开始月份 (YYYY-MM)"),
     period_to: Optional[str] = Query(None, description="结束月份 (YYYY-MM)"),
+    employer: Optional[str] = Query(None, description="单位筛选（精确匹配，与列表页一致）"),
     db: Session = Depends(get_db),
 ):
     """导出薪资记录 DOCX 报告：含明细表、总览合计、五险一金基数比例变化。"""
     try:
-        # 查询记录
+        # 查询记录（单位筛选与列表页同口径，导出的合计才和页面显示一致）
         q = db.query(SalaryRecord)
         if period_from:
             q = q.filter(SalaryRecord.period >= period_from)
         if period_to:
             q = q.filter(SalaryRecord.period <= period_to)
+        if employer:
+            q = q.filter(SalaryRecord.employer == employer)
         records = q.order_by(SalaryRecord.period.asc()).all()
 
         # 统计汇总（仅工资记录；奖金为纯记录，不参与导出汇总，与指标卡口径一致）
@@ -1043,11 +1066,12 @@ def export_salary(
             summary, tax_summary, salary_config,
         )
 
-        # 文件名
+        # 文件名（带单位筛选时拼上单位名，避免与全量导出文件混淆）
         pf = period_from or "earliest"
         pt = period_to or "latest"
+        emp_part = re.sub(r'[\\/:*?"<>|\s]+', "_", employer or "").strip("_")
         file_ts = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename = f'薪资导出_{pf}_{pt}_{file_ts}.xlsx'
+        filename = "_".join(p for p in ["薪资导出", pf, pt, emp_part, file_ts] if p) + ".xlsx"
         encoded_filename = urllib.parse.quote(filename)
 
         return Response(
