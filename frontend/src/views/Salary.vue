@@ -109,6 +109,11 @@
         :empty-text="employerFilter ? `「${employerFilter}」在当前月份范围内没有记录` : '暂无薪资记录，点击右上角「新增薪资」开始记录'">
         <el-table-column type="expand" label="" width="44" fixed="left">
           <template #default="{ row }">
+            <!-- 备注：列表列未展示，展开区置顶单独一行 -->
+            <div class="expand-remark" :class="{ 'is-empty': !row.remark }">
+              <span class="expand-remark-badge">备注</span>
+              <span class="expand-remark-text" :class="{ 'is-placeholder': !row.remark }">{{ row.remark || '暂无备注' }}</span>
+            </div>
             <div class="detail-cards">
               <div v-for="(grp, cat) in grouped(normItems(row))" :key="cat" class="dc-card" :class="'dc-' + cat">
                 <div class="dc-head">
@@ -1537,6 +1542,33 @@ async function remove(row) {
 .amt-tax { color: #d9534f; }
 .amt-muted { color: #bbb; }
 .amt-company { color: #909399; }
+
+/* 展开明细——备注行（置顶整行） */
+.expand-remark {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: #fafaf8;
+  border: 1px solid #ecece8;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 20px;
+}
+.expand-remark.is-empty { border-style: dashed; background: #fcfcfb; }
+.expand-remark-badge {
+  flex-shrink: 0;
+  padding: 0 6px;
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 18px;
+  color: #3c3489;
+  background: #f0edff;
+  border-radius: 3px;
+}
+.expand-remark-text { flex: 1; min-width: 0; color: #2c2c2a; white-space: pre-wrap; word-break: break-word; }
+.expand-remark-text.is-placeholder { color: #c0c0c0; }
 
 /* 展开明细——按标签分组卡片 */
 .detail-cards { display: flex; flex-wrap: wrap; gap: 10px; }
