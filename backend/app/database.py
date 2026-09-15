@@ -579,7 +579,8 @@ class CheckinProject(Base):
     project_id = Column(Integer, ForeignKey("projects.id"), primary_key=True)
     # 该签到记录下本项目分配的人天（多项目时各项目分别填写，合计=当天人天）
     man_days = Column(Float, default=1.0, nullable=False)
-    # 该签到记录下本项目分配的天数（多项目时用户自填；NULL=未填，统计端按人天占比兜底）
+    # 该签到记录下本项目分配的天数（单项目默认填 1，可手改；多项目时用户自填；
+    # NULL=未填，统计端按人天占比兜底）
     days = Column(Float, nullable=True)
 
 

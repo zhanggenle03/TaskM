@@ -376,9 +376,10 @@ class CheckinCreate(BaseModel):
     content: str = ""
     man_days: float = 1.0      # 当天人天（合计），默认 1.0，加班/并行等可 >1
     man_day_reason: str = ""   # 人天说明（自由文本）
-    # 多项目时各项目分配的人天：{project_id: man_days}，合计应等于当天 man_days
+    # 各项目分配的人天：{project_id: man_days}；多项目时合计应等于当天 man_days
     project_man_days: Dict[int, float] = {}
-    # 多项目时各项目分配的天数：{project_id: days}，用户自填；缺省时统计端按人天占比兜底
+    # 各项目分配的天数：{project_id: days}。单项目 = 当天天数（前端默认填 1，可改）；
+    # 多项目时用户自填，未填置 NULL，由统计端按人天占比兜底
     project_days: Dict[int, float] = {}
 
 class ProjectBrief(BaseModel):
