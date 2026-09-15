@@ -454,14 +454,17 @@ def export_single_project(project_id: int, include_uploads: bool = True) -> Opti
                     [{
                         "id": c.id, "date": c.date.isoformat() if c.date else None,
                         "content": c.content, "multi_project": c.multi_project,
+                        "man_days": c.man_days,
+                        "man_day_reason": c.man_day_reason or "",
                     } for c in checkins], indent=2, ensure_ascii=False
                 ))
-                # checkin_projects
+                # checkin_projects（man_days / days 均为用户手填值，必须一并备份）
                 cp_links = db.query(CheckinProject).filter(
                     CheckinProject.project_id == project_id
                 ).all()
                 zf.writestr("checkin_projects.json", json.dumps(
-                    [{"checkin_id": l.checkin_id, "project_id": l.project_id, "man_days": l.man_days}
+                    [{"checkin_id": l.checkin_id, "project_id": l.project_id,
+                      "man_days": l.man_days, "days": l.days}
                      for l in cp_links], indent=2, ensure_ascii=False
                 ))
                 # checkin_tasks
@@ -839,6 +842,9 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                     date=dt_date.fromisoformat(c["date"][:10]) if c.get("date") else None,
                     content=c.get("content", ""),
                     multi_project=c.get("multi_project", False),
+                    # 手填的人天与说明必须保真（旧备份无这些字段时退回默认值）
+                    man_days=float(c.get("man_days") if c.get("man_days") is not None else 1.0),
+                    man_day_reason=c.get("man_day_reason") or "",
                 )
                 db.add(new_c)
                 db.flush()
@@ -849,13 +855,16 @@ def restore_project_backup(filename: str, mode: str = "overwrite") -> dict:
                 new_ckid = old_checkin_id_map.get(link["checkin_id"])
                 if new_ckid:
                     try:
+                        raw_days = link.get("days")
                         db.execute(
                             sa_text(
-                                "INSERT INTO checkin_projects (checkin_id, project_id, man_days) "
-                                "VALUES (:ckid, :pid, :md)"
+                                "INSERT INTO checkin_projects (checkin_id, project_id, man_days, days) "
+                                "VALUES (:ckid, :pid, :md, :dy)"
                             ),
                             {"ckid": new_ckid, "pid": new_project_id,
-                             "md": float(link.get("man_days", 1.0) or 1.0)},
+                             "md": float(link.get("man_days", 1.0) or 1.0),
+                             # days 为 NULL 表示未填（多项目由统计端按人天占比兜底），保持原样
+                             "dy": None if raw_days is None else float(raw_days)},
                         )
                     except Exception:
                         pass
