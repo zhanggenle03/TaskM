@@ -15,13 +15,35 @@ from ..schemas import (
 )
 
 
-def _apply_checkin_projects(db, chk, project_ids, project_man_days, project_days, day_man_days):
+def _existing_project_days(db, checkin_id):
+    """读取某签到记录已保存的各项目天数（仅 days 非 NULL 的），返回 {project_id: days}。
+
+    用途：编辑签到（PUT）时，若本次请求**未携带**某项目的天数，应沿用已保存值，
+    绝不能用默认值把用户手填的天数冲掉。必须在 `chk.projects = []` 之前调用——
+    一旦关联行被删除，旧值就查不到了。"""
+    if not checkin_id:
+        return {}
+    rows = db.query(CheckinProject.project_id, CheckinProject.days).filter(
+        CheckinProject.checkin_id == checkin_id,
+        CheckinProject.days.isnot(None),
+    ).all()
+    return {pid: dy for pid, dy in rows}
+
+
+def _apply_checkin_projects(db, chk, project_ids, project_man_days, project_days, day_man_days,
+                            prev_days=None):
     """设置签到关联项目，并按 project_man_days / project_days 写入各项目分配的人天与天数
     （checkin_projects.man_days / days）。
-    返回当天人天合计（= 各项目分配之和）。天数规则：用户填了就用；单项目默认 1；多项目未填置 NULL，
-    由统计端按人天占比兜底。"""
+    返回当天人天合计（= 各项目分配之和）。
+
+    天数规则（优先级从高到低）：
+    1. 本次请求带了该项目的天数 → 用请求值；
+    2. `prev_days`（该签到已保存的天数）里有 → 沿用旧值（防止保存时把手填值冲掉）；
+    3. 单项目默认 1.0；
+    4. 多项目未填置 NULL，由统计端按人天占比兜底。"""
     alloc = project_man_days or {}
     day_alloc = project_days or {}
+    prev = prev_days or {}
     n = len(project_ids)
     md_map = {}
     day_map = {}
@@ -40,6 +62,8 @@ def _apply_checkin_projects(db, chk, project_ids, project_man_days, project_days
         md_map[pid] = md
         if pid in day_alloc and day_alloc[pid] is not None:
             day_map[pid] = float(day_alloc[pid])
+        elif pid in prev:
+            day_map[pid] = float(prev[pid])
         elif n == 1:
             day_map[pid] = 1.0
         else:
@@ -424,9 +448,12 @@ def update_checkin(checkin_id: int, data: CheckinCreate, db: Session = Depends(g
     chk.multi_project = data.multi_project
     chk.man_day_reason = data.man_day_reason
     # 更新关联项目（按 project_man_days 分配各项目人天）
+    # 先取出已保存的天数：关联行一旦清空就查不到了，本次未携带天数的项目要沿用旧值
+    prev_days = _existing_project_days(db, chk.id)
     chk.projects = []
     db.flush()
-    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days)
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days,
+                                    prev_days=prev_days)
     chk.man_days = total
     # 更新关联任务
     chk.tasks = []
@@ -791,9 +818,12 @@ def update_checkin_project(project_id: str, checkin_id: int, data: CheckinCreate
     chk.multi_project = data.multi_project
     chk.man_day_reason = data.man_day_reason
     # 更新关联项目（按 project_man_days 分配各项目人天）
+    # 先取出已保存的天数：关联行一旦清空就查不到了，本次未携带天数的项目要沿用旧值
+    prev_days = _existing_project_days(db, chk.id)
     chk.projects = []
     db.flush()
-    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days)
+    total = _apply_checkin_projects(db, chk, data.project_ids, data.project_man_days, data.project_days, data.man_days,
+                                    prev_days=prev_days)
     chk.man_days = total
     # 更新关联任务
     chk.tasks = []
