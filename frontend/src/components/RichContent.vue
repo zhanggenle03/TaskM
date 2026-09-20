@@ -7,8 +7,10 @@ import { ref, onMounted, watch, nextTick } from 'vue'
 import { updateHeadingNumbers } from '../utils/headingNumber'
 
 const props = defineProps({
-  // 已由父组件 sanitize 后的 HTML（如 TaskDetail 的 renderCommContent）
+  // 已由父组件 sanitize + 高亮后的 HTML（如 TaskDetail 的 renderCommContent）
   html: { type: String, default: '' },
+  // 搜索关键词：仅用于触发重新计算标题编号（高亮已由父组件在 HTML 中完成）
+  keyword: { type: String, default: '' },
 })
 
 const root = ref(null)
@@ -20,6 +22,8 @@ const applyNumbers = () => {
 
 onMounted(() => nextTick(applyNumbers))
 watch(() => props.html, () => nextTick(applyNumbers))
+// 关键词变化时 sanitizeHtml 会重新执行，标题的 data-heading-num 需重算
+watch(() => props.keyword, () => nextTick(applyNumbers))
 </script>
 
 <style scoped>
@@ -83,5 +87,22 @@ watch(() => props.html, () => nextTick(applyNumbers))
   color: inherit;
   white-space: pre;
   word-break: normal;
+}
+</style>
+
+<style>
+/* 非 scoped：v-html 注入的节点不带 scoped 属性，scoped 选择器匹配不到 */
+.hit-mark {
+  background: #ffe58f;
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px #f5d76e inset;
+  /* 跳转落点脉冲：只跑一次，不干扰阅读（滚动为 smooth，不强制 respects reduced-motion） */
+  animation: hit-mark-pulse 1.1s ease-out 1;
+}
+@keyframes hit-mark-pulse {
+  0%   { background: #ffb74d; box-shadow: 0 0 0 3px rgba(255, 183, 77, .45); }
+  100% { background: #ffe58f; box-shadow: 0 0 0 1px #f5d76e inset; }
 }
 </style>

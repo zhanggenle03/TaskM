@@ -68,7 +68,7 @@
           <el-button size="small" text style="margin-left:auto" @click="clearTimelineSelection">清除选择</el-button>
         </div>
 
-        <div class="timeline-scroll">
+        <div class="timeline-scroll" ref="timelineScrollRef">
           <el-timeline v-if="displayComms.length">
             <el-timeline-item
               v-for="c in displayComms"
@@ -101,11 +101,12 @@
                   <el-button size="small" text @click="openEditComm(c)"><el-icon><Edit /></el-icon></el-button>
                   <el-button size="small" text type="danger" @click="removeComm(c)"><el-icon><Delete /></el-icon></el-button>
                 </div>
-                <div v-if="c.subject" class="comm-subject">{{ c.subject }}</div>
-                <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染并加标题多级编号 -->
+                <div v-if="c.subject" class="comm-subject" v-html="highlightText(c.subject)"></div>
+                <!-- #1 自动状态变更文本与状态行重复则隐藏；#4 富文本内容经 sanitize 后渲染并加标题多级编号；#5 搜索关键词高亮 -->
                 <RichContent
                   v-if="c.content && !isAutoStatusContent(c)"
                   :html="renderCommContent(c)"
+                  :keyword="highlightKeyword"
                   @click="onCommContentClick"
                 />
                 <!-- 沟通附件（直接上传 + 引用的文件管理文件） -->
@@ -759,6 +760,23 @@ const hasMoreComms = computed(() => commVisibleCount.value < filteredComms.value
 // 筛选/排序变化时重置分页
 watch([commSearch, commTypeFilter, timelineAsc], () => { commVisibleCount.value = COMM_PAGE_SIZE })
 
+// ---- 搜索命中自动滚动到第一个匹配 ----
+const timelineScrollRef = ref(null)
+const SCROLL_OFFSET = 12  // 首个命中距容器顶部的留白
+
+// 滚到容器内第一个 .hit-mark。容器本身是滚动宿主，纯文本节点（如 .comm-subject）用 scrollIntoView 拿不到
+// 有效位置，故用 rect 差值手算 scrollTop。
+const scrollToFirstMatch = () => {
+  const box = timelineScrollRef.value
+  const mark = box?.querySelector?.('.hit-mark')
+  if (!box || !mark) return
+  const delta = mark.getBoundingClientRect().top - box.getBoundingClientRect().top
+  box.scrollTo({ top: Math.max(0, box.scrollTop + delta - SCROLL_OFFSET), behavior: 'smooth' })
+}
+// 每次关键词变化都从第一页重新起算，保证命中的第一条一定已渲染出来；
+// 数据加载完成后若 URL 带关键词，同样滚到第一条命中。
+watch([highlightKeyword, () => task.value?.id], () => nextTick(scrollToFirstMatch))
+
 // 从任务列表综合搜索跳转（命中沟通等非任务信息）时，把关键词同步进沟通搜索框
 watch(() => route.query.comm_search, (v) => {
   const val = String(v || '').trim()
@@ -775,6 +793,30 @@ const isAutoStatusContent = (c) => {
 
 const _looksLikeHtml = (s) => /<([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/.test(s || '')
 const escapeHtml = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// ---- 搜索关键词高亮 ----
+// 纯文本场景（主题、搜索框输入）：转义后按词包裹 <mark>
+const highlightText = (text) => {
+  const kw = (commSearch.value || '').trim()
+  const safe = escapeHtml(text)
+  if (!kw) return safe
+  const kwEsc = escapeHtml(kw).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return safe.replace(new RegExp(`(${kwEsc})`, 'gi'), '<mark class="hit-mark">$1</mark>')
+}
+// 富文本场景：在嵌套标签之间的文本节点上包裹 <mark>，不破坏 HTML 结构、不碰标签属性
+const highlightHtml = (html) => {
+  const kw = (commSearch.value || '').trim()
+  if (!kw) return html
+  const nodes = String(html || '').split(/(<[^>]*>)/)
+  const kwEsc = kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`(${kwEsc})`, 'gi')
+  return nodes.map((seg, i) => {
+    if (!seg) return seg
+    if (i % 2 === 1) return seg  // 奇数位为标签本身，原样保留
+    return escapeHtml(seg).replace(re, '<mark class="hit-mark">$1</mark>')
+  }).join('')
+}
+
 const sanitizeHtml = (html) => {
   const allowed = new Set(['P', 'DIV', 'SPAN', 'BR', 'B', 'STRONG', 'I', 'EM', 'U', 'UL', 'OL', 'LI', 'A', 'IMG', 'PRE', 'CODE', 'BLOCKQUOTE', 'H1', 'H2', 'H3', 'H4', 'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH', 'HR', 'SUB', 'SUP', 'FONT', 'SECTION'])
   const tpl = document.createElement('template')
@@ -797,12 +839,16 @@ const sanitizeHtml = (html) => {
     })
   }
   walk(tpl.content)
-  return tpl.innerHTML
+  // 先 sanitize 再高亮：<mark> 由本函数自行插入，不会被白名单过滤掉
+  return highlightHtml(tpl.innerHTML)
 }
+
+// 传给 RichContent 的关键词（响应式，搜索框变化时组件内会重算标题编号）
+const highlightKeyword = computed(() => (commSearch.value || '').trim())
 const renderCommContent = (c) => {
   const txt = c.content || ''
   if (_looksLikeHtml(txt)) return sanitizeHtml(txt)
-  return escapeHtml(txt)
+  return highlightText(txt)
 }
 // 判断富文本内容是否为"空"（去掉标签与空白后无实际文字）
 const isRichEmpty = (html) => {
@@ -1630,6 +1676,13 @@ const removeAtt = async (a) => {
 .comm-arrow { color: #bbb; font-size: 12px; margin: 0 2px; }
 .status-dot-mini { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .comm-subject { font-size: 15px; font-weight: 600; color: #534ab7; margin: 2px 0 8px; padding-left: 10px; border-left: 3px solid #534ab7; line-height: 1.4; word-break: break-word; }
+/* 主题（纯文本）搜索高亮：v-html 注入的节点需 :deep 才能命中 */
+.comm-subject :deep(.hit-mark) { background: #ffe58f; color: #534ab7; padding: 0 2px; border-radius: 2px; box-shadow: 0 0 0 1px #f5d76e inset; animation: hit-mark-pulse 1.1s ease-out 1; }
+/* 跳转落点脉冲（与 RichContent.vue 内的全局同名动画一致，此处供主题行使用） */
+@keyframes hit-mark-pulse {
+  0%   { background: #ffb74d; box-shadow: 0 0 0 3px rgba(255, 183, 77, .45); }
+  100% { background: #ffe58f; box-shadow: 0 0 0 1px #f5d76e inset; }
+}
 .comm-content { font-size: 14px; line-height: 1.6; color: #333; white-space: pre-wrap; }
 .comm-content :deep(ul), .comm-content :deep(ol) { padding-left: 24px; margin: 6px 0; }
 .comm-content :deep(img) { max-width: 100%; max-height: 50vh; height: auto; border-radius: 4px; cursor: zoom-in; }
