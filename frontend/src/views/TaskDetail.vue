@@ -138,7 +138,7 @@
                       <el-button size="small" text @click="locateFile(a)"><el-icon><Aim /></el-icon></el-button>
                     </el-tooltip>
                     <el-tooltip content="解除引用（不删除文件）" placement="top">
-                      <el-button size="small" text type="danger" @click="unlinkFile(a, c)"><el-icon><Unlink /></el-icon></el-button>
+                      <el-button size="small" text type="danger" @click="unlinkFile(a, c)"><el-icon><CloseBold /></el-icon></el-button>
                     </el-tooltip>
                   </div>
                 </div>
