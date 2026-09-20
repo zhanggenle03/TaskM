@@ -570,7 +570,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
@@ -775,7 +775,10 @@ const scrollToFirstMatch = () => {
 }
 // 每次关键词变化都从第一页重新起算，保证命中的第一条一定已渲染出来；
 // 数据加载完成后若 URL 带关键词，同样滚到第一条命中。
-watch([highlightKeyword, () => task.value?.id], () => nextTick(scrollToFirstMatch))
+// ⚠️ watch 源必须写成 (commSearch.value || '').trim() 而不是 highlightKeyword ——
+// immediate 无关也要注意：watch 在 setup 期同步求值 source，而 highlightKeyword 是后面的 const，
+// 会触发 TDZ「Cannot access 'highlightKeyword' before initialization」导致整页白屏。
+watch([() => (commSearch.value || '').trim(), () => task.value?.id], () => nextTick(scrollToFirstMatch))
 
 // 从任务列表综合搜索跳转（命中沟通等非任务信息）时，把关键词同步进沟通搜索框
 watch(() => route.query.comm_search, (v) => {
